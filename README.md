@@ -12,3 +12,5 @@ Algorithm to water the flowers is as follows:
 * end algorithm
 
 This algorithm is used separately for each of 6 valves. State produces to MQTT topic on each state changes. Errors in producing messages to MQTT topics don't affect the algorithm itself.
+
+Code was generated in [Claude](https://claude.ai/chat/391e9870-78b7-48cb-8733-b0c53d5dfb42)

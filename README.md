@@ -316,3 +316,74 @@ Expected signs of success:
 - ✅ Can start/stop watering from web UI
 - ✅ Status updates in real-time
 - ✅ Activity log shows commands
+
+# How to Test Your Hardware
+Step 1: Upload the Test Program
+
+rename src/main.cpp to main.cpp.bak test-main.cpp.bak to test-main.cpp
+Build and upload to your ESP32:
+
+bash   platformio run -t upload -e esp32-s3-devkitc-1
+   platformio device monitor -b 115200 --raw
+```
+
+### Step 2: Systematic Testing
+
+Once uploaded, you'll see a menu. Test components in this order:
+
+#### **Test 1: LED (Verify ESP32 is working)**
+- Type: `L`
+- **Expected:** Onboard LED toggles ON/OFF
+- **If fails:** ESP32 issue or GPIO 2 problem
+
+#### **Test 2: Rain Sensors (Read First)**
+- Type: `R`
+- **Expected:** Shows readings for all 6 sensors
+  - `HIGH (1) = DRY ☀`
+  - `LOW (0) = WET ☔`
+- **Test:** Touch each sensor with wet finger to see value change
+- **If always LOW:** Check pull-up resistors or wiring
+- **If always HIGH:** Sensor not connected or broken
+
+#### **Test 3: Monitor Rain Sensors Continuously**
+- Type: `M`
+- **Expected:** Live updating display every 500ms
+- **Test:** Touch sensors with wet finger - should see bars change
+- Type: `S` to stop monitoring
+
+#### **Test 4: Pump**
+- Type: `P`
+- **Expected:** Relay clicks, pump turns ON
+- Type: `P` again to turn OFF
+- **⚠ WARNING:** Make sure pump has water!
+
+#### **Test 5: Individual Valves**
+- Type: `1`, `2`, `3`, `4`, `5`, `6`
+- **Expected:** Each valve relay clicks and opens/closes
+- Toggle each one ON and OFF to verify
+
+#### **Test 6: All Valves Together**
+- Type: `A` - Opens all valves
+- Type: `Z` - Closes all valves
+- **⚠ WARNING:** Need good water pressure!
+
+#### **Test 7: Full Automatic Sequence**
+- Type: `F`
+- **Runs:** LED → Pump → Each valve individually → Rain sensors
+- **Great for:** Complete system verification
+
+### Emergency Commands
+- `X` - **EMERGENCY STOP** - Turns everything OFF immediately
+- `H` - Show menu again
+
+## What to Check
+
+### ✅ Rain Sensors (Most Important!)
+```
+Dry sensor should read: 1 (HIGH)
+Wet sensor should read: 0 (LOW)
+If stuck at one value:
+
+Always LOW: Wiring short or no pull-up
+Always HIGH: Sensor disconnected
+

@@ -1,0 +1,359 @@
+#include <Arduino.h>
+
+// Forward declarations
+void printMenu();
+
+// Pin definitions for ESP32-S3-DevKitC-1
+#define LED_PIN 2  // Built-in LED
+
+// Pump control
+#define PUMP_PIN 4
+
+// Valve pins
+#define VALVE1_PIN 5
+#define VALVE2_PIN 6
+#define VALVE3_PIN 7
+#define VALVE4_PIN 15
+#define VALVE5_PIN 16
+#define VALVE6_PIN 17
+
+// Rain sensor pins (one per valve)
+#define RAIN_SENSOR1_PIN 8
+#define RAIN_SENSOR2_PIN 9
+#define RAIN_SENSOR3_PIN 10
+#define RAIN_SENSOR4_PIN 11
+#define RAIN_SENSOR5_PIN 12
+#define RAIN_SENSOR6_PIN 13
+
+const int NUM_VALVES = 6;
+const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
+const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN, RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
+
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  
+  Serial.println("\n\n\n");
+  Serial.println("╔════════════════════════════════════════════╗");
+  Serial.println("║   ESP32 WATERING SYSTEM HARDWARE TEST      ║");
+  Serial.println("║   Version: 1.0.0                           ║");
+  Serial.println("╚════════════════════════════════════════════╝");
+  Serial.println();
+  
+  // Initialize LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  
+  // Initialize pump pin
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
+  
+  // Initialize valve pins
+  for (int i = 0; i < NUM_VALVES; i++) {
+    pinMode(VALVE_PINS[i], OUTPUT);
+    digitalWrite(VALVE_PINS[i], LOW);
+  }
+  
+  // Initialize rain sensor pins with internal pull-up
+  for (int i = 0; i < NUM_VALVES; i++) {
+    pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
+  }
+  
+  Serial.println("Hardware initialized. All outputs set to LOW/OFF.");
+  Serial.println();
+  printMenu();
+}
+
+void printMenu() {
+  Serial.println("═══════════════════════════════════════════════");
+  Serial.println("              HARDWARE TEST MENU");
+  Serial.println("═══════════════════════════════════════════════");
+  Serial.println("LED TEST:");
+  Serial.println("  L - Toggle LED (GPIO 2)");
+  Serial.println();
+  Serial.println("PUMP TEST:");
+  Serial.println("  P - Toggle Pump (GPIO 4)");
+  Serial.println();
+  Serial.println("VALVE TESTS (Individual):");
+  Serial.println("  1 - Toggle Valve 1 (GPIO 5)");
+  Serial.println("  2 - Toggle Valve 2 (GPIO 6)");
+  Serial.println("  3 - Toggle Valve 3 (GPIO 7)");
+  Serial.println("  4 - Toggle Valve 4 (GPIO 15)");
+  Serial.println("  5 - Toggle Valve 5 (GPIO 16)");
+  Serial.println("  6 - Toggle Valve 6 (GPIO 17)");
+  Serial.println();
+  Serial.println("VALVE TESTS (All):");
+  Serial.println("  A - Turn ALL valves ON");
+  Serial.println("  Z - Turn ALL valves OFF");
+  Serial.println();
+  Serial.println("RAIN SENSOR TESTS:");
+  Serial.println("  R - Read ALL rain sensors (once)");
+  Serial.println("  M - Monitor ALL rain sensors (continuous)");
+  Serial.println("  S - Stop monitoring");
+  Serial.println();
+  Serial.println("FULL SYSTEM TESTS:");
+  Serial.println("  F - Full sequence test (all components)");
+  Serial.println("  X - Turn EVERYTHING OFF (emergency stop)");
+  Serial.println();
+  Serial.println("OTHER:");
+  Serial.println("  H - Show this menu");
+  Serial.println("═══════════════════════════════════════════════");
+  Serial.println("Enter command:");
+}
+
+void printSeparator() {
+  Serial.println("───────────────────────────────────────────────");
+}
+
+void testLED() {
+  static bool ledState = false;
+  ledState = !ledState;
+  digitalWrite(LED_PIN, ledState);
+  Serial.println("LED (GPIO 2): " + String(ledState ? "ON ✓" : "OFF ✗"));
+  Serial.println("→ Check if onboard LED is " + String(ledState ? "lit" : "off"));
+  printSeparator();
+}
+
+void testPump() {
+  static bool pumpState = false;
+  pumpState = !pumpState;
+  digitalWrite(PUMP_PIN, pumpState);
+  Serial.println("PUMP (GPIO 4): " + String(pumpState ? "ON ✓" : "OFF ✗"));
+  Serial.println("→ Check if pump relay clicks and pump runs");
+  Serial.println("⚠ WARNING: Make sure pump has water!");
+  printSeparator();
+}
+
+void testValve(int valveNum) {
+  if (valveNum < 1 || valveNum > 6) return;
+  
+  int idx = valveNum - 1;
+  static bool valveStates[6] = {false, false, false, false, false, false};
+  valveStates[idx] = !valveStates[idx];
+  
+  digitalWrite(VALVE_PINS[idx], valveStates[idx]);
+  Serial.println("VALVE " + String(valveNum) + " (GPIO " + String(VALVE_PINS[idx]) + "): " + 
+                 String(valveStates[idx] ? "OPEN ✓" : "CLOSED ✗"));
+  Serial.println("→ Check if valve " + String(valveNum) + " relay clicks and valve opens/closes");
+  printSeparator();
+}
+
+void testAllValvesOn() {
+  Serial.println("Opening ALL valves...");
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], HIGH);
+    Serial.println("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): OPEN ✓");
+    delay(200);
+  }
+  Serial.println("→ All valves should be open now");
+  Serial.println("⚠ WARNING: Make sure you have enough water pressure!");
+  printSeparator();
+}
+
+void testAllValvesOff() {
+  Serial.println("Closing ALL valves...");
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], LOW);
+    Serial.println("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): CLOSED ✗");
+    delay(200);
+  }
+  Serial.println("→ All valves should be closed now");
+  printSeparator();
+}
+
+void readRainSensors() {
+  Serial.println("RAIN SENSOR READINGS:");
+  Serial.println("(LOW = Rain detected / Sensor wet)");
+  Serial.println("(HIGH = Dry / No rain)");
+  Serial.println();
+  
+  for (int i = 0; i < NUM_VALVES; i++) {
+    int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
+    String status = (sensorValue == LOW) ? "WET/RAIN ☔" : "DRY ☀";
+    Serial.println("  Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): " + 
+                   String(sensorValue) + " = " + status);
+  }
+  Serial.println();
+  Serial.println("→ Test by touching sensor with wet finger");
+  printSeparator();
+}
+
+bool monitorMode = false;
+unsigned long lastMonitorTime = 0;
+
+void monitorRainSensors() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastMonitorTime >= 500) {
+    Serial.println("\n╔══ RAIN SENSOR MONITOR (Press 'S' to stop) ══╗");
+    for (int i = 0; i < NUM_VALVES; i++) {
+      int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
+      String bar = (sensorValue == LOW) ? "████████" : "░░░░░░░░";
+      String status = (sensorValue == LOW) ? "WET" : "DRY";
+      Serial.println("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" + 
+                     bar + "] " + status);
+    }
+    Serial.println("╚════════════════════════════════════════════════╝");
+    lastMonitorTime = currentTime;
+  }
+}
+
+void fullSequenceTest() {
+  Serial.println("\n");
+  Serial.println("╔════════════════════════════════════════════╗");
+  Serial.println("║       FULL SEQUENCE TEST STARTING          ║");
+  Serial.println("╚════════════════════════════════════════════╝");
+  Serial.println();
+  
+  // Test LED
+  Serial.println("1/4 Testing LED...");
+  digitalWrite(LED_PIN, HIGH);
+  delay(1000);
+  digitalWrite(LED_PIN, LOW);
+  Serial.println("    ✓ LED test complete");
+  delay(1000);
+  
+  // Test Pump
+  Serial.println("\n2/4 Testing Pump...");
+  digitalWrite(PUMP_PIN, HIGH);
+  Serial.println("    Pump ON for 3 seconds");
+  delay(3000);
+  digitalWrite(PUMP_PIN, LOW);
+  Serial.println("    ✓ Pump test complete");
+  delay(1000);
+  
+  // Test each valve individually
+  Serial.println("\n3/4 Testing Valves (one by one)...");
+  for (int i = 0; i < NUM_VALVES; i++) {
+    Serial.println("    Testing Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + ")...");
+    digitalWrite(VALVE_PINS[i], HIGH);
+    delay(2000);
+    digitalWrite(VALVE_PINS[i], LOW);
+    Serial.println("    ✓ Valve " + String(i + 1) + " complete");
+    delay(500);
+  }
+  
+  // Test rain sensors
+  Serial.println("\n4/4 Testing Rain Sensors...");
+  readRainSensors();
+  
+  Serial.println("\n╔════════════════════════════════════════════╗");
+  Serial.println("║       FULL SEQUENCE TEST COMPLETE          ║");
+  Serial.println("╚════════════════════════════════════════════╝");
+  Serial.println();
+  printSeparator();
+}
+
+void emergencyStop() {
+  Serial.println("\n⚠️ EMERGENCY STOP - TURNING EVERYTHING OFF ⚠️");
+  digitalWrite(PUMP_PIN, LOW);
+  digitalWrite(LED_PIN, LOW);
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], LOW);
+  }
+  Serial.println("✓ All outputs disabled");
+  printSeparator();
+}
+
+void loop() {
+  // Handle monitoring mode
+  if (monitorMode) {
+    monitorRainSensors();
+  }
+  
+  // Check for serial input
+  if (Serial.available() > 0) {
+    char cmd = Serial.read();
+    
+    // Clear any remaining characters in buffer
+    while (Serial.available() > 0) {
+      Serial.read();
+    }
+    
+    Serial.println("\nCommand: " + String(cmd));
+    Serial.println();
+    
+    switch (cmd) {
+      case 'L':
+      case 'l':
+        testLED();
+        break;
+        
+      case 'P':
+      case 'p':
+        testPump();
+        break;
+        
+      case '1':
+        testValve(1);
+        break;
+      case '2':
+        testValve(2);
+        break;
+      case '3':
+        testValve(3);
+        break;
+      case '4':
+        testValve(4);
+        break;
+      case '5':
+        testValve(5);
+        break;
+      case '6':
+        testValve(6);
+        break;
+        
+      case 'A':
+      case 'a':
+        testAllValvesOn();
+        break;
+        
+      case 'Z':
+      case 'z':
+        testAllValvesOff();
+        break;
+        
+      case 'R':
+      case 'r':
+        readRainSensors();
+        break;
+        
+      case 'M':
+      case 'm':
+        monitorMode = true;
+        Serial.println("→ Rain sensor monitoring ENABLED");
+        Serial.println("  (Press 'S' to stop)");
+        printSeparator();
+        break;
+        
+      case 'S':
+      case 's':
+        monitorMode = false;
+        Serial.println("→ Rain sensor monitoring STOPPED");
+        printSeparator();
+        break;
+        
+      case 'F':
+      case 'f':
+        fullSequenceTest();
+        break;
+        
+      case 'X':
+      case 'x':
+        emergencyStop();
+        break;
+        
+      case 'H':
+      case 'h':
+      case '?':
+        printMenu();
+        break;
+        
+      default:
+        Serial.println("Unknown command. Press 'H' for menu.");
+        printSeparator();
+        break;
+    }
+  }
+  
+  delay(10);
+}

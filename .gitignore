@@ -41,3 +41,4 @@ include/secret.h
 .pio/
 .vscode/
 request.json
+logs/

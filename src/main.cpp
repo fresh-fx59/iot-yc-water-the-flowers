@@ -43,7 +43,7 @@ const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_P
 const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN, RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
 
 // Timing constants
-const unsigned long RAIN_CHECK_INTERVAL = 500; // Check rain sensor every 500ms
+const unsigned long RAIN_CHECK_INTERVAL = 100; // Check rain sensor every 500ms
 const unsigned long STATE_PUBLISH_INTERVAL = 2000; // Publish state every 2 seconds
 
 // MQTT data
@@ -139,6 +139,7 @@ public:
         publishStateChange("system", "initialized");
     }
     
+    // Then update the startWatering function:
     void startWatering(int valveIndex) {
         if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
             DEBUG_SERIAL.println("Invalid valve index: " + String(valveIndex));
@@ -155,6 +156,8 @@ public:
         
         DEBUG_SERIAL.println("Starting watering cycle for valve " + String(valveIndex));
         valve->wateringRequested = true;
+        valve->lastRainCheck = 0;  // Reset to force immediate check
+        valve->rainDetected = false; // Clear previous rain state
         valve->phase = PHASE_CHECKING_RAIN;
         publishStateChange("valve" + String(valveIndex), "cycle_started");
     }
@@ -288,7 +291,7 @@ private:
         // Using internal pull-up, so:
         // HIGH (1) = dry (pulled up)
         // LOW (0) = wet (sensor pulls to ground)
-        int sensorValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
+        bool sensorValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
         return (sensorValue == LOW); // LOW = wet/rain detected
     }
     
@@ -545,6 +548,9 @@ void setup() {
         // Connect to MQTT
         MQTTManager::connect();
     }
+    
+    // CRITICAL: Set the watering system reference for web API BEFORE setupOta()
+    setWateringSystemRef(&wateringSystem);
     
     // Initialize OTA updates
     setupOta();

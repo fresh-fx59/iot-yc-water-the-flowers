@@ -26,6 +26,7 @@ WateringSystem* g_wateringSystem_ptr = nullptr;
 // Forward declarations of functions
 void setupOta();
 void loopOta();
+void registerApiHandlers();  // Forward declaration only
 
 const char* updateSuccessPage = 
 R"(<!DOCTYPE html>
@@ -95,19 +96,6 @@ void setWateringSystemRef(WateringSystem* ws) {
 WateringSystem* getWateringSystemRef() {
   Serial.printf("getWateringSystemRef returning: 0x%p\n", (void*)g_wateringSystem_ptr);
   return g_wateringSystem_ptr;
-}
-
-// Forward declarations of API handlers - will be registered by main.cpp
-void handleWaterApi();
-void handleStopApi();
-void handleStatusApi();
-
-// Function to register API handlers (called from main.cpp after WateringSystem is initialized)
-void registerApiHandlers() {
-  httpServer.on("/api/water", HTTP_GET, handleWaterApi);
-  httpServer.on("/api/stop", HTTP_GET, handleStopApi);
-  httpServer.on("/api/status", HTTP_GET, handleStatusApi);
-  Serial.println("✓ API handlers registered");
 }
 
 void setupOta() {
@@ -268,9 +256,10 @@ void setupOta() {
   Serial.println("=================================");
   
   // Register API handlers LAST, after httpServer.begin()
+  // Implementation is in main.cpp
   Serial.println("Registering API handlers...");
   registerApiHandlers();
-  Serial.println("✓ API handlers registered");
+  Serial.println("✓ API handlers registration complete");
 }
 
 void loopOta() {

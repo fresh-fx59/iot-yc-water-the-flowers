@@ -4,10 +4,8 @@
 #include <secret.h>
 #include <ota.h>
 
-//developed with https://claude.ai/chat/391e9870-78b7-48cb-8733-b0c53d5dfb42
-
 // Device configuration
-const char* VERSION = "watering_system_0.0.1";
+const char* VERSION = "watering_system_1.0.0";
 const char* DEVICE_TYPE = "smart_watering_system";
 
 // MQTT Configuration
@@ -103,12 +101,18 @@ private:
     ValveController* valves[NUM_VALVES];
     int activeValveCount;
     unsigned long lastStatePublish;
+    String lastStateJson;
     
 public:
-    WateringSystem() : pumpState(PUMP_OFF), activeValveCount(0), lastStatePublish(0) {
+    WateringSystem() : pumpState(PUMP_OFF), activeValveCount(0), lastStatePublish(0), lastStateJson("") {
         for (int i = 0; i < NUM_VALVES; i++) {
             valves[i] = new ValveController(i);
         }
+    }
+    
+    // Get last cached state for web interface
+    String getLastState() {
+        return lastStateJson;
     }
     
     void init() {
@@ -184,8 +188,7 @@ public:
     }
     
     void publishCurrentState() {
-        if (!mqttClient.connected()) return;
-        
+        // Build state JSON
         String stateJson = "{";
         stateJson += "\"pump\":\"" + String(pumpState == PUMP_ON ? "on" : "off") + "\",";
         stateJson += "\"valves\":[";
@@ -202,7 +205,13 @@ public:
         
         stateJson += "]}";
         
-        mqttClient.publish(STATE_TOPIC.c_str(), stateJson.c_str());
+        // Cache state for web interface
+        lastStateJson = stateJson;
+        
+        // Publish to MQTT if connected
+        if (mqttClient.connected()) {
+            mqttClient.publish(STATE_TOPIC.c_str(), stateJson.c_str());
+        }
     }
     
 private:
@@ -503,16 +512,24 @@ WateringSystem* MQTTManager::wateringSystem = nullptr;
 WateringSystem wateringSystem;
 
 void setup() {
-    DEBUG_SERIAL.begin(DEBUG_SERIAL_BAUDRATE);
-    delay(1000);
+    // Initialize serial at correct baud rate
+    Serial.begin(115200);
     
-    DEBUG_SERIAL.println("\n\n=================================");
+    // Wait extra time for serial monitor to connect
+    delay(3000);
+    
+    // Send several newlines to clear any garbage
+    Serial.println("\n\n\n");
+    delay(100);
+    
+    DEBUG_SERIAL.println("=================================");
     DEBUG_SERIAL.println("Smart Watering System");
     DEBUG_SERIAL.println("Platform: ESP32-S3-DevKitC-1");
     DEBUG_SERIAL.println("Version: " + String(VERSION));
     DEBUG_SERIAL.println("Device ID: " + String(YC_DEVICE_ID));
     DEBUG_SERIAL.println("Valves: " + String(NUM_VALVES));
-    DEBUG_SERIAL.println("=================================\n");
+    DEBUG_SERIAL.println("=================================");
+    DEBUG_SERIAL.println();
     
     // Initialize watering system
     wateringSystem.init();
@@ -556,3 +573,86 @@ void loop() {
     // Small delay to prevent watchdog issues
     delay(10);
 }
+
+// ============================================
+// API Handler implementations
+// ============================================
+extern WebServer httpServer;
+extern WateringSystem* g_wateringSystem_ptr;
+
+void handleWaterApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+    
+    String valveStr = httpServer.arg("valve");
+    int valve = valveStr.toInt();
+    
+    if (valve < 1 || valve > 6) {
+        httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid valve number\"}");
+        return;
+    }
+    
+    Serial.printf("✓ API: Starting watering for valve %d\n", valve);
+    g_wateringSystem_ptr->startWatering(valve - 1);
+    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Watering started\"}");
+}
+
+void handleStopApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+    
+    String valveStr = httpServer.arg("valve");
+    
+    if (valveStr == "all") {
+        Serial.println("✓ API: Stopping all valves");
+        for (int i = 0; i < 6; i++) {
+            g_wateringSystem_ptr->stopWatering(i);
+        }
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"All watering stopped\"}");
+    } else {
+        int valve = valveStr.toInt();
+        if (valve < 1 || valve > 6) {
+            httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid valve number\"}");
+            return;
+        }
+        Serial.printf("✓ API: Stopping valve %d\n", valve);
+        g_wateringSystem_ptr->stopWatering(valve - 1);
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Watering stopped\"}");
+    }
+}
+
+void handleStatusApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+    
+    String stateJson = g_wateringSystem_ptr->getLastState();
+    
+    if (stateJson.length() == 0) {
+        stateJson = "{\"pump\":\"off\",\"valves\":[";
+        for (int i = 0; i < 6; i++) {
+            stateJson += "{\"id\":" + String(i) + ",\"state\":\"closed\",\"phase\":\"idle\",\"rain\":false}";
+            if (i < 5) stateJson += ",";
+        }
+        stateJson += "]}";
+    }
+    
+    httpServer.send(200, "application/json", stateJson);
+}
+
+// Register API handlers (called from setup after setupOta)
+void registerApiHandlers() {
+    Serial.println("Registering API handlers...");
+    httpServer.on("/api/water", HTTP_GET, handleWaterApi);
+    Serial.println("  ✓ Registered /api/water");
+    httpServer.on("/api/stop", HTTP_GET, handleStopApi);
+    Serial.println("  ✓ Registered /api/stop");
+    httpServer.on("/api/status", HTTP_GET, handleStatusApi);
+    Serial.println("  ✓ Registered /api/status");
+}
+// ============================================

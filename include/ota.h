@@ -150,7 +150,7 @@ void setupOta() {
   Serial.printf("%s\n", update_path);
   Serial.printf("Username: %s\n", update_username);
   Serial.printf("Password: %s\n", update_password);
-  Serial.println("Status: http://%s.local/status", host);
+  Serial.printf("Status: http://%s.local/status\n", host);
   Serial.println("=================================");
   Serial.println("Setting up OTA... Done!");
 }

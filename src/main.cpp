@@ -5,7 +5,7 @@
 #include <ota.h>
 
 // Device configuration
-const char* VERSION = "watering_system_1.3.0";
+const char* VERSION = "watering_system_1.3.3";
 const char* DEVICE_TYPE = "smart_watering_system";
 
 // MQTT Configuration
@@ -39,7 +39,7 @@ const int MQTT_KEEP_ALIVE = 15;
 #define RAIN_SENSOR6_PIN 13
 
 // rain sensor on pin. sensor enables only when needed
-#define SENSOR_POWER_PIN 18
+#define RAIN_SENSOR_POWER_PIN 18
 
 const int NUM_VALVES = 6;
 const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
@@ -49,7 +49,7 @@ const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RA
 const unsigned long RAIN_CHECK_INTERVAL = 100; // Check rain sensor every 500ms
 const unsigned long VALVE_STABILIZATION_DELAY = 500; // Wait 500ms after opening valve before checking sensor
 const unsigned long STATE_PUBLISH_INTERVAL = 2000; // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 5000; // ms
+const unsigned long MAX_WATERING_TIME = 7000; // ms
 
 // MQTT data
 const String DEVICE_TOPIC_PREFIX = String("$devices/") + YC_DEVICE_ID + String("/");
@@ -76,9 +76,9 @@ enum PumpState {
 
 enum WateringPhase {
     PHASE_IDLE,
-    PHASE_OPENING_VALVE,           // Step 1: Open valve first
-    PHASE_WAITING_STABILIZATION,   // Step 2: Wait for valve to fully open
-    PHASE_CHECKING_INITIAL_RAIN,   // Step 3: Check if already wet
+    PHASE_OPENING_VALVE,           // Step 1: Open valve FIRST
+    PHASE_WAITING_STABILIZATION,   // Step 2: Wait for water to start flowing
+    PHASE_CHECKING_INITIAL_RAIN,   // Step 3: Check sensor (now accurate with flowing water)
     PHASE_WATERING,                // Step 4: Pump on, wait for wet sensor
     PHASE_CLOSING_VALVE,
     PHASE_ERROR
@@ -144,8 +144,8 @@ public:
         digitalWrite(LED_PIN, LOW);
 
         // initialize pin that grants power(groud) to sensor pin 
-        pinMode(SENSOR_POWER_PIN, OUTPUT);
-        digitalWrite(SENSOR_POWER_PIN, LOW);
+        pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+        digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
         
         // Initialize valve pins
         for (int i = 0; i < NUM_VALVES; i++) {
@@ -180,11 +180,11 @@ public:
         
         DEBUG_SERIAL.println("═══════════════════════════════════════");
         DEBUG_SERIAL.println("Starting watering cycle for valve " + String(valveIndex));
-        DEBUG_SERIAL.println("Step 1: Opening valve...");
+        DEBUG_SERIAL.println("Step 1: Opening valve (sensor needs water flow)...");
         valve->wateringRequested = true;
         valve->rainDetected = false;
         valve->lastRainCheck = 0;
-        valve->phase = PHASE_OPENING_VALVE;  // Start by opening valve first!
+        valve->phase = PHASE_OPENING_VALVE;  // Open valve FIRST
         publishStateChange("valve" + String(valveIndex), "cycle_started");
     }
     
@@ -408,11 +408,11 @@ private:
                 break;
                 
             case PHASE_OPENING_VALVE:
-                // Open valve FIRST, before checking sensor
+                // Open valve FIRST (sensor needs water flow to work)
                 openValve(valveIndex);
                 valve->valveOpenTime = currentTime;
                 valve->phase = PHASE_WAITING_STABILIZATION;
-                DEBUG_SERIAL.println("  Valve " + String(valveIndex) + " opened, waiting for stabilization...");
+                DEBUG_SERIAL.println("  Valve " + String(valveIndex) + " opened");
                 publishStateChange("valve" + String(valveIndex), "valve_opened");
                 break;
                 
@@ -421,33 +421,33 @@ private:
                 if (currentTime - valve->valveOpenTime >= VALVE_STABILIZATION_DELAY) {
                     valve->phase = PHASE_CHECKING_INITIAL_RAIN;
                     valve->lastRainCheck = currentTime;
-                    DEBUG_SERIAL.println("Step 2: Checking rain sensor (valve is open)...");
+                    DEBUG_SERIAL.println("Step 2: Checking rain sensor (water is flowing now)...");
                 }
                 break;
                 
             case PHASE_CHECKING_INITIAL_RAIN:
-                // Now check if sensor is already wet (valve is open)
+                // Check sensor now (valve is open, water flowing, sensor reading is accurate)
                 if (currentTime - valve->lastRainCheck >= RAIN_CHECK_INTERVAL) {
                     valve->lastRainCheck = currentTime;
                     bool isRaining = readRainSensor(valveIndex);
                     valve->rainDetected = isRaining;
                     
                     if (isRaining) {
-                        // Sensor is already wet - close valve WITHOUT STARTING PUMP
+                        // Sensor is already wet - close valve WITHOUT starting pump
                         DEBUG_SERIAL.println("  Sensor " + String(valveIndex) + " is already WET");
                         DEBUG_SERIAL.println("  Pump will NOT start - closing valve");
+                        DEBUG_SERIAL.println("═══════════════════════════════════════");
                         publishStateChange("valve" + String(valveIndex), "already_wet_abort");
                         valve->phase = PHASE_CLOSING_VALVE;
-                        // Pump state will be checked after valve closes
                     } else {
-                        // Sensor is dry - start watering!
+                        // Sensor is dry - start pumping!
                         DEBUG_SERIAL.println("  Sensor " + String(valveIndex) + " is DRY");
                         DEBUG_SERIAL.println("Step 3: Starting pump, watering until sensor is wet...");
                         DEBUG_SERIAL.println("  Safety timeout: " + String(MAX_WATERING_TIME / 1000) + " seconds");
                         valve->wateringStartTime = currentTime;
                         valve->timeoutOccurred = false;
                         valve->phase = PHASE_WATERING;
-                        updatePumpState();  // ← NOW turn pump ON (only when actually watering)
+                        updatePumpState();  // NOW turn pump ON
                         publishStateChange("valve" + String(valveIndex), "watering_started");
                     }
                 }
@@ -463,7 +463,7 @@ private:
                     DEBUG_SERIAL.println("  SAFETY STOP - Closing valve");
                     valve->timeoutOccurred = true;
                     valve->phase = PHASE_CLOSING_VALVE;
-                    updatePumpState();  // ← Turn pump OFF before closing valve
+                    updatePumpState();  // Turn pump OFF
                     publishStateChange("valve" + String(valveIndex), "timeout_safety_stop");
                     break;
                 }
@@ -474,13 +474,14 @@ private:
                     bool isRaining = readRainSensor(valveIndex);
                     valve->rainDetected = isRaining;
                     
-                    // Show progress every 10 seconds
-                    if ((currentTime - valve->wateringStartTime) % 10000 < RAIN_CHECK_INTERVAL) {
+                    // Show progress every 1 second
+                    if ((currentTime - valve->wateringStartTime) % 1000 < RAIN_CHECK_INTERVAL) {
                         int elapsed = (currentTime - valve->wateringStartTime) / 1000;
                         int remaining = (MAX_WATERING_TIME - (currentTime - valve->wateringStartTime)) / 1000;
                         DEBUG_SERIAL.println("  Valve " + String(valveIndex) + " watering: " + 
                                         String(elapsed) + "s elapsed, " + 
-                                        String(remaining) + "s remaining");
+                                        String(remaining) + "s remaining, Sensor: " + 
+                                        String(isRaining ? "WET" : "DRY"));
                     }
                     
                     if (isRaining) {
@@ -492,12 +493,12 @@ private:
                         DEBUG_SERIAL.println("═══════════════════════════════════════");
                         publishStateChange("valve" + String(valveIndex), "watering_complete");
                         valve->phase = PHASE_CLOSING_VALVE;
-                        updatePumpState();  // ← Turn pump OFF before closing valve
+                        updatePumpState();  // Turn pump OFF
                     } else if (!valve->wateringRequested) {
                         // Manual stop requested
                         DEBUG_SERIAL.println("  Manual stop requested for valve " + String(valveIndex));
                         valve->phase = PHASE_CLOSING_VALVE;
-                        updatePumpState();  // ← Turn pump OFF before closing valve
+                        updatePumpState();  // Turn pump OFF
                     }
                 }
                 break;
@@ -507,8 +508,7 @@ private:
                 valve->phase = PHASE_IDLE;
                 valve->wateringRequested = false;
                 publishStateChange("valve" + String(valveIndex), "valve_closed");
-                // Final pump state check after valve is closed
-                updatePumpState();
+                updatePumpState();  // Final pump check
                 break;
                 
             case PHASE_ERROR:
@@ -522,7 +522,7 @@ private:
     
     bool readRainSensor(int valveIndex) {
         // Power on sensor
-        digitalWrite(SENSOR_POWER_PIN, HIGH);
+        digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
         delay(100);  // Let it stabilize
 
         // Rain sensors typically output LOW when wet, HIGH when dry
@@ -532,7 +532,7 @@ private:
         bool sensorValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
 
         // Power off immediately
-        digitalWrite(SENSOR_POWER_PIN, LOW);
+        digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
 
         return (sensorValue == LOW); // LOW = wet/rain detected
     }

@@ -5,7 +5,7 @@
 #include <ota.h>
 
 // Device configuration
-const char* VERSION = "watering_system_1.3.3";
+const char* VERSION = "watering_system_1.4.0";
 const char* DEVICE_TYPE = "smart_watering_system";
 
 // MQTT Configuration
@@ -49,7 +49,7 @@ const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RA
 const unsigned long RAIN_CHECK_INTERVAL = 100; // Check rain sensor every 500ms
 const unsigned long VALVE_STABILIZATION_DELAY = 500; // Wait 500ms after opening valve before checking sensor
 const unsigned long STATE_PUBLISH_INTERVAL = 2000; // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 7000; // ms
+const unsigned long MAX_WATERING_TIME = 15000; // ms
 
 // MQTT data
 const String DEVICE_TOPIC_PREFIX = String("$devices/") + YC_DEVICE_ID + String("/");
@@ -94,17 +94,29 @@ struct ValveController {
     unsigned long wateringStartTime;  // When pump started (for timeout)
     bool wateringRequested;
     bool timeoutOccurred;             // Flag if timeout happened
-    
-    ValveController(int idx) : 
-        valveIndex(idx), 
-        state(VALVE_CLOSED), 
+
+    // Learning algorithm fields
+    unsigned long baselineFillTime;   // Time to fill from empty (ms) - learned on first watering
+    unsigned long lastFillTime;       // Most recent fill time (ms)
+    int skipCyclesRemaining;          // How many cycles to skip before next watering
+    bool isCalibrated;                // Have we measured baseline yet?
+    int totalWateringCycles;          // Total successful watering cycles completed
+
+    ValveController(int idx) :
+        valveIndex(idx),
+        state(VALVE_CLOSED),
         phase(PHASE_IDLE),
         rainDetected(false),
         lastRainCheck(0),
         valveOpenTime(0),
         wateringStartTime(0),
         wateringRequested(false),
-        timeoutOccurred(false) {}
+        timeoutOccurred(false),
+        baselineFillTime(0),
+        lastFillTime(0),
+        skipCyclesRemaining(0),
+        isCalibrated(false),
+        totalWateringCycles(0) {}
 };
 
 
@@ -170,16 +182,35 @@ public:
             publishStateChange("error", "invalid_valve_index");
             return;
         }
-        
+
         ValveController* valve = valves[valveIndex];
-        
+
         if (valve->phase != PHASE_IDLE) {
             DEBUG_SERIAL.println("Valve " + String(valveIndex) + " is already active");
             return;
         }
-        
+
+        // LEARNING ALGORITHM: Check if we should skip this watering cycle
+        if (valve->skipCyclesRemaining > 0) {
+            valve->skipCyclesRemaining--;
+            DEBUG_SERIAL.println("═══════════════════════════════════════");
+            DEBUG_SERIAL.println("🧠 SMART SKIP: Valve " + String(valveIndex));
+            DEBUG_SERIAL.println("  Tray not empty yet based on consumption pattern");
+            DEBUG_SERIAL.println("  Baseline fill time: " + String(valve->baselineFillTime / 1000) + "s");
+            DEBUG_SERIAL.println("  Last fill time: " + String(valve->lastFillTime / 1000) + "s");
+            DEBUG_SERIAL.println("  Cycles remaining to skip: " + String(valve->skipCyclesRemaining));
+            DEBUG_SERIAL.println("═══════════════════════════════════════");
+            publishStateChange("valve" + String(valveIndex), "cycle_skipped_learning");
+            return;
+        }
+
         DEBUG_SERIAL.println("═══════════════════════════════════════");
         DEBUG_SERIAL.println("Starting watering cycle for valve " + String(valveIndex));
+        if (valve->isCalibrated) {
+            DEBUG_SERIAL.println("🧠 Calibrated - Baseline: " + String(valve->baselineFillTime / 1000) + "s");
+        } else {
+            DEBUG_SERIAL.println("🎯 First watering - Establishing baseline");
+        }
         DEBUG_SERIAL.println("Step 1: Opening valve (sensor needs water flow)...");
         valve->wateringRequested = true;
         valve->rainDetected = false;
@@ -254,7 +285,7 @@ public:
             stateJson += "\"phase\":\"" + getPhaseString(valves[i]->phase) + "\",";
             stateJson += "\"rain\":" + String(valves[i]->rainDetected ? "true" : "false") + ",";
             stateJson += "\"timeout\":" + String(valves[i]->timeoutOccurred ? "true" : "false");
-            
+
             // Add watering progress if active
             if (valves[i]->phase == PHASE_WATERING && valves[i]->wateringStartTime > 0) {
                 unsigned long elapsed = millis() - valves[i]->wateringStartTime;
@@ -263,7 +294,22 @@ public:
                 stateJson += ",\"watering_seconds\":" + String(elapsed / 1000);
                 stateJson += ",\"remaining_seconds\":" + String(remainingSeconds);
             }
-            
+
+            // LEARNING ALGORITHM: Add learning data to state
+            stateJson += ",\"learning\":{";
+            stateJson += "\"calibrated\":" + String(valves[i]->isCalibrated ? "true" : "false");
+            if (valves[i]->isCalibrated) {
+                stateJson += ",\"baseline_ms\":" + String(valves[i]->baselineFillTime);
+                stateJson += ",\"last_fill_ms\":" + String(valves[i]->lastFillTime);
+                stateJson += ",\"skip_cycles\":" + String(valves[i]->skipCyclesRemaining);
+                stateJson += ",\"total_cycles\":" + String(valves[i]->totalWateringCycles);
+                if (valves[i]->lastFillTime > 0) {
+                    float ratio = (float)valves[i]->lastFillTime / (float)valves[i]->baselineFillTime;
+                    stateJson += ",\"fill_ratio\":" + String(ratio, 2);
+                }
+            }
+            stateJson += "}";
+
             stateJson += "}";
             if (i < NUM_VALVES - 1) stateJson += ",";
         }
@@ -287,7 +333,76 @@ public:
         }
     }
 
-        // NEW FUNCTION: Start sequential watering of all valves
+    // LEARNING ALGORITHM: Reset calibration for a valve
+    void resetCalibration(int valveIndex) {
+        if (valveIndex >= 0 && valveIndex < NUM_VALVES) {
+            ValveController* valve = valves[valveIndex];
+            valve->isCalibrated = false;
+            valve->baselineFillTime = 0;
+            valve->lastFillTime = 0;
+            valve->skipCyclesRemaining = 0;
+            valve->totalWateringCycles = 0;
+            DEBUG_SERIAL.println("═══════════════════════════════════════");
+            DEBUG_SERIAL.println("🔄 CALIBRATION RESET: Valve " + String(valveIndex));
+            DEBUG_SERIAL.println("  Next watering will establish new baseline");
+            DEBUG_SERIAL.println("═══════════════════════════════════════");
+            publishStateChange("valve" + String(valveIndex), "calibration_reset");
+        }
+    }
+
+    // LEARNING ALGORITHM: Reset all calibrations
+    void resetAllCalibrations() {
+        DEBUG_SERIAL.println("═══════════════════════════════════════");
+        DEBUG_SERIAL.println("🔄 RESET ALL CALIBRATIONS");
+        for (int i = 0; i < NUM_VALVES; i++) {
+            valves[i]->isCalibrated = false;
+            valves[i]->baselineFillTime = 0;
+            valves[i]->lastFillTime = 0;
+            valves[i]->skipCyclesRemaining = 0;
+            valves[i]->totalWateringCycles = 0;
+        }
+        DEBUG_SERIAL.println("  All valves reset to uncalibrated state");
+        DEBUG_SERIAL.println("═══════════════════════════════════════");
+        publishStateChange("system", "all_calibrations_reset");
+    }
+
+    // LEARNING ALGORITHM: Get learning status for all valves
+    void printLearningStatus() {
+        DEBUG_SERIAL.println("\n╔═══════════════════════════════════════════╗");
+        DEBUG_SERIAL.println("║         LEARNING SYSTEM STATUS            ║");
+        DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
+        for (int i = 0; i < NUM_VALVES; i++) {
+            ValveController* valve = valves[i];
+            DEBUG_SERIAL.println("\n📊 Valve " + String(i) + ":");
+            if (valve->isCalibrated) {
+                DEBUG_SERIAL.println("  Status: ✓ Calibrated");
+                DEBUG_SERIAL.println("  Baseline: " + String(valve->baselineFillTime / 1000) + "." + String((valve->baselineFillTime % 1000) / 100) + "s");
+                DEBUG_SERIAL.println("  Last fill: " + String(valve->lastFillTime / 1000) + "." + String((valve->lastFillTime % 1000) / 100) + "s");
+                DEBUG_SERIAL.println("  Skip cycles: " + String(valve->skipCyclesRemaining));
+                DEBUG_SERIAL.println("  Total cycles: " + String(valve->totalWateringCycles));
+                if (valve->lastFillTime > 0 && valve->baselineFillTime > 0) {
+                    float ratio = (float)valve->lastFillTime / (float)valve->baselineFillTime;
+                    DEBUG_SERIAL.println("  Last ratio: " + String(ratio, 2) + " (" + String((int)(ratio * 100)) + "% of baseline)");
+                }
+            } else {
+                DEBUG_SERIAL.println("  Status: ⚠️  Not calibrated");
+                DEBUG_SERIAL.println("  Action: Run first watering to establish baseline");
+            }
+        }
+        DEBUG_SERIAL.println("\n═══════════════════════════════════════");
+    }
+
+    // LEARNING ALGORITHM: Manually set skip cycles for a valve
+    void setSkipCycles(int valveIndex, int cycles) {
+        if (valveIndex >= 0 && valveIndex < NUM_VALVES) {
+            if (cycles < 0) cycles = 0;
+            if (cycles > 20) cycles = 20;  // Safety cap
+            valves[valveIndex]->skipCyclesRemaining = cycles;
+            DEBUG_SERIAL.println("🧠 Valve " + String(valveIndex) + " skip cycles set to: " + String(cycles));
+            publishStateChange("valve" + String(valveIndex), "skip_cycles_set");
+        }
+    }
+
     void startSequentialWatering() {
         if (sequentialMode) {
             DEBUG_SERIAL.println("Sequential watering already in progress");
@@ -298,9 +413,9 @@ public:
         DEBUG_SERIAL.println("║  SEQUENTIAL WATERING STARTED (ALL VALVES) ║");
         DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
         
-        // Prepare sequence: all valves 0-5
+        // Prepare sequence: all valves 5-0
         sequenceLength = NUM_VALVES;
-        for (int i = 0; i < NUM_VALVES; i++) {
+        for (int i = NUM_VALVES - 1; i >= 0; i--) {
             sequenceValves[i] = i;
         }
         
@@ -504,6 +619,69 @@ private:
                 break;
                 
             case PHASE_CLOSING_VALVE:
+                // LEARNING ALGORITHM: Calculate fill time and update learning data
+                if (valve->wateringStartTime > 0 && !valve->timeoutOccurred && valve->rainDetected) {
+                    // This was a successful watering cycle (not timeout, sensor detected water)
+                    unsigned long fillTime = currentTime - valve->wateringStartTime;
+                    valve->lastFillTime = fillTime;
+                    valve->totalWateringCycles++;
+
+                    DEBUG_SERIAL.println("🧠 LEARNING DATA:");
+                    DEBUG_SERIAL.println("  Fill time this cycle: " + String(fillTime / 1000) + "." + String((fillTime % 1000) / 100) + "s");
+
+                    if (!valve->isCalibrated) {
+                        // First successful watering - establish baseline
+                        valve->baselineFillTime = fillTime;
+                        valve->isCalibrated = true;
+                        valve->skipCyclesRemaining = 0;  // Next cycle we water again to measure consumption
+                        DEBUG_SERIAL.println("  🎯 BASELINE ESTABLISHED: " + String(fillTime / 1000) + "." + String((fillTime % 1000) / 100) + "s");
+                        DEBUG_SERIAL.println("  Next cycle will measure consumption rate");
+                        publishStateChange("valve" + String(valveIndex), "baseline_calibrated");
+                    } else {
+                        // We have baseline - calculate consumption and skip cycles
+                        float fillRatio = (float)fillTime / (float)valve->baselineFillTime;
+
+                        DEBUG_SERIAL.println("  Baseline: " + String(valve->baselineFillTime / 1000) + "." + String((valve->baselineFillTime % 1000) / 100) + "s");
+                        DEBUG_SERIAL.println("  Fill ratio: " + String(fillRatio, 2) + " (1.0 = tray was empty)");
+
+                        if (fillRatio >= 0.95) {
+                            // Tray was essentially empty (within 5% of baseline)
+                            valve->skipCyclesRemaining = 0;
+                            DEBUG_SERIAL.println("  ✓ Tray was EMPTY - normal consumption");
+                            DEBUG_SERIAL.println("  Action: Water every cycle");
+                        } else if (fillRatio < 0.10) {
+                            // Tray took very little time to fill - was almost full
+                            // This means consumption is very slow
+                            valve->skipCyclesRemaining = 10;  // Skip many cycles
+                            DEBUG_SERIAL.println("  ⚠️  Tray was >90% FULL - very slow consumption");
+                            DEBUG_SERIAL.println("  Action: Skip next 10 cycles");
+                        } else {
+                            // Tray was partially empty - calculate skip cycles
+                            // Formula: cycles_to_empty = baseline / (baseline - current)
+                            // skip_cycles = cycles_to_empty - 1
+                            unsigned long consumption = valve->baselineFillTime - fillTime;
+                            float cyclesToEmpty = (float)valve->baselineFillTime / (float)consumption;
+                            valve->skipCyclesRemaining = (int)cyclesToEmpty - 1;
+
+                            if (valve->skipCyclesRemaining < 0) valve->skipCyclesRemaining = 0;
+                            if (valve->skipCyclesRemaining > 15) valve->skipCyclesRemaining = 15;  // Cap at 15 cycles
+
+                            float waterRemaining = (1.0 - fillRatio) * 100;
+                            DEBUG_SERIAL.println("  Tray had ~" + String((int)waterRemaining) + "% water remaining");
+                            DEBUG_SERIAL.println("  Consumption per cycle: ~" + String((int)(fillRatio * 100)) + "%");
+                            DEBUG_SERIAL.println("  Cycles to empty: " + String(cyclesToEmpty, 1));
+                            DEBUG_SERIAL.println("  Action: Skip next " + String(valve->skipCyclesRemaining) + " cycle(s)");
+                        }
+
+                        String learningMsg = "{\"valve\":" + String(valveIndex) +
+                                           ",\"fillTime\":" + String(fillTime) +
+                                           ",\"baseline\":" + String(valve->baselineFillTime) +
+                                           ",\"ratio\":" + String(fillRatio, 2) +
+                                           ",\"skipCycles\":" + String(valve->skipCyclesRemaining) + "}";
+                        publishStateChange("learning", learningMsg);
+                    }
+                }
+
                 closeValve(valveIndex);
                 valve->phase = PHASE_IDLE;
                 valve->wateringRequested = false;
@@ -720,6 +898,12 @@ static void processCommand(const String& command) {
     // start_sequence_0,2,4 - start sequential watering of specific valves (comma-separated)
     // stop_all - stop all watering (including sequential mode)
     // state - publish current state
+    // clear_timeout_N - clear timeout flag for valve N
+    // LEARNING ALGORITHM COMMANDS:
+    // reset_calibration_N - reset calibration for valve N (re-learn baseline)
+    // reset_all_calibrations - reset calibration for all valves
+    // learning_status - print learning status for all valves
+    // set_skip_cycles_N_X - manually set valve N to skip X cycles
     
     if (command.startsWith("start_valve_")) {
         int valveIndex = command.substring(12).toInt();
@@ -775,6 +959,33 @@ static void processCommand(const String& command) {
         int valveIndex = command.substring(14).toInt();
         DEBUG_SERIAL.println("Command: Clear timeout flag for valve " + String(valveIndex));
         wateringSystem->clearTimeoutFlag(valveIndex);
+
+    // LEARNING ALGORITHM COMMANDS
+    } else if (command.startsWith("reset_calibration_")) {
+        int valveIndex = command.substring(18).toInt();
+        DEBUG_SERIAL.println("Command: Reset calibration for valve " + String(valveIndex));
+        wateringSystem->resetCalibration(valveIndex);
+
+    } else if (command == "reset_all_calibrations") {
+        DEBUG_SERIAL.println("Command: Reset all calibrations");
+        wateringSystem->resetAllCalibrations();
+
+    } else if (command == "learning_status") {
+        DEBUG_SERIAL.println("Command: Print learning status");
+        wateringSystem->printLearningStatus();
+
+    } else if (command.startsWith("set_skip_cycles_")) {
+        // Format: set_skip_cycles_0_5 (valve 0, skip 5 cycles)
+        int firstUnderscore = command.indexOf('_', 16);
+        if (firstUnderscore != -1) {
+            String valveStr = command.substring(16, firstUnderscore);
+            String cyclesStr = command.substring(firstUnderscore + 1);
+            int valveIndex = valveStr.toInt();
+            int cycles = cyclesStr.toInt();
+            DEBUG_SERIAL.println("Command: Set skip cycles for valve " + String(valveIndex) + " to " + String(cycles));
+            wateringSystem->setSkipCycles(valveIndex, cycles);
+        }
+
     } else {
         DEBUG_SERIAL.println("Unknown command: " + command);
     }

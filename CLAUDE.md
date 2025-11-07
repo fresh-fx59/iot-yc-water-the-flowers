@@ -49,6 +49,49 @@ platformio run -t upload -e esp32-s3-devkitc-1 && \
 platformio device monitor -b 115200 --raw
 ```
 
+## Code Organization (v1.4.0 Refactored)
+
+The codebase has been refactored for better maintainability and follows standard C++ organization practices:
+
+### File Structure
+
+```
+include/
+  ├── config.h                      # All constants and pin definitions
+  ├── ValveController.h             # Valve state struct and enums
+  ├── WateringSystem.h              # Main watering logic class
+  ├── WateringSystemStateMachine.h  # State machine implementation
+  ├── NetworkManager.h              # WiFi + MQTT management
+  ├── api_handlers.h                # Web API endpoints
+  ├── ota.h                         # OTA updates and web server
+  └── secret.h                      # WiFi/MQTT credentials (not in git)
+
+src/
+  └── main.cpp                      # Entry point (~100 lines)
+```
+
+### Key Design Principles
+
+1. **Separation of Concerns**: Each header file has a single, well-defined responsibility
+2. **Helper Functions**: Complex logic extracted into small, focused functions (e.g., `LearningAlgorithm` namespace)
+3. **Clear Documentation**: Each section is clearly marked with comments
+4. **Standard Patterns**: Uses inline functions in headers (common for embedded C++)
+5. **Const Correctness**: All configuration constants properly defined
+
+### Working with the Refactored Code
+
+**Adding new features**:
+- Hardware config → `config.h`
+- Valve logic → `WateringSystem.h` or `WateringSystemStateMachine.h`
+- Network features → `NetworkManager.h`
+- Web API → `api_handlers.h`
+
+**The main.cpp file** is now clean and minimal (~100 lines vs 1159 lines before):
+- Global object declarations
+- setup() function
+- loop() function
+- API handler registration
+
 ## Architecture
 
 ### Watering Algorithm Flow
@@ -71,9 +114,9 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 
 ### Core Classes & System Organization
 
-**All classes defined in src/main.cpp** (947 lines total):
+**Classes are now properly separated into header files** (v1.4.0 refactored):
 
-- **WateringSystem** (main.cpp:111-520): Main orchestrator managing 6 ValveController instances
+- **WateringSystem** (WateringSystem.h): Main orchestrator managing 6 ValveController instances
   - `processWateringLoop()`: State machine executor called every loop, processes all valves
   - `startWatering(valveIndex)`: Initiates watering cycle for one valve
   - `startSequentialWatering()`: Waters all valves 5→0 in sequence
@@ -81,24 +124,32 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
   - `publishCurrentState()`: MQTT state updates every 2 seconds (cached in `lastStateJson`)
   - `getLastState()`: Returns cached state JSON for web API
   - `clearTimeoutFlag(valveIndex)`: Clears timeout flag for recovery
+  - Learning methods: `resetCalibration()`, `resetAllCalibrations()`, `printLearningStatus()`, `setSkipCycles()`
 
-- **ValveController** (main.cpp:87-120): Per-valve state tracking struct
+- **ValveController** (ValveController.h): Per-valve state tracking struct
   - Tracks: phase, state, rainDetected, valveOpenTime, wateringStartTime, timeoutOccurred
   - **Learning fields**: baselineFillTime, lastFillTime, skipCyclesRemaining, isCalibrated, totalWateringCycles
   - Each valve operates independently with its own state machine and learning algorithm
+  - Helper function: `phaseToString()` for debugging and state publishing
 
-- **MQTTManager** (main.cpp:522-652): Yandex IoT Core communication
+- **NetworkManager** (NetworkManager.h): Combined WiFi + MQTT management
+  - WiFi: `connectWiFi()`, `isWiFiConnected()` with 30-attempt retry logic
+  - MQTT: `connectMQTT()`, `loopMQTT()`, `isMQTTConnected()`
   - Subscribes to: `$devices/{DEVICE_ID}/commands`
-  - Publishes state to: `$devices/{DEVICE_ID}/state`
-  - Publishes events to: `$devices/{DEVICE_ID}/events`
+  - Publishes to: `$devices/{DEVICE_ID}/state` and `events`
   - Command parser in `processCommand()` handles all MQTT commands
+  - Command helpers: `handleSequenceCommand()`, `handleSkipCyclesCommand()`
 
-- **WiFiManager** (main.cpp:654-752): Connection management with 30-attempt retry logic
-  - Handles reconnection automatically in loop() if disconnected
+- **LearningAlgorithm** namespace (WateringSystem.h): Helper functions for learning logic
+  - `calculateSkipCycles()`: Determines cycles to skip based on fill ratio
+  - `calculateWaterRemaining()`: Calculates water remaining percentage
+  - `calculateConsumptionPercent()`: Gets consumption percentage
 
-**Separate header files**:
+**Supporting files**:
+- **config.h**: All constants, pin definitions, and configuration
 - **ota.h**: OTA updates, web server setup, LittleFS file serving
-- **api_handlers.h**: API endpoint declarations (implementations at end of main.cpp:872-946)
+- **api_handlers.h**: Web API endpoint implementations
+- **secret.h**: WiFi/MQTT credentials (never commit)
 
 ### Hardware Configuration (ESP32-S3-DevKitC-1)
 
@@ -238,52 +289,54 @@ Test menu commands (see README.md lines 334-377):
 ## Making Code Changes
 
 ### Modifying Watering Logic
-- Core state machine: `processValve()` method in WateringSystem class (main.cpp:~490-650)
-- Phase transitions happen in switch statement based on `valve->phase`
-- Learning algorithm calculates in PHASE_CLOSING_VALVE (main.cpp:~536-605)
-- Skip cycle check happens in `startWatering()` (main.cpp:~194-205)
+- **State machine**: `WateringSystemStateMachine.h` - `processValve()` method
+- **Learning algorithm**: `WateringSystem.h` - `processLearningData()`, helper functions in `LearningAlgorithm` namespace
+- **Skip cycle check**: `WateringSystem.h` - `startWatering()` method
+- **Constants**: `config.h` - `LEARNING_*` constants
 - Always test with hardware test program first before deploying full system
 
 ### Adding New MQTT Commands
-1. Add command string parsing in `MQTTManager::processCommand()` (main.cpp:~888-985)
-2. Call appropriate WateringSystem method
-3. Test via MQTT publish: `mosquitto_pub -t "$devices/DEVICE_ID/commands" -m "your_command"`
-4. Update command documentation comment at top of processCommand()
+1. Add command parsing in `NetworkManager.h` - `processCommand()` method
+2. Create helper method if command is complex (see `handleSequenceCommand()`)
+3. Call appropriate WateringSystem method
+4. Test via MQTT: `mosquitto_pub -t "$devices/DEVICE_ID/commands" -m "your_command"`
 
 ### Adding New API Endpoints
-1. Declare function in `api_handlers.h`
-2. Implement at end of main.cpp (after line 872)
-3. Register in `registerApiHandlers()` function (main.cpp:938-946)
-4. Remember: API uses 1-indexed valves, convert to 0-indexed for internal calls
+1. Add handler function in `api_handlers.h` (inline implementation)
+2. Register in `main.cpp` - `registerApiHandlers()` function
+3. Remember: API uses 1-indexed valves (1-6), convert to 0-indexed (0-5) for internal calls
+4. Handler has access to `g_wateringSystem_ptr` global
 
 ### Modifying Web Interface
 1. Edit files in `/data` directory (NOT `/web`)
-2. Always rebuild filesystem: `platformio run -t buildfs -e esp32-s3-devkitc-1`
+2. Rebuild filesystem: `platformio run -t buildfs -e esp32-s3-devkitc-1`
 3. Upload filesystem: `platformio run -t uploadfs -e esp32-s3-devkitc-1`
 4. Changes won't appear until both buildfs and uploadfs complete
 
-### Changing Pin Assignments
-1. Update pin defines at top of main.cpp (lines 17-46)
-2. Update arrays: VALVE_PINS[6] and RAIN_SENSOR_PINS[6] (lines 45-46)
-3. Update hardware documentation in this file
+### Changing Configuration
+- **Pin assignments**: `config.h` - Update `#define` statements and arrays
+- **Timing constants**: `config.h` - Update `*_INTERVAL` and `*_DELAY` constants
+- **Learning parameters**: `config.h` - Update `LEARNING_*` constants
+- **MQTT settings**: `config.h` - Update `MQTT_*` constants
+- **Credentials**: `include/secret.h` (never commit this file)
 
 ## Program Flow & Initialization
 
-**setup() sequence** (main.cpp:800-842):
+**setup() sequence** (main.cpp:45-85):
 1. Initialize serial at 115200 baud
 2. Print banner with version and device info
 3. `wateringSystem.init()` - Initialize pins and hardware
-4. `MQTTManager::setWateringSystem()` - Link MQTT to watering system
-5. `MQTTManager::init()` - Configure MQTT client
-6. `WiFiManager::connect()` - Connect to WiFi (30 retries)
-7. `MQTTManager::connect()` - Connect to MQTT broker
+4. `NetworkManager::setWateringSystem()` - Link network manager to watering system
+5. `NetworkManager::init()` - Configure MQTT client
+6. `NetworkManager::connectWiFi()` - Connect to WiFi (30 retries)
+7. `NetworkManager::connectMQTT()` - Connect to MQTT broker
 8. `setWateringSystemRef()` - **CRITICAL**: Set global pointer for web API
 9. `setupOta()` - Initialize web server and OTA
-10. API handlers registered via `registerApiHandlers()`
+10. API handlers registered via `registerApiHandlers()` (called from setupOta)
 
-**loop() sequence** (main.cpp:844-864):
-1. Check WiFi connection, reconnect if needed
-2. `MQTTManager::loop()` - Process MQTT messages
+**loop() sequence** (main.cpp:91-107):
+1. Check WiFi connection with `NetworkManager::isWiFiConnected()`, reconnect if needed
+2. `NetworkManager::loopMQTT()` - Process MQTT messages and handle reconnection
 3. `wateringSystem.processWateringLoop()` - Execute valve state machines
 4. `loopOta()` - Handle web server requests
 5. 10ms delay to prevent watchdog reset

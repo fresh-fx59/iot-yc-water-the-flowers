@@ -1,6 +1,8 @@
 #ifndef WATERING_SYSTEM_STATE_MACHINE_H
 #define WATERING_SYSTEM_STATE_MACHINE_H
 
+#include "DebugHelper.h"
+
 // This file contains the state machine implementation for WateringSystem
 // Included at the end of WateringSystem.h
 
@@ -17,7 +19,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             openValve(valveIndex);
             valve->valveOpenTime = currentTime;
             valve->phase = PHASE_WAITING_STABILIZATION;
-            DEBUG_SERIAL.println("  Valve " + String(valveIndex) + " opened");
+            DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
             publishStateChange("valve" + String(valveIndex), "valve_opened");
             break;
 
@@ -25,7 +27,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             if (currentTime - valve->valveOpenTime >= VALVE_STABILIZATION_DELAY) {
                 valve->phase = PHASE_CHECKING_INITIAL_RAIN;
                 valve->lastRainCheck = currentTime;
-                DEBUG_SERIAL.println("Step 2: Checking rain sensor (water is flowing now)...");
+                DebugHelper::debug("Step 2: Checking rain sensor (water is flowing now)...");
             }
             break;
 
@@ -36,17 +38,24 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 valve->rainDetected = isRaining;
 
                 if (isRaining) {
-                    // Sensor already wet - abort without starting pump
-                    DEBUG_SERIAL.println("  Sensor " + String(valveIndex) + " is already WET");
-                    DEBUG_SERIAL.println("  Pump will NOT start - closing valve");
-                    DEBUG_SERIAL.println("═══════════════════════════════════════");
-                    publishStateChange("valve" + String(valveIndex), "already_wet_abort");
-                    valve->phase = PHASE_CLOSING_VALVE;
+                    // Sensor already wet = TRAY IS FULL - treat as successful fill
+                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
+
+                    // SAFETY: Close valve immediately
+                    closeValve(valveIndex);
+                    updatePumpState();
+
+                    // CRITICAL: Tray is full - update last watering time to NOW
+                    // This makes auto-watering wait for consumption period before retrying
+                    valve->lastWateringCompleteTime = currentTime;
+                    DebugHelper::debug("  Updated lastWateringCompleteTime - auto-watering will wait for consumption");
+
+                    publishStateChange("valve" + String(valveIndex), "already_full_skipped");
+                    valve->phase = PHASE_IDLE;
+                    valve->wateringRequested = false;
                 } else {
                     // Sensor dry - start watering
-                    DEBUG_SERIAL.println("  Sensor " + String(valveIndex) + " is DRY");
-                    DEBUG_SERIAL.println("Step 3: Starting pump, watering until sensor is wet...");
-                    DEBUG_SERIAL.println("  Safety timeout: " + String(MAX_WATERING_TIME / 1000) + " seconds");
+                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(MAX_WATERING_TIME / 1000) + "s)");
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
                     valve->phase = PHASE_WATERING;
@@ -57,20 +66,21 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             break;
 
         case PHASE_WATERING:
-            // Check timeout first
+            // SAFETY CHECK 1: Check timeout first - ALWAYS RESPECT MAX WATERING TIME
             if (currentTime - valve->wateringStartTime >= MAX_WATERING_TIME) {
-                DEBUG_SERIAL.println("\n⚠️  TIMEOUT: Valve " + String(valveIndex) + " exceeded maximum watering time!");
-                DEBUG_SERIAL.println("  Max time: " + String(MAX_WATERING_TIME / 1000) + " seconds");
-                DEBUG_SERIAL.println("  Sensor may be faulty or water supply issue");
-                DEBUG_SERIAL.println("  SAFETY STOP - Closing valve");
+                DebugHelper::debugImportant("⚠️ TIMEOUT: Valve " + String(valveIndex) + " exceeded " + String(MAX_WATERING_TIME / 1000) + "s - IMMEDIATE SAFETY STOP");
+
+                // SAFETY: Immediately close valve and stop pump
                 valve->timeoutOccurred = true;
-                valve->phase = PHASE_CLOSING_VALVE;
+                closeValve(valveIndex);
                 updatePumpState();
+
                 publishStateChange("valve" + String(valveIndex), "timeout_safety_stop");
+                valve->phase = PHASE_CLOSING_VALVE;  // Go to cleanup phase for learning data
                 break;
             }
 
-            // Monitor rain sensor
+            // SAFETY CHECK 2: Monitor rain sensor - ALWAYS RESPECT RAIN SENSOR
             if (currentTime - valve->lastRainCheck >= RAIN_CHECK_INTERVAL) {
                 valve->lastRainCheck = currentTime;
                 bool isRaining = readRainSensor(valveIndex);
@@ -80,32 +90,52 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 if ((currentTime - valve->wateringStartTime) % 1000 < RAIN_CHECK_INTERVAL) {
                     int elapsed = (currentTime - valve->wateringStartTime) / 1000;
                     int remaining = (MAX_WATERING_TIME - (currentTime - valve->wateringStartTime)) / 1000;
-                    DEBUG_SERIAL.println("  Valve " + String(valveIndex) + " watering: " +
-                                    String(elapsed) + "s elapsed, " +
-                                    String(remaining) + "s remaining, Sensor: " +
-                                    String(isRaining ? "WET" : "DRY"));
+                    DebugHelper::debug("Valve " + String(valveIndex) + ": " + String(elapsed) + "s/" + String(remaining) + "s, Sensor: " + String(isRaining ? "WET" : "DRY"));
                 }
 
                 if (isRaining) {
-                    // Success - sensor detected water
-                    int totalTime = (currentTime - valve->wateringStartTime) / 1000;
-                    DEBUG_SERIAL.println("  Sensor " + String(valveIndex) + " detected WATER ✓");
-                    DEBUG_SERIAL.println("  Total watering time: " + String(totalTime) + " seconds");
-                    DEBUG_SERIAL.println("Step 4: Stopping pump and closing valve");
-                    DEBUG_SERIAL.println("═══════════════════════════════════════");
+                    // SAFETY: Sensor detected water - immediately close valve and stop pump
+                    // Calculate FULL cycle time: from valve open to valve close
+                    int totalTime = (currentTime - valve->valveOpenTime) / 1000;
+                    int pumpTime = (currentTime - valve->wateringStartTime) / 1000;
+                    DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
+
+                    // SAFETY: Immediately close valve and stop pump
+                    closeValve(valveIndex);
+                    updatePumpState();
+
                     publishStateChange("valve" + String(valveIndex), "watering_complete");
-                    valve->phase = PHASE_CLOSING_VALVE;
-                    updatePumpState();
+                    valve->phase = PHASE_CLOSING_VALVE;  // Go to cleanup phase for learning data
                 } else if (!valve->wateringRequested) {
-                    // Manual stop requested
-                    DEBUG_SERIAL.println("  Manual stop requested for valve " + String(valveIndex));
-                    valve->phase = PHASE_CLOSING_VALVE;
+                    // Manual stop requested - immediately close valve and stop pump
+                    DebugHelper::debugImportant("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
+
+                    // SAFETY: Immediately close valve and stop pump
+                    closeValve(valveIndex);
                     updatePumpState();
+
+                    valve->phase = PHASE_IDLE;  // Go directly to IDLE (no learning data for manual stop)
+                    valve->wateringRequested = false;
                 }
             }
             break;
 
         case PHASE_CLOSING_VALVE:
+            // Record session end for Telegram before processing learning data
+            if (telegramSessionActive && sessionData[valveIndex].active) {
+                String status;
+                if (valve->timeoutOccurred) {
+                    status = "⚠️ TIMEOUT";
+                } else if (valve->rainDetected) {
+                    status = "✓ OK";
+                } else if (valve->wateringStartTime == 0) {
+                    status = "⚠️ ALREADY_WET";
+                } else {
+                    status = "⚠️ MANUAL_STOP";
+                }
+                recordSessionEnd(valveIndex, status);
+            }
+
             // Process learning data for successful waterings
             processLearningData(valve, currentTime);
 
@@ -118,7 +148,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             break;
 
         case PHASE_ERROR:
-            DEBUG_SERIAL.println("Valve " + String(valveIndex) + " in error state");
+            DebugHelper::debugImportant("❌ ERROR: Valve " + String(valveIndex) + " in error state");
             closeValve(valveIndex);
             valve->phase = PHASE_IDLE;
             updatePumpState();
@@ -158,17 +188,40 @@ inline void WateringSystem::publishCurrentState() {
             stateJson += ",\"remaining_seconds\":" + String(remainingSeconds);
         }
 
-        // Add learning data
+        // Add time-based learning data
         stateJson += ",\"learning\":{";
         stateJson += "\"calibrated\":" + String(valve->isCalibrated ? "true" : "false");
+        stateJson += ",\"auto_watering\":" + String(valve->autoWateringEnabled ? "true" : "false");
+
         if (valve->isCalibrated) {
-            stateJson += ",\"baseline_ms\":" + String(valve->baselineFillTime);
-            stateJson += ",\"last_fill_ms\":" + String(valve->lastFillTime);
-            stateJson += ",\"skip_cycles\":" + String(valve->skipCyclesRemaining);
+            unsigned long currentTime = millis();
+
+            stateJson += ",\"baseline_fill_ms\":" + String(valve->baselineFillDuration);
+            stateJson += ",\"last_fill_ms\":" + String(valve->lastFillDuration);
+            stateJson += ",\"empty_duration_ms\":" + String(valve->emptyToFullDuration);
             stateJson += ",\"total_cycles\":" + String(valve->totalWateringCycles);
-            if (valve->lastFillTime > 0) {
-                float ratio = (float)valve->lastFillTime / (float)valve->baselineFillTime;
-                stateJson += ",\"fill_ratio\":" + String(ratio, 2);
+
+            if (valve->emptyToFullDuration > 0 && valve->lastWateringCompleteTime > 0) {
+                // Calculate current water level
+                float currentWaterLevel = calculateCurrentWaterLevel(valve, currentTime);
+                stateJson += ",\"water_level_pct\":" + String((int)currentWaterLevel);
+                stateJson += ",\"tray_state\":\"" + String(getTrayState(currentWaterLevel)) + "\"";
+
+                // Time since last watering
+                unsigned long timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
+                stateJson += ",\"time_since_watering_ms\":" + String(timeSinceWatering);
+
+                // Time until empty
+                if (currentWaterLevel > 0 && timeSinceWatering < valve->emptyToFullDuration) {
+                    unsigned long timeUntilEmpty = valve->emptyToFullDuration - timeSinceWatering;
+                    stateJson += ",\"time_until_empty_ms\":" + String(timeUntilEmpty);
+                } else {
+                    stateJson += ",\"time_until_empty_ms\":0";
+                }
+            }
+
+            if (valve->lastFillDuration > 0 && valve->lastWaterLevelPercent >= 0) {
+                stateJson += ",\"last_water_level_pct\":" + String((int)valve->lastWaterLevelPercent);
             }
         }
         stateJson += "}";
@@ -198,7 +251,7 @@ inline void WateringSystem::publishStateChange(const String& component, const St
                        "\",\"timestamp\":" + String(millis()) + "}";
 
     if (!mqttClient.publish(EVENT_TOPIC.c_str(), eventJson.c_str())) {
-        DEBUG_SERIAL.println("Failed to publish state change: " + component + " -> " + state);
+        DebugHelper::debug("⚠️ MQTT publish failed: " + component + " -> " + state);
     }
 }
 

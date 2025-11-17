@@ -8,9 +8,10 @@
 #include <ESPmDNS.h>
 #include <Update.h>
 #include <LittleFS.h>
+#include "config.h"
 #include <secret.h>
 
-const char* host = "esp32-watering";
+// OTA configuration (hostname now in config.h)
 const char* update_path = "/firmware";
 const char* update_username = OTA_USER;
 const char* update_password = OTA_PASSWORD;
@@ -130,7 +131,7 @@ void setupOta() {
   Serial.println();
 
   // Start mDNS
-  if (MDNS.begin(host)) {
+  if (MDNS.begin(OTA_HOSTNAME)) {
     Serial.println("✓ mDNS responder started");
   } else {
     Serial.println("ERROR: mDNS responder failed!");
@@ -246,11 +247,11 @@ void setupOta() {
   
   Serial.println("=================================");
   Serial.println("Web Control Server Ready!");
-  Serial.printf("Control Panel: http://%s.local\n", host);
+  Serial.printf("Control Panel: http://%s.local\n", OTA_HOSTNAME);
   Serial.print("Or: http://");
   Serial.print(WiFi.localIP());
   Serial.println();
-  Serial.printf("Firmware Update: http://%s.local/firmware\n", host);
+  Serial.printf("Firmware Update: http://%s.local/firmware\n", OTA_HOSTNAME);
   Serial.printf("Username: %s\n", update_username);
   Serial.printf("Password: %s\n", update_password);
   Serial.println("=================================");

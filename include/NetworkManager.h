@@ -130,99 +130,14 @@ private:
             return;
         }
 
-        // Basic watering commands
-        if (command.startsWith("start_valve_")) {
-            int valveIndex = command.substring(12).toInt();
-            DEBUG_SERIAL.println("Command: Start watering valve " + String(valveIndex));
-            wateringSystem->startWatering(valveIndex);
-        }
-        else if (command.startsWith("stop_valve_")) {
-            int valveIndex = command.substring(11).toInt();
-            DEBUG_SERIAL.println("Command: Stop watering valve " + String(valveIndex));
-            wateringSystem->stopWatering(valveIndex);
-        }
-        else if (command == "start_all") {
-            DEBUG_SERIAL.println("Command: Start sequential watering (all valves)");
+        // Only supported command: start_all
+        if (command == "start_all") {
+            DEBUG_SERIAL.println("MQTT Command: Start sequential watering (all valves)");
             wateringSystem->startSequentialWatering();
         }
-        else if (command.startsWith("start_sequence_")) {
-            handleSequenceCommand(command);
-        }
-        else if (command == "stop_all") {
-            DEBUG_SERIAL.println("Command: Stop all watering");
-            wateringSystem->stopSequentialWatering();
-            for (int i = 0; i < NUM_VALVES; i++) {
-                wateringSystem->stopWatering(i);
-            }
-        }
-        else if (command == "state") {
-            DEBUG_SERIAL.println("Command: Publish state");
-            wateringSystem->publishCurrentState();
-        }
-        else if (command.startsWith("clear_timeout_")) {
-            int valveIndex = command.substring(14).toInt();
-            DEBUG_SERIAL.println("Command: Clear timeout flag for valve " + String(valveIndex));
-            wateringSystem->clearTimeoutFlag(valveIndex);
-        }
-        // Learning algorithm commands
-        else if (command.startsWith("reset_calibration_")) {
-            int valveIndex = command.substring(18).toInt();
-            DEBUG_SERIAL.println("Command: Reset calibration for valve " + String(valveIndex));
-            wateringSystem->resetCalibration(valveIndex);
-        }
-        else if (command == "reset_all_calibrations") {
-            DEBUG_SERIAL.println("Command: Reset all calibrations");
-            wateringSystem->resetAllCalibrations();
-        }
-        else if (command == "learning_status") {
-            DEBUG_SERIAL.println("Command: Print learning status");
-            wateringSystem->printLearningStatus();
-        }
-        else if (command.startsWith("set_skip_cycles_")) {
-            handleSkipCyclesCommand(command);
-        }
         else {
-            DEBUG_SERIAL.println("Unknown command: " + command);
-        }
-    }
-
-    // ========== Command Helpers ==========
-    static void handleSequenceCommand(const String& command) {
-        // Parse comma-separated valve indices: start_sequence_0,2,4
-        String valveList = command.substring(15);
-        int valveIndices[NUM_VALVES];
-        int count = 0;
-
-        int startPos = 0;
-        int commaPos = valveList.indexOf(',');
-
-        while (commaPos != -1 && count < NUM_VALVES) {
-            String valveStr = valveList.substring(startPos, commaPos);
-            valveIndices[count++] = valveStr.toInt();
-            startPos = commaPos + 1;
-            commaPos = valveList.indexOf(',', startPos);
-        }
-
-        // Get last valve
-        if (startPos < valveList.length() && count < NUM_VALVES) {
-            String valveStr = valveList.substring(startPos);
-            valveIndices[count++] = valveStr.toInt();
-        }
-
-        DEBUG_SERIAL.println("Command: Start sequential watering (custom sequence)");
-        wateringSystem->startSequentialWateringCustom(valveIndices, count);
-    }
-
-    static void handleSkipCyclesCommand(const String& command) {
-        // Format: set_skip_cycles_0_5 (valve 0, skip 5 cycles)
-        int firstUnderscore = command.indexOf('_', 16);
-        if (firstUnderscore != -1) {
-            String valveStr = command.substring(16, firstUnderscore);
-            String cyclesStr = command.substring(firstUnderscore + 1);
-            int valveIndex = valveStr.toInt();
-            int cycles = cyclesStr.toInt();
-            DEBUG_SERIAL.println("Command: Set skip cycles for valve " + String(valveIndex) + " to " + String(cycles));
-            wateringSystem->setSkipCycles(valveIndex, cycles);
+            DEBUG_SERIAL.println("Unknown MQTT command: " + command);
+            DEBUG_SERIAL.println("Only 'start_all' command is supported");
         }
     }
 

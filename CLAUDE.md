@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water pump. The system waters plants based on rain sensor feedback, publishes state to Yandex IoT Core MQTT, and provides a web interface for control.
+ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water pump. The system waters plants based on rain sensor feedback, automatically waters when trays are empty using time-based learning, publishes state to Yandex IoT Core MQTT, sends Telegram notifications for watering sessions, and provides a web interface for control.
 
 **Key Technologies**:
 - Platform: ESP32-S3-DevKitC-1 (Espressif32, Arduino framework)
-- Filesystem: LittleFS (1MB partition for web UI files)
-- Libraries: PubSubClient 2.8 (MQTT), WiFiClientSecure (TLS), WebServer, mDNS
-- Current Version: 1.3.4 (defined in main.cpp:8)
+- Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
+- Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
+- Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
+- Current Version: 1.5.0 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -49,34 +50,38 @@ platformio run -t upload -e esp32-s3-devkitc-1 && \
 platformio device monitor -b 115200 --raw
 ```
 
-## Code Organization (v1.4.0 Refactored)
+## Code Organization (v1.5.0 - Time-Based Learning)
 
-The codebase has been refactored for better maintainability and follows standard C++ organization practices:
+The codebase follows standard C++ organization with inline implementations in headers:
 
 ### File Structure
 
 ```
 include/
   ├── config.h                      # All constants and pin definitions
-  ├── ValveController.h             # Valve state struct and enums
-  ├── WateringSystem.h              # Main watering logic class
-  ├── WateringSystemStateMachine.h  # State machine implementation
+  ├── ValveController.h             # Valve state struct, enums, helper functions
+  ├── WateringSystem.h              # Main watering logic + time-based learning
+  ├── WateringSystemStateMachine.h  # State machine + MQTT state publishing
   ├── NetworkManager.h              # WiFi + MQTT management
+  ├── TelegramNotifier.h            # Telegram Bot API integration
   ├── api_handlers.h                # Web API endpoints
   ├── ota.h                         # OTA updates and web server
-  └── secret.h                      # WiFi/MQTT credentials (not in git)
+  └── secret.h                      # WiFi/MQTT/Telegram credentials (not in git)
 
 src/
-  └── main.cpp                      # Entry point (~100 lines)
+  └── main.cpp                      # Entry point (~110 lines)
+
+data/
+  └── web/                          # Web UI files (served via LittleFS)
 ```
 
 ### Key Design Principles
 
 1. **Separation of Concerns**: Each header file has a single, well-defined responsibility
-2. **Helper Functions**: Complex logic extracted into small, focused functions (e.g., `LearningAlgorithm` namespace)
+2. **Helper Functions**: Complex logic extracted into namespaces (e.g., `LearningAlgorithm`)
 3. **Clear Documentation**: Each section is clearly marked with comments
 4. **Standard Patterns**: Uses inline functions in headers (common for embedded C++)
-5. **Const Correctness**: All configuration constants properly defined
+5. **Persistence**: Learning data saved to LittleFS, survives reboots
 
 ### Working with the Refactored Code
 
@@ -85,9 +90,11 @@ src/
 - Valve logic → `WateringSystem.h` or `WateringSystemStateMachine.h`
 - Network features → `NetworkManager.h`
 - Web API → `api_handlers.h`
+- Learning algorithm → `WateringSystem.h` (LearningAlgorithm namespace)
 
-**The main.cpp file** is now clean and minimal (~100 lines vs 1159 lines before):
+**The main.cpp file** is clean and minimal (~110 lines):
 - Global object declarations
+- LittleFS initialization
 - setup() function
 - loop() function
 - API handler registration
@@ -105,32 +112,55 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
    - If already wet: Close valve, abort (pump never turns on)
    - If dry: Proceed to watering phase
 5. **PHASE_WATERING**: Turn on pump, monitor sensor every 100ms until wet or 15s timeout
-6. **PHASE_CLOSING_VALVE**: Close valve, turn off pump if no other valves active
+6. **PHASE_CLOSING_VALVE**: Close valve, turn off pump if no other valves active, process learning data
 7. **PHASE_ERROR**: Error state (not currently used)
 
 **Critical Design Decision**: Valve opens BEFORE sensor check because rain sensors require water flow to produce accurate readings. The pump only turns on during the actual watering phase if the sensor is initially dry.
 
 **Sequential Watering**: When `startSequentialWatering()` is called, valves are watered in reverse order (5→0) one at a time. The next valve starts only after the previous completes its cycle.
 
+**Automatic Watering**: System automatically checks each valve every loop iteration. If time-based learning indicates a tray is empty AND auto-watering is enabled, it starts watering automatically.
+
 ### Core Classes & System Organization
 
-**Classes are now properly separated into header files** (v1.4.0 refactored):
+**Classes are properly separated into header files** (v1.5.0):
 
 - **WateringSystem** (WateringSystem.h): Main orchestrator managing 6 ValveController instances
-  - `processWateringLoop()`: State machine executor called every loop, processes all valves
-  - `startWatering(valveIndex)`: Initiates watering cycle for one valve
+  - `processWateringLoop()`: State machine executor + auto-watering checker, called every loop
+  - `checkAutoWatering()`: Checks if any tray is empty and needs automatic watering
+  - `startWatering(valveIndex)`: Initiates watering cycle, checks time-based skip logic
   - `startSequentialWatering()`: Waters all valves 5→0 in sequence
   - `startSequentialWateringCustom(indices[], count)`: Custom valve sequence
   - `publishCurrentState()`: MQTT state updates every 2 seconds (cached in `lastStateJson`)
   - `getLastState()`: Returns cached state JSON for web API
   - `clearTimeoutFlag(valveIndex)`: Clears timeout flag for recovery
-  - Learning methods: `resetCalibration()`, `resetAllCalibrations()`, `printLearningStatus()`, `setSkipCycles()`
+  - **Time-based learning methods**:
+    - `resetCalibration(valveIndex)`: Reset calibration for valve
+    - `resetAllCalibrations()`: Reset all valves
+    - `printLearningStatus()`: Print detailed time-based learning status
+    - `setAutoWatering(valveIndex, enabled)`: Enable/disable auto-watering per valve
+    - `setAllAutoWatering(enabled)`: Enable/disable auto-watering for all
+  - **Persistence methods**:
+    - `saveLearningData()`: Save learning data to `/learning_data.json`
+    - `loadLearningData()`: Load learning data on startup
 
 - **ValveController** (ValveController.h): Per-valve state tracking struct
   - Tracks: phase, state, rainDetected, valveOpenTime, wateringStartTime, timeoutOccurred
-  - **Learning fields**: baselineFillTime, lastFillTime, skipCyclesRemaining, isCalibrated, totalWateringCycles
-  - Each valve operates independently with its own state machine and learning algorithm
-  - Helper function: `phaseToString()` for debugging and state publishing
+  - **Time-based learning fields**:
+    - `lastWateringCompleteTime`: When tray became full (millis)
+    - `emptyToFullDuration`: How long water lasts (consumption time, ms)
+    - `baselineFillDuration`: Time to fill from empty (adaptive, updates when longer fill observed)
+    - `lastFillDuration`: Most recent fill duration
+    - `lastWaterLevelPercent`: Water level before last watering (0-100%)
+    - `isCalibrated`: Has baseline been established
+    - `totalWateringCycles`: Total successful cycles
+    - `autoWateringEnabled`: Auto-water when empty (default: true)
+  - Each valve operates independently with its own state machine and learning
+  - **Helper functions**:
+    - `phaseToString()`: Convert phase enum to string
+    - `calculateCurrentWaterLevel()`: Real-time water level based on time elapsed
+    - `getTrayState()`: Returns "empty", "full", or "between"
+    - `shouldWaterNow()`: Check if tray needs watering based on time
 
 - **NetworkManager** (NetworkManager.h): Combined WiFi + MQTT management
   - WiFi: `connectWiFi()`, `isWiFiConnected()` with 30-attempt retry logic
@@ -138,12 +168,12 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
   - Subscribes to: `$devices/{DEVICE_ID}/commands`
   - Publishes to: `$devices/{DEVICE_ID}/state` and `events`
   - Command parser in `processCommand()` handles all MQTT commands
-  - Command helpers: `handleSequenceCommand()`, `handleSkipCyclesCommand()`
+  - Command helper: `handleSequenceCommand()`
 
-- **LearningAlgorithm** namespace (WateringSystem.h): Helper functions for learning logic
-  - `calculateSkipCycles()`: Determines cycles to skip based on fill ratio
-  - `calculateWaterRemaining()`: Calculates water remaining percentage
-  - `calculateConsumptionPercent()`: Gets consumption percentage
+- **LearningAlgorithm** namespace (WateringSystem.h): Time-based learning helpers
+  - `calculateWaterLevelBefore()`: Calculate water level from fill duration ratio
+  - `calculateEmptyDuration()`: Estimate time until tray is empty
+  - `formatDuration()`: Format milliseconds to human-readable (e.g., "2d 4h")
 
 **Supporting files**:
 - **config.h**: All constants, pin definitions, and configuration
@@ -167,62 +197,172 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 - Power-on sequence: Set GPIO 18 HIGH, delay 100ms, read sensor, set LOW
 - Sensors configured with INPUT_PULLUP mode in setup
 
-### Dynamic Learning Algorithm
+### Time-Based Learning Algorithm (v1.5.0)
 
-**Purpose**: Automatically learns each tray's capacity and water consumption rate to optimize watering frequency.
+**Purpose**: Automatically learns each tray's capacity and water consumption rate to determine when to water based on actual time elapsed, not cycles.
 
 **How It Works**:
 
-1. **First Watering (Baseline Establishment)**:
-   - Assumes tray is empty
-   - Records fill time as baseline (e.g., Tray 1: 30s, Tray 2: 90s)
-   - Next cycle will water again to measure consumption
+1. **First Watering (Initial Calibration)**:
+   - Records fill duration as initial baseline
+   - Notes "Tray may not have been empty"
+   - Marks valve as calibrated
+   - Baseline will auto-update if a longer fill is observed later
 
-2. **Subsequent Waterings (Consumption Analysis)**:
-   - Measures current fill time
-   - Compares to baseline: `fill_ratio = current_fill_time / baseline_time`
-   - If ratio ≈ 1.0 (≥0.95): Tray was empty, water every cycle
-   - If ratio < 1.0: Tray had water remaining, calculate skip cycles
-   - Formula: `skip_cycles = floor(baseline / (baseline - current)) - 1`
+2. **Adaptive Baseline Learning**:
+   - If `fillDuration >= baselineFillDuration` → Updates baseline (tray was emptier)
+   - Baseline converges to true maximum capacity over time
+   - Self-calibrating, no manual intervention needed
 
-3. **Example Calculation**:
-   - Baseline: 30s (tray capacity)
-   - Current fill: 10s (only needed 1/3 capacity)
-   - Interpretation: Tray had 2/3 water remaining
-   - Consumption: 30s - 20s = 10s per cycle
-   - Cycles to empty: 30s / 10s = 3 cycles
-   - Action: Skip next 2 cycles
+3. **Consumption Tracking** (waterings after first):
+   - Measures current fill duration
+   - Calculates water level before watering: `(1 - fillDuration/baseline) × 100%`
+   - Calculates time to empty: `timeSinceLastWatering / (fillDuration/baseline)`
+   - Uses weighted average (70% old, 30% new) for stability
+   - Example:
+     - Baseline: 5.0s (max capacity)
+     - Current fill: 4.2s
+     - Water level before: (1 - 4.2/5.0) × 100% = 16%
+     - Time since last: 48 hours
+     - Estimated empty time: 48h / 0.84 = 57 hours
+
+4. **Automatic Watering Decision**:
+   - System checks: `currentTime - lastWateringCompleteTime >= emptyToFullDuration`
+   - If true AND `autoWateringEnabled` → Waters automatically
+   - Manual watering also checks this condition (smart skip)
+
+5. **Tray State Classification**:
+   - **Empty**: < 10% water level
+   - **Between**: 10-90% water level
+   - **Full**: > 90% water level
 
 **Key Features**:
 - Each valve learns independently (different tray sizes supported)
 - Adapts to varying consumption rates (temperature, humidity, plant needs)
-- Safety limits: Max 15 cycles skip, min 0 cycles
-- Persists across waterings but not across reboots
+- Baseline auto-updates when tray is emptier than before
+- Consumption smoothing prevents erratic behavior
+- Persists to flash storage (`/learning_data.json`)
+- Survives reboots and power cycles
+- Handles `millis()` overflow (every ~49 days)
 - Learning data published in MQTT state updates
 
 **Edge Cases**:
-- Fill ratio < 0.10: Tray >90% full, skip 10 cycles (very slow consumption)
 - Timeout occurred: Learning data not updated (sensor may be faulty)
 - Manual stop: Learning data not updated (incomplete watering)
+- First watering after reset: No skip logic applied
+- No consumption data yet: Auto-watering disabled until second successful watering
+
+**Example Learning Sequence**:
+```
+Cycle 1: Fill 3.5s → Baseline: 3.5s (initial, may be partial)
+Cycle 2: Fill 5.0s → Baseline: 5.0s ✨ (updated - tray was emptier)
+         Water before: 30%, Time to empty: 2d 4h
+Cycle 3: Fill 4.2s → Baseline: 5.0s (water was 16%)
+         Refines consumption estimate
+Cycle 4: Fill 5.2s → Baseline: 5.2s ✨ (even emptier)
+         Water before: 0%, Consumption rate updated
+Cycle 5: Fill 3.8s → Baseline: 5.2s (water was 27%)
+         System now stable and accurate
+```
 
 ### MQTT Commands
 
 Format: Plain text commands sent to `$devices/{DEVICE_ID}/commands`
 
-**Basic Watering**:
-- `start_valve_N` (N=0-5): Start single valve
-- `stop_valve_N`: Stop single valve
-- `start_all`: Sequential watering all valves
-- `start_sequence_0,2,4`: Custom sequence (comma-separated indices)
-- `stop_all`: Emergency stop all
-- `state`: Force state publish
-- `clear_timeout_N`: Clear timeout flag for valve N
+**Supported Command**:
+- `start_all`: Start sequential watering of all valves (5→0 order)
 
-**Learning Algorithm Commands**:
-- `reset_calibration_N`: Reset calibration for valve N (next watering establishes new baseline)
-- `reset_all_calibrations`: Reset all valves to uncalibrated state
-- `learning_status`: Print detailed learning status for all valves to serial
-- `set_skip_cycles_N_X`: Manually set valve N to skip X cycles (e.g., `set_skip_cycles_0_5`)
+**Notes**:
+- All other commands have been removed for simplicity
+- System automatically publishes state every 2 seconds
+- Auto-watering and learning features work automatically in background
+- No manual control of individual valves via MQTT
+
+### MQTT State Publishing
+
+Published to `$devices/{DEVICE_ID}/state` every 2 seconds. Example:
+
+```json
+{
+  "pump": "off",
+  "sequential_mode": false,
+  "valves": [
+    {
+      "id": 0,
+      "state": "closed",
+      "phase": "idle",
+      "rain": false,
+      "timeout": false,
+      "learning": {
+        "calibrated": true,
+        "auto_watering": true,
+        "baseline_fill_ms": 5200,
+        "last_fill_ms": 4200,
+        "empty_duration_ms": 86400000,
+        "total_cycles": 5,
+        "water_level_pct": 45,
+        "tray_state": "between",
+        "time_since_watering_ms": 43200000,
+        "time_until_empty_ms": 43200000,
+        "last_water_level_pct": 16
+      }
+    }
+  ]
+}
+```
+
+### Telegram Bot Notifications
+
+The system sends automatic Telegram notifications during sequential watering sessions.
+
+**Configuration** (in `include/secret.h`):
+```cpp
+#define TELEGRAM_BOT_TOKEN "your_bot_token"
+#define TELEGRAM_CHAT_ID "your_chat_id"
+```
+
+**Start Notification** - Sent when sequential watering begins:
+```
+🚿 Watering Started
+⏰ Session 12345s
+🔧 Trigger: MQTT Command
+🌱 Trays: 6, 5, 4, 3, 2, 1
+```
+
+**Completion Notification** - Sent when all valves complete:
+```
+✅ Watering Complete
+
+tray | duration(sec) | status
+-----|---------------|-------
+6    | 3.2          | ✓ OK
+5    | 4.5          | ✓ OK
+4    | 0.5          | ⚠️ ALREADY_WET
+3    | 14.5         | ⚠️ TIMEOUT
+2    | 2.8          | ⚠️ MANUAL_STOP
+1    | 3.8          | ✓ OK
+```
+
+**Status Meanings**:
+- `✓ OK`: Watering completed successfully (sensor detected water)
+- `⚠️ TIMEOUT`: Exceeded maximum watering time (20s)
+- `⚠️ ALREADY_WET`: Sensor was already wet when valve opened
+- `⚠️ MANUAL_STOP`: Watering was stopped manually before completion
+
+**Duration Calculation**: Time from valve open to final state (includes full watering cycle)
+
+**How It Works**:
+1. `TelegramNotifier` class in `TelegramNotifier.h` handles HTTP requests to Telegram Bot API
+2. `WateringSystem` tracks session data for each valve during sequential watering
+3. Start message sent immediately when `startSequentialWatering()` is called
+4. Each valve's duration and status recorded during watering cycle
+5. Completion table sent when all valves finish
+
+**Notes**:
+- Only triggered during sequential watering (not individual valve operations)
+- Uses direct HTTPS calls to `api.telegram.org`
+- Requires WiFi connection (silently fails if offline)
+- Session tracking data stored in `WateringSessionData` struct
 
 ### Web Interface
 
@@ -231,10 +371,10 @@ Format: Plain text commands sent to `$devices/{DEVICE_ID}/commands`
 - `css/style.css`: Styling
 - `js/app.js`: Frontend logic
 
-**API Endpoints** (defined in main.cpp:872-946):
+**API Endpoints**:
 - `GET /api/water?valve=N` (N=1-6): Start watering
 - `GET /api/stop?valve=N` or `?valve=all`: Stop watering
-- `GET /api/status`: Get current system state JSON
+- `GET /api/status`: Get current system state JSON (with time-based learning data)
 - `GET /firmware`: OTA update page (auth: admin/OTA_PASSWORD)
 
 **Important**: API uses 1-indexed valves (1-6), internal code uses 0-indexed (0-5)
@@ -249,6 +389,8 @@ Format: Plain text commands sent to `$devices/{DEVICE_ID}/commands`
 #define MQTT_PASSWORD "mqtt_password"
 #define OTA_USER "admin"
 #define OTA_PASSWORD "ota_password"
+#define TELEGRAM_BOT_TOKEN "your_bot_token"
+#define TELEGRAM_CHAT_ID "your_chat_id"
 ```
 
 ### Safety Features
@@ -257,13 +399,15 @@ Format: Plain text commands sent to `$devices/{DEVICE_ID}/commands`
 - **Timeout Flags**: Persist until cleared via `clear_timeout_N` command
 - **Pump Coordination**: Pump only runs when valves are in PHASE_WATERING and sensor is dry
 - **MQTT Failure Isolation**: Network issues never block watering algorithm
+- **Auto-Watering Safety**: Only triggers when calibrated AND enabled AND tray is calculated empty
+- **Data Persistence**: Learning data survives reboots, preventing re-calibration
 
 ### Testing & Debugging
 
 **Hardware test program**: `test-main.cpp.bak`
 To use: rename `src/main.cpp` → `main.cpp.bak`, rename `test-main.cpp.bak` → `src/main.cpp`, then build/upload
 
-Test menu commands (see README.md lines 334-377):
+Test menu commands:
 - `L`: Toggle LED
 - `R`: Read all rain sensors once
 - `M`: Monitor sensors continuously (press `S` to stop)
@@ -276,6 +420,9 @@ Test menu commands (see README.md lines 334-377):
 
 **Debug Output**: All system events print to serial console at 115200 baud. Key debug patterns:
 - `═══` headers mark major state changes (valve cycle start, sequential mode)
+- `🧠` prefix for learning algorithm updates
+- `✨` prefix for baseline updates
+- `⏰` prefix for auto-watering triggers
 - `✓` prefix for successful operations
 - `ERROR:` prefix for failures
 - Phase transitions print with step numbers and explanations
@@ -284,6 +431,8 @@ Test menu commands (see README.md lines 334-377):
 - Watch for "Timeout occurred!" messages during watering
 - Check `lastStateJson` cache for web API state discrepancies
 - Monitor MQTT connection status (system continues working if MQTT fails)
+- Use `learning_status` command to see detailed learning state
+- Check `/learning_data.json` file in LittleFS for persisted data
 - Use `platformio device monitor --raw` if seeing garbage characters
 
 ## Making Code Changes
@@ -291,15 +440,20 @@ Test menu commands (see README.md lines 334-377):
 ### Modifying Watering Logic
 - **State machine**: `WateringSystemStateMachine.h` - `processValve()` method
 - **Learning algorithm**: `WateringSystem.h` - `processLearningData()`, helper functions in `LearningAlgorithm` namespace
-- **Skip cycle check**: `WateringSystem.h` - `startWatering()` method
+- **Time-based skip check**: `WateringSystem.h` - `startWatering()` method (checks time instead of cycles)
+- **Auto-watering check**: `WateringSystem.h` - `checkAutoWatering()` method
 - **Constants**: `config.h` - `LEARNING_*` constants
 - Always test with hardware test program first before deploying full system
 
 ### Adding New MQTT Commands
-1. Add command parsing in `NetworkManager.h` - `processCommand()` method
-2. Create helper method if command is complex (see `handleSequenceCommand()`)
-3. Call appropriate WateringSystem method
-4. Test via MQTT: `mosquitto_pub -t "$devices/DEVICE_ID/commands" -m "your_command"`
+1. Add command parsing in `NetworkManager.h` - `processCommand()` method (currently only supports `start_all`)
+2. Call appropriate WateringSystem method
+3. Test via MQTT: `mosquitto_pub -t "$devices/DEVICE_ID/commands" -m "start_all"`
+
+**Note**: MQTT interface has been simplified to only support `start_all` command. Other control methods:
+- Web API (still supports individual valve control)
+- Auto-watering (automatic based on time-based learning)
+- Serial debugging commands (via hardware test program)
 
 ### Adding New API Endpoints
 1. Add handler function in `api_handlers.h` (inline implementation)
@@ -316,30 +470,52 @@ Test menu commands (see README.md lines 334-377):
 ### Changing Configuration
 - **Pin assignments**: `config.h` - Update `#define` statements and arrays
 - **Timing constants**: `config.h` - Update `*_INTERVAL` and `*_DELAY` constants
-- **Learning parameters**: `config.h` - Update `LEARNING_*` constants
+- **Learning parameters**: `config.h` - Update `LEARNING_*` constants (e.g., thresholds)
 - **MQTT settings**: `config.h` - Update `MQTT_*` constants
 - **Credentials**: `include/secret.h` (never commit this file)
 
+### Modifying Learning Algorithm
+- **Baseline update logic**: `WateringSystem.h` - `processLearningData()` (lines ~602-608)
+- **Consumption calculation**: `LearningAlgorithm::calculateEmptyDuration()` helper
+- **Smoothing factor**: Line 641 (currently 70% old, 30% new)
+- **Water level calculation**: `LearningAlgorithm::calculateWaterLevelBefore()` helper
+- **Auto-watering decision**: `shouldWaterNow()` helper in `ValveController.h`
+
+### Working with Persistence
+- **Save location**: `/learning_data.json` on LittleFS
+- **Save triggers**: After each successful watering, after calibration reset, manual `save_data` command
+- **Load trigger**: On `wateringSystem.init()` during startup
+- **Data format**: JSON with valve array containing all learning fields
+- **Testing**: Use LittleFS browser or read file via serial commands
+
 ## Program Flow & Initialization
 
-**setup() sequence** (main.cpp:45-85):
+**setup() sequence** (main.cpp):
 1. Initialize serial at 115200 baud
 2. Print banner with version and device info
-3. `wateringSystem.init()` - Initialize pins and hardware
-4. `NetworkManager::setWateringSystem()` - Link network manager to watering system
-5. `NetworkManager::init()` - Configure MQTT client
-6. `NetworkManager::connectWiFi()` - Connect to WiFi (30 retries)
-7. `NetworkManager::connectMQTT()` - Connect to MQTT broker
-8. `setWateringSystemRef()` - **CRITICAL**: Set global pointer for web API
-9. `setupOta()` - Initialize web server and OTA
-10. API handlers registered via `registerApiHandlers()` (called from setupOta)
+3. **Initialize LittleFS** for learning data persistence
+4. `wateringSystem.init()` - Initialize pins and hardware, **loads learning data from flash**
+5. `NetworkManager::setWateringSystem()` - Link network manager to watering system
+6. `NetworkManager::init()` - Configure MQTT client
+7. `NetworkManager::connectWiFi()` - Connect to WiFi (30 retries)
+8. **`syncTime()`** - Synchronize time with NTP servers (GMT+3, pool.ntp.org)
+9. `NetworkManager::connectMQTT()` - Connect to MQTT broker
+10. `setWateringSystemRef()` - **CRITICAL**: Set global pointer for web API
+11. `setupOta()` - Initialize web server and OTA
+12. API handlers registered via `registerApiHandlers()` (called from setupOta)
 
-**loop() sequence** (main.cpp:91-107):
+**loop() sequence** (main.cpp):
 1. Check WiFi connection with `NetworkManager::isWiFiConnected()`, reconnect if needed
 2. `NetworkManager::loopMQTT()` - Process MQTT messages and handle reconnection
-3. `wateringSystem.processWateringLoop()` - Execute valve state machines
+3. `wateringSystem.processWateringLoop()` - Execute valve state machines + **check auto-watering**
 4. `loopOta()` - Handle web server requests
 5. 10ms delay to prevent watchdog reset
+
+**processWateringLoop() sequence** (WateringSystem.h):
+1. **Check auto-watering** (if not in sequential mode): For each idle valve with auto-watering enabled, check if tray is empty based on time
+2. Process each valve's state machine
+3. Handle sequential watering transitions
+4. Publish state every 2 seconds
 
 ## Known Issues & Gotchas
 
@@ -347,6 +523,11 @@ Test menu commands (see README.md lines 334-377):
 2. **Filesystem Upload**: Always use `buildfs` before `uploadfs`. Files go to `/web/` not `/data/web/`
 3. **API vs Internal Indexing**: Web API uses 1-6, code uses 0-5 internally
 4. **Sensor Power**: GPIO 18 must go HIGH before reading sensors (100ms stabilization required)
-5. **Global Pointer**: `setWateringSystemRef()` MUST be called before `setupOta()` in setup() (main.cpp:836), otherwise web API will fail
-6. **Include Structure**: API handlers defined in api_handlers.h but implemented at end of main.cpp (872-946)
-7. **Network Independence**: Watering algorithm continues even if WiFi/MQTT disconnects (by design)
+5. **Global Pointer**: `setWateringSystemRef()` MUST be called before `setupOta()` in setup(), otherwise web API will fail
+6. **Network Independence**: Watering algorithm continues even if WiFi/MQTT disconnects (by design)
+7. **LittleFS Initialization Order**: LittleFS MUST be initialized before `wateringSystem.init()` because init() loads learning data
+8. **millis() Overflow**: System handles overflow every ~49 days by detecting when current < saved timestamp
+9. **Auto-Watering Default**: Auto-watering is ENABLED by default for all valves
+10. **Baseline Auto-Update**: Baseline updates automatically when longer fill observed (tray was emptier)
+11. **First Watering Assumption**: First watering may not be from empty; system learns true capacity over time
+12. **Consumption Smoothing**: Uses weighted average to prevent wild swings from single measurements

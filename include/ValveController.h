@@ -2,6 +2,7 @@
 #define VALVE_CONTROLLER_H
 
 #include <Arduino.h>
+#include "config.h"
 
 // ============================================
 // Enums
@@ -45,12 +46,16 @@ struct ValveController {
     unsigned long valveOpenTime;
     unsigned long wateringStartTime;
 
-    // Learning algorithm data
-    unsigned long baselineFillTime;   // Time to fill from empty (ms)
-    unsigned long lastFillTime;       // Most recent fill time (ms)
-    int skipCyclesRemaining;          // Cycles to skip before next watering
-    bool isCalibrated;                // Has baseline been established?
-    int totalWateringCycles;          // Total successful cycles
+    // Time-based learning algorithm data
+    unsigned long lastWateringCompleteTime;  // Timestamp when tray became full (millis)
+    unsigned long lastWateringAttemptTime;   // Timestamp of last watering attempt (successful or not)
+    unsigned long emptyToFullDuration;       // Learned time for tray to go from full to empty (consumption time, ms)
+    unsigned long baselineFillDuration;      // Time to fill from completely empty (ms)
+    unsigned long lastFillDuration;          // Most recent fill duration (ms)
+    float lastWaterLevelPercent;             // Last measured water level before watering (0-100%)
+    bool isCalibrated;                       // Has baseline been established?
+    int totalWateringCycles;                 // Total successful cycles
+    bool autoWateringEnabled;                // Enable automatic watering when empty
 
     // Constructor
     ValveController(int idx) :
@@ -63,11 +68,15 @@ struct ValveController {
         lastRainCheck(0),
         valveOpenTime(0),
         wateringStartTime(0),
-        baselineFillTime(0),
-        lastFillTime(0),
-        skipCyclesRemaining(0),
+        lastWateringCompleteTime(0),
+        lastWateringAttemptTime(0),
+        emptyToFullDuration(0),
+        baselineFillDuration(0),
+        lastFillDuration(0),
+        lastWaterLevelPercent(0.0),
         isCalibrated(false),
-        totalWateringCycles(0) {}
+        totalWateringCycles(0),
+        autoWateringEnabled(true) {}
 };
 
 // ============================================
@@ -86,6 +95,61 @@ inline const char* phaseToString(WateringPhase phase) {
         case PHASE_ERROR: return "error";
         default: return "unknown";
     }
+}
+
+// Calculate current water level percentage based on time elapsed
+inline float calculateCurrentWaterLevel(const ValveController* valve, unsigned long currentTime) {
+    if (!valve->isCalibrated || valve->emptyToFullDuration == 0) {
+        return 0.0;  // Unknown
+    }
+
+    unsigned long timeSinceLastWatering = currentTime - valve->lastWateringCompleteTime;
+
+    if (timeSinceLastWatering >= valve->emptyToFullDuration) {
+        return 0.0;  // Empty
+    }
+
+    // Water level decreases over time
+    float consumedPercent = (float)timeSinceLastWatering / (float)valve->emptyToFullDuration * 100.0f;
+    float waterLevel = 100.0f - consumedPercent;
+    return (waterLevel < 0.0f) ? 0.0f : waterLevel;
+}
+
+// Get tray state: "empty", "full", "between"
+inline const char* getTrayState(float waterLevelPercent) {
+    if (waterLevelPercent < 10.0) return "empty";
+    if (waterLevelPercent > 90.0) return "full";
+    return "between";
+}
+
+// Check if tray is empty or nearly empty (should water)
+inline bool shouldWaterNow(const ValveController* valve, unsigned long currentTime) {
+    if (!valve->isCalibrated || !valve->autoWateringEnabled) {
+        return false;
+    }
+
+    if (valve->emptyToFullDuration == 0) {
+        return false;  // No consumption data yet
+    }
+
+    // SAFETY 1: Minimum 24-hour interval between ANY watering attempts
+    // Prevents excessive watering even if learning data suggests shorter interval
+    if (valve->lastWateringAttemptTime > 0) {
+        unsigned long timeSinceLastAttempt = currentTime - valve->lastWateringAttemptTime;
+        if (timeSinceLastAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
+            return false;  // Minimum interval not reached (prevents retry loops and over-watering)
+        }
+    }
+
+    // SAFETY 2: Check if tray is empty based on learned consumption rate
+    // If tray was last filled 3 days ago and consumption takes 3 days, tray should be empty now
+    if (valve->lastWateringCompleteTime > 0) {
+        unsigned long timeSinceLastWatering = currentTime - valve->lastWateringCompleteTime;
+        return timeSinceLastWatering >= valve->emptyToFullDuration;
+    }
+
+    // If no lastWateringCompleteTime, fall back to attempt time check (already passed above)
+    return true;
 }
 
 #endif // VALVE_CONTROLLER_H

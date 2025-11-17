@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.4.0** - Now with **Dynamic Learning Algorithm** that automatically adapts watering frequency based on consumption patterns!
+**Version 1.5.0** - Now with **Time-Based Learning Algorithm** that automatically waters when trays are empty, plus **Telegram notifications** for watering sessions!
 
 ## Core Watering Algorithm
 
@@ -19,51 +19,101 @@ The system uses a 5-phase watering cycle per valve:
 
 This algorithm is used separately for each of 6 valves. State publishes to MQTT topic on each state change. Errors in producing messages to MQTT topics don't affect the algorithm itself.
 
-## 🧠 Dynamic Learning Algorithm (NEW in v1.4.0)
+## 🧠 Time-Based Learning Algorithm (v1.5.0)
 
-The system now **automatically learns each tray's capacity and consumption rate** to optimize watering:
+The system **automatically learns when each tray is empty** and waters accordingly:
 
 ### How It Works
 
-**First Watering (Baseline)**:
-- System assumes tray is empty
-- Records fill time as baseline (e.g., Tray 1: 30s, Tray 2: 90s, Tray 3: 60s)
-- Each tray learns its own capacity
+**Time-Based Approach**:
+- Tracks actual **time duration** instead of counting cycles
+- Learns three key metrics per tray:
+  - **Baseline fill time** - Time to fill from completely empty
+  - **Empty-to-full duration** - How long tray takes to consume all water
+  - **Current water level** - Estimated based on time elapsed
 
-**Subsequent Waterings (Smart Skip)**:
-- Measures current fill time
-- Compares to baseline: `fill_ratio = current_time / baseline_time`
-- If ratio ≈ 1.0: Tray was empty → water every cycle
-- If ratio < 1.0: Tray had water remaining → skip cycles
+**Adaptive Baseline**:
+- First watering establishes initial baseline
+- Baseline auto-updates when a longer fill is observed (tray was emptier)
+- Uses weighted averaging (70% old, 30% new) for stability
+
+**Automatic Watering**:
+- System checks each tray continuously
+- When `time_since_last_watering >= empty_to_full_duration` → Auto-water
+- Works independently for each valve
+- Can be enabled/disabled per valve
 
 **Example**:
 ```
-Cycle 1 (Calibration):
-  Tray 1: 30s → Baseline = 30s
-  Tray 2: 90s → Baseline = 90s
-  Tray 3: 60s → Baseline = 60s
-
-Cycle 2 (Learning):
-  Tray 1: 10s (33% of baseline) → Tray had 67% water → Skip next 2 cycles
-  Tray 2: 80s (89% of baseline) → Tray had 11% water → Skip next 8 cycles
-  Tray 3: 60s (100% of baseline) → Tray was empty → Water every cycle
+Watering 1: Fill 5.0s → Baseline: 5.0s (initial calibration)
+Watering 2: Fill 4.2s → Baseline: 5.0s, Water before: 16%, Empty time: 24h
+Watering 3: Fill 3.8s → Baseline: 5.0s, Water before: 24%, Empty time: ~22h
+Watering 4: Fill 5.2s → Baseline: 5.2s ✨ (tray was emptier, baseline updated)
+Watering 5: Fill 3.8s → Baseline: 5.2s, Water before: 27%, System stable
 ```
 
 **Benefits**:
-- ✅ Saves water by not watering full trays
-- ✅ Adapts to different tray sizes automatically
-- ✅ Adjusts to varying consumption (temperature, humidity, plant needs)
+- ✅ Automatic watering when trays are empty
+- ✅ Adapts to different tray sizes (different baselines)
+- ✅ Learns consumption rate (varying temperatures, plant needs)
 - ✅ Each valve operates independently
-- ✅ Safety limits: Max 15 cycles skip
+- ✅ Data persists across reboots (saved to flash)
+- ✅ Shows estimated water level percentage and time until empty
 
-### Learning Commands (via MQTT)
+### Persistence
 
-- `reset_calibration_N` - Reset valve N calibration (re-learn baseline)
-- `reset_all_calibrations` - Reset all valves to uncalibrated state
-- `learning_status` - Print detailed learning status to serial console
-- `set_skip_cycles_N_X` - Manually override: set valve N to skip X cycles
+- Learning data automatically saved to LittleFS (`/learning_data.json`)
+- Survives ESP32 reboots
+- Handles millis() overflow (49-day wraparound)
+- Manual trigger: Changes saved after each successful watering
 
 **Learning data is published in MQTT state updates** under each valve's `learning` object.
+
+## 📱 Telegram Bot Notifications (v1.5.0)
+
+The system sends automatic notifications to your Telegram bot during sequential watering sessions.
+
+### Start Notification
+Sent when watering begins:
+```
+🚿 Watering Started
+⏰ Session 16-11-2025 19:28:35
+🔧 Trigger: MQTT
+🌱 Trays: All
+```
+
+### Completion Notification
+Sent when all valves finish:
+```
+✅ Watering Complete
+
+tray | duration(sec) | status
+-----|---------------|-------
+   6 |           3.2 | ✓ OK
+   5 |           4.5 | ✓ OK
+   4 |           0.5 | ⚠️ ALREADY_WET
+   3 |          14.5 | ⚠️ TIMEOUT
+   2 |           2.8 | ⚠️ MANUAL_STOP
+   1 |           3.8 | ✓ OK
+```
+
+**Status Types**:
+- `✓ OK` - Watering completed successfully
+- `⚠️ TIMEOUT` - Exceeded 20s maximum watering time
+- `⚠️ ALREADY_WET` - Sensor was already wet when valve opened
+- `⚠️ MANUAL_STOP` - Watering stopped manually
+
+**Configuration** (in `include/secret.h`):
+```cpp
+#define TELEGRAM_BOT_TOKEN "your_bot_token"
+#define TELEGRAM_CHAT_ID "your_chat_id"
+```
+
+**Features**:
+- Real date/time via NTP sync (GMT+3 Moscow timezone)
+- Only triggers during sequential watering (not individual valves)
+- Works over WiFi using Telegram Bot API
+- Properly aligned table in monospace format
 
 Code was generated in [Claude](https://claude.ai/chat/391e9870-78b7-48cb-8733-b0c53d5dfb42)
 
@@ -98,6 +148,8 @@ Edit `include/secret.h`:
 #define MQTT_PASSWORD "your_mqtt_password"
 #define OTA_USER "admin"
 #define OTA_PASSWORD "your_ota_password"
+#define TELEGRAM_BOT_TOKEN "your_bot_token"
+#define TELEGRAM_CHAT_ID "your_chat_id"
 ```
 
 ## 🚀 Step-by-Step Deployment
@@ -422,81 +474,57 @@ Subscribe to state topic:
 mosquitto_sub -t '$devices/DEVICE_ID/state' -v
 ```
 
-Each valve includes learning data:
-```json
-{
-  "valve": 0,
-  "learning": {
-    "calibrated": true,
-    "baseline_ms": 30500,
-    "last_fill_ms": 10200,
-    "skip_cycles": 2,
-    "total_cycles": 5,
-    "fill_ratio": 0.33
-  }
-}
-```
+Each valve includes time-based learning data in MQTT state (see "Learning Data Structure" section above for full details).
 
-## Understanding Learning Output
+## Understanding Time-Based Learning Output
 
-When a valve is **skipped** (serial console):
+When a valve is **skipped** because tray is not empty yet (serial console):
 ```
 ═══════════════════════════════════════
 🧠 SMART SKIP: Valve 0
-  Tray not empty yet based on consumption pattern
-  Baseline fill time: 30s
-  Last fill time: 10s
-  Cycles remaining to skip: 1
+  Tray not empty yet (water level: ~45%)
+  Time since last watering: 12h 0m 0s
+  Time until empty: 12h 0m 0s
 ═══════════════════════════════════════
 ```
 
 When learning data is **calculated** (after successful watering):
 ```
-🧠 LEARNING DATA:
-  Fill time this cycle: 10.5s
-  Baseline: 30.0s
-  Fill ratio: 0.35 (1.0 = tray was empty)
-  Tray had ~65% water remaining
-  Consumption per cycle: ~35%
-  Cycles to empty: 1.9
-  Action: Skip next 0 cycle(s)
+🧠 TIME-BASED LEARNING:
+  Fill duration: 4.2s
+  📏 Baseline: 5.0s (adaptive)
+  Water level before: 16%
+  Tray state was: empty
+  Estimated empty time: 1d 0h
+  Learning cycles: 5
+  ⏰ Auto-watering enabled - will water when empty
 ```
 
-## Resetting Calibration
-
-**Reset single valve** (useful when changing tray):
-```bash
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_calibration_0'
+When **auto-watering triggers**:
+```
+⏰ AUTO-WATERING TRIGGERED: Valve 0
+  Tray is empty - starting automatic watering
 ```
 
-**Reset all valves** (fresh start):
-```bash
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_all_calibrations'
-```
+## Typical Learning Behavior (Time-Based)
 
-**Manually override skip cycles** (valve 0, skip 3 cycles):
-```bash
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'set_skip_cycles_0_3'
-```
+**Scenario 1: Fast Consumption (Summer)**
+- Day 1: Fill 5.0s → Baseline: 5.0s, Empty time unknown
+- Day 2: Fill 4.8s → Water before: 4%, Empty: 1 day → Auto-waters next day
+- Day 3: Fill 5.0s → Water before: 0%, Empty: 1 day → Stable pattern
+- System auto-waters daily
 
-## Typical Learning Behavior
-
-**Scenario 1: Stable Consumption**
-- Cycle 1: Baseline 30s → calibrated
-- Cycle 2: Fill 30s (100%) → Skip 0 cycles (water every time)
-- System learns plants consume all water between cycles
-
-**Scenario 2: Slow Consumption**
-- Cycle 1: Baseline 30s → calibrated
-- Cycle 2: Fill 10s (33%) → Skip 2 cycles
-- Cycle 5: Fill 5s (17%) → Skip 5 cycles
-- System adapts to slower consumption (cooler weather, less sunlight)
+**Scenario 2: Slow Consumption (Winter)**
+- Day 1: Fill 5.0s → Baseline: 5.0s
+- Day 4: Fill 4.2s → Water before: 16%, Empty: ~4 days
+- Day 8: Fill 3.8s → Water before: 24%, Empty: ~4 days → Auto-waters every 4 days
+- System adapts to slower consumption
 
 **Scenario 3: Different Tray Sizes**
-- Valve 0: Baseline 20s (small tray) → waters every cycle
-- Valve 1: Baseline 60s (large tray) → skips 3 cycles
-- Valve 2: Baseline 45s (medium tray) → skips 1 cycle
-- Each learns independently
+- Valve 0: Baseline 2.0s (small tray) → Empty: 12h → Waters twice daily
+- Valve 1: Baseline 8.0s (large tray) → Empty: 3 days → Waters every 3 days
+- Valve 2: Baseline 5.0s (medium tray) → Empty: 1 day → Waters daily
+- Each learns capacity and consumption independently
 
 # How to Test Your Hardware
 Step 1: Upload the Test Program
@@ -574,46 +602,27 @@ Always HIGH: Sensor disconnected
 
 Replace `DEVICE_ID` with your actual device ID from `secret.h`.
 
-## Basic Watering Commands
+## Watering Command (v1.5.0)
+
+**Note**: v1.5.0 simplified MQTT interface to single command. Auto-watering handles individual valves automatically.
 
 ```bash
-# Start single valve (0-5)
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'start_valve_0'
-
-# Stop single valve
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'stop_valve_0'
-
-# Start all valves sequentially (5→0)
+# Start all valves sequentially (5→0) with Telegram notifications
 mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'start_all'
-
-# Start custom sequence (valves 0, 2, 4)
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'start_sequence_0,2,4'
-
-# Emergency stop all
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'stop_all'
-
-# Force state publish
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'state'
-
-# Clear timeout flag for valve 0
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'clear_timeout_0'
 ```
 
-## Learning Algorithm Commands (v1.4.0+)
+**What happens**:
+- ✅ Waters all 6 trays in sequence (tray 6 → 5 → 4 → 3 → 2 → 1)
+- ✅ Sends Telegram start notification with timestamp
+- ✅ Tracks duration and status for each tray
+- ✅ Sends Telegram completion table when done
+- ✅ Updates learning data for each tray
+- ✅ Publishes MQTT state every 2 seconds
 
-```bash
-# Reset calibration for single valve (valve 0)
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_calibration_0'
-
-# Reset all valves to uncalibrated state
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_all_calibrations'
-
-# Print detailed learning status to serial console
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'learning_status'
-
-# Manually set valve 0 to skip 5 cycles
-mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'set_skip_cycles_0_5'
-```
+**Individual Valve Control**:
+- Use the web interface at `http://DEVICE_IP/` for manual control
+- Auto-watering handles trays automatically when empty
+- Learning algorithm adapts to each tray independently
 
 ## Monitoring
 
@@ -635,6 +644,7 @@ Each valve in the state includes a `learning` object:
 ```json
 {
   "pump": "off",
+  "sequential_mode": false,
   "valves": [
     {
       "id": 0,
@@ -644,27 +654,37 @@ Each valve in the state includes a `learning` object:
       "timeout": false,
       "learning": {
         "calibrated": true,
-        "baseline_ms": 30500,
-        "last_fill_ms": 10200,
-        "skip_cycles": 2,
+        "auto_watering": true,
+        "baseline_fill_ms": 5200,
+        "last_fill_ms": 4200,
+        "empty_duration_ms": 86400000,
         "total_cycles": 5,
-        "fill_ratio": 0.33
+        "water_level_pct": 45,
+        "tray_state": "between",
+        "time_since_watering_ms": 43200000,
+        "time_until_empty_ms": 43200000,
+        "last_water_level_pct": 16
       }
     }
   ]
 }
 ```
 
-**Learning Fields Explained:**
+**Time-Based Learning Fields (v1.5.0):**
 - `calibrated`: Has the valve completed first baseline calibration?
-- `baseline_ms`: Time (ms) to fill tray from empty to full
+- `auto_watering`: Is automatic watering enabled for this valve?
+- `baseline_fill_ms`: Time (ms) to fill tray from completely empty
 - `last_fill_ms`: Most recent fill time (ms)
-- `skip_cycles`: How many watering cycles to skip before next watering
+- `empty_duration_ms`: Learned time for tray to go from full to empty (consumption time)
 - `total_cycles`: Total successful watering cycles completed
-- `fill_ratio`: `last_fill_ms / baseline_ms` (1.0 = tray was empty, 0.0 = tray was full)
+- `water_level_pct`: Current estimated water level (0-100%)
+- `tray_state`: Current state: "empty", "full", or "between"
+- `time_since_watering_ms`: Time elapsed since last watering
+- `time_until_empty_ms`: Estimated time until tray is empty (0 if already empty)
+- `last_water_level_pct`: Water level before last watering
 
 ---
 
-**Version:** 1.4.0
+**Version:** 1.5.0
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

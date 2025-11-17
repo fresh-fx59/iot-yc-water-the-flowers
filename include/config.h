@@ -7,8 +7,8 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char* VERSION = "watering_system_1.4.1";
-const char* DEVICE_TYPE = "smart_watering_system";
+const char* VERSION = "watering_system_1.6.0";
+const char* DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
 // Hardware Pin Definitions (ESP32-S3-DevKitC-1)
@@ -46,7 +46,7 @@ const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RA
 const unsigned long RAIN_CHECK_INTERVAL = 100;           // Check rain sensor every 100ms
 const unsigned long VALVE_STABILIZATION_DELAY = 500;     // Wait 500ms for valve to open
 const unsigned long STATE_PUBLISH_INTERVAL = 2000;       // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 15000;           // Maximum watering time (15s)
+const unsigned long MAX_WATERING_TIME = 20000;           // Maximum watering time (20s)
 const unsigned long SENSOR_POWER_STABILIZATION = 100;    // Sensor power-on delay
 
 // ============================================
@@ -56,6 +56,21 @@ const float LEARNING_EMPTY_THRESHOLD = 0.95;      // If fill_ratio >= 0.95, cons
 const float LEARNING_FULL_THRESHOLD = 0.10;       // If fill_ratio < 0.10, tray was almost full
 const int LEARNING_MAX_SKIP_CYCLES = 15;          // Maximum cycles to skip
 const int LEARNING_FULL_SKIP_CYCLES = 10;         // Skip cycles when tray is almost full
+const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;  // 24 hours minimum between auto-watering attempts
+
+// ============================================
+// Debug Configuration
+// ============================================
+#define IS_DEBUG_TO_SERIAL_ENABLED false
+#define IS_DEBUG_TO_TELEGRAM_ENABLED true
+
+// ============================================
+// Telegram Queue Configuration
+// ============================================
+const int TELEGRAM_QUEUE_SIZE = 20;              // Max messages in queue
+const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5;       // Retry attempts per message
+const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000;  // Wait 2s between retries
+const unsigned long MESSAGE_GROUP_INTERVAL_MS = 2000;  // Group messages within 2 seconds
 
 // ============================================
 // Serial Configuration
@@ -82,5 +97,10 @@ const String STATE_TOPIC = DEVICE_TOPIC_PREFIX + String("state");
 // ============================================
 const int WIFI_MAX_RETRY_ATTEMPTS = 30;
 const int WIFI_RETRY_DELAY_MS = 500;
+
+// ============================================
+// OTA Configuration
+// ============================================
+const char* OTA_HOSTNAME = "esp32-watering";
 
 #endif // CONFIG_H

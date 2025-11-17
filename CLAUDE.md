@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water pump. The system waters plants based on rain sensor feedback, automatically waters when trays are empty using time-based learning, publishes state to Yandex IoT Core MQTT, sends Telegram notifications for watering sessions, and provides a web interface for control.
+ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water pump. The system waters plants based on rain sensor feedback, automatically waters when trays are empty using time-based learning, publishes state to Yandex IoT Core MQTT, sends Telegram notifications for watering sessions with queue-based debug system, and provides a web interface for control.
 
 **Key Technologies**:
 - Platform: ESP32-S3-DevKitC-1 (Espressif32, Arduino framework)
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.5.0 (defined in config.h:10)
+- Current Version: 1.6.1 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -50,7 +50,7 @@ platformio run -t upload -e esp32-s3-devkitc-1 && \
 platformio device monitor -b 115200 --raw
 ```
 
-## Code Organization (v1.5.0 - Time-Based Learning)
+## Code Organization (v1.6.1 - Enhanced Telegram Debug)
 
 The codebase follows standard C++ organization with inline implementations in headers:
 
@@ -64,12 +64,13 @@ include/
   ├── WateringSystemStateMachine.h  # State machine + MQTT state publishing
   ├── NetworkManager.h              # WiFi + MQTT management
   ├── TelegramNotifier.h            # Telegram Bot API integration
+  ├── DebugHelper.h                 # Queue-based debug system with retry & grouping (v1.6.1)
   ├── api_handlers.h                # Web API endpoints
   ├── ota.h                         # OTA updates and web server
   └── secret.h                      # WiFi/MQTT/Telegram credentials (not in git)
 
 src/
-  └── main.cpp                      # Entry point (~110 lines)
+  └── main.cpp                      # Entry point (~165 lines)
 
 data/
   └── web/                          # Web UI files (served via LittleFS)
@@ -343,11 +344,11 @@ tray | duration(sec) | status
 1    | 3.8          | ✓ OK
 ```
 
-**Status Meanings**:
-- `✓ OK`: Watering completed successfully (sensor detected water)
+**Status Meanings** (v1.6.1 updated):
+- `✓ OK`: Watering completed successfully (sensor became wet after pump started)
+- `✓ FULL`: Tray was already full (sensor already wet before pump started)
 - `⚠️ TIMEOUT`: Exceeded maximum watering time (20s)
-- `⚠️ ALREADY_WET`: Sensor was already wet when valve opened
-- `⚠️ MANUAL_STOP`: Watering was stopped manually before completion
+- `⚠️ STOPPED`: Watering was stopped manually or other interruption
 
 **Duration Calculation**: Time from valve open to final state (includes full watering cycle)
 
@@ -363,6 +364,68 @@ tray | duration(sec) | status
 - Uses direct HTTPS calls to `api.telegram.org`
 - Requires WiFi connection (silently fails if offline)
 - Session tracking data stored in `WateringSessionData` struct
+
+### Telegram Debug System (v1.6.1)
+
+The `DebugHelper` class provides a sophisticated debug message delivery system with automatic retry and message grouping.
+
+**Configuration** (in `include/config.h`):
+```cpp
+#define IS_DEBUG_TO_SERIAL_ENABLED false    // Enable serial console debug
+#define IS_DEBUG_TO_TELEGRAM_ENABLED true   // Enable Telegram debug
+
+const int TELEGRAM_QUEUE_SIZE = 20;                     // Circular buffer size
+const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5;              // Retry attempts per message
+const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000;     // 2s delay between retries
+const unsigned long MESSAGE_GROUP_INTERVAL_MS = 2000;   // 2s grouping window
+const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // 3min max age (safety)
+```
+
+**Key Features**:
+- **Circular Buffer Queue**: Holds up to 20 messages with retry tracking
+- **Automatic Retry**: Up to 5 attempts per message with 2-second delays
+- **Non-Blocking Processing**: Processes one message per loop iteration
+- **Message Grouping**: Messages arriving within 2s are batched together
+- **Safety Limit**: Groups flush after 3 minutes max to prevent infinite buffering
+- **Explicit Flush**: Buffer flushed before "watering complete" notification
+- **Timestamped**: Each message shows `[DD-MM-YYYY HH:MM:SS.mmm]` format
+
+**Usage in Code**:
+```cpp
+// Regular debug message (buffered and grouped)
+DebugHelper::debug("Valve opened");
+
+// Important message (marked with 🔴 prefix)
+DebugHelper::debugImportant("⚠️ TIMEOUT occurred");
+
+// Explicit flush (called before completion notification)
+DebugHelper::flushBuffer();
+
+// Process queue (called in main loop)
+DebugHelper::loop();
+```
+
+**Message Grouping Behavior**:
+1. Messages arriving within 2 seconds are grouped into one Telegram message
+2. If group age exceeds 3 minutes → automatic flush (safety)
+3. If 2 seconds silence → flush and send
+4. Explicit flush called before completion notification ensures all debug messages appear
+
+**Example Output**:
+```
+🐛 Debug
+[17-11-2025 14:23:10.125] ✓ Valve 0 opened - waiting stabilization
+[17-11-2025 14:23:10.625] Step 2: Checking rain sensor (water is flowing now)...
+[17-11-2025 14:23:10.725] ✓ Sensor 0 is DRY - starting pump (timeout: 20s)
+[17-11-2025 14:23:13.125] ✓ Valve 0 COMPLETE - Total: 3s (pump: 2s)
+```
+
+**Implementation Details**:
+- Queue uses circular buffer pattern (head/tail pointers)
+- Each message tracks: content, timestamp, retry count, last retry time
+- Messages dropped after 5 failed attempts to prevent queue stall
+- WiFi disconnect doesn't block watering (messages queue and send when reconnected)
+- Located in `include/DebugHelper.h` (~326 lines)
 
 ### Web Interface
 

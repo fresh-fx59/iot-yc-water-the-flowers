@@ -592,6 +592,9 @@ inline void WateringSystem::startNextInSequence() {
                 }
             }
 
+            // Flush all buffered debug messages before sending completion notification
+            DebugHelper::flushBuffer();
+
             TelegramNotifier::sendWateringComplete(results, resultCount);
             endTelegramSession();
         }

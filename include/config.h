@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char* VERSION = "watering_system_1.6.0";
+const char* VERSION = "watering_system_1.6.1";
 const char* DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -71,6 +71,7 @@ const int TELEGRAM_QUEUE_SIZE = 20;              // Max messages in queue
 const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5;       // Retry attempts per message
 const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000;  // Wait 2s between retries
 const unsigned long MESSAGE_GROUP_INTERVAL_MS = 2000;  // Group messages within 2 seconds
+const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // Flush after 3 min max (safety limit)
 
 // ============================================
 // Serial Configuration

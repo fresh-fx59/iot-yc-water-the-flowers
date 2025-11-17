@@ -38,6 +38,7 @@ private:
     // Message grouping (batch messages that arrive close together)
     static String groupingBuffer;
     static unsigned long lastGroupMessageTime;
+    static unsigned long firstGroupMessageTime;  // Track when group started (for max age)
 
 public:
     // Get current timestamp with milliseconds
@@ -86,11 +87,20 @@ public:
             // First message in group
             groupingBuffer = formattedMessage;
             lastGroupMessageTime = currentTime;
+            firstGroupMessageTime = currentTime;  // Track group start time
         } else {
-            // Check time delta
+            // Check time delta from last message
             unsigned long delta = currentTime - lastGroupMessageTime;
 
-            if (delta < MESSAGE_GROUP_INTERVAL_MS) {
+            // SAFETY: Check if group is too old (prevents infinite buffering)
+            unsigned long groupAge = currentTime - firstGroupMessageTime;
+            if (groupAge >= MESSAGE_GROUP_MAX_AGE_MS) {
+                // Group older than 10s - flush and start new group
+                flushGroupBuffer();
+                groupingBuffer = formattedMessage;
+                lastGroupMessageTime = currentTime;
+                firstGroupMessageTime = currentTime;
+            } else if (delta < MESSAGE_GROUP_INTERVAL_MS) {
                 // Within grouping window - add to buffer
                 groupingBuffer += "\n" + formattedMessage;
                 lastGroupMessageTime = currentTime;
@@ -99,6 +109,7 @@ public:
                 flushGroupBuffer();
                 groupingBuffer = formattedMessage;
                 lastGroupMessageTime = currentTime;
+                firstGroupMessageTime = currentTime;
             }
         }
 
@@ -171,10 +182,13 @@ public:
 
         unsigned long currentTime = millis();
 
-        // Check if grouping buffer should be flushed (2s elapsed since last message)
+        // Check if grouping buffer should be flushed
         if (groupingBuffer.length() > 0) {
             unsigned long timeSinceLastMessage = currentTime - lastGroupMessageTime;
-            if (timeSinceLastMessage >= MESSAGE_GROUP_INTERVAL_MS) {
+            unsigned long groupAge = currentTime - firstGroupMessageTime;
+
+            // Flush if: 2s silence OR group older than 10s (safety)
+            if (timeSinceLastMessage >= MESSAGE_GROUP_INTERVAL_MS || groupAge >= MESSAGE_GROUP_MAX_AGE_MS) {
                 flushGroupBuffer();
             }
         }
@@ -251,8 +265,17 @@ public:
         return "Queue: " + String(queueCount) + "/" + String(TELEGRAM_QUEUE_SIZE);
     }
 
+    // Force flush grouping buffer (use before sending important notifications)
+    static void flushBuffer() {
+        if (groupingBuffer.length() > 0) {
+            flushGroupBuffer();
+        }
+    }
+
     // Force flush (kept for compatibility, but queue handles everything now)
     static void flush() {
+        // Flush grouping buffer first
+        flushBuffer();
         // Process queue immediately if possible
         loop();
     }
@@ -298,5 +321,6 @@ bool DebugHelper::sendInProgress = false;
 unsigned long DebugHelper::lastProcessTime = 0;
 String DebugHelper::groupingBuffer = "";
 unsigned long DebugHelper::lastGroupMessageTime = 0;
+unsigned long DebugHelper::firstGroupMessageTime = 0;
 
 #endif // DEBUG_HELPER_H

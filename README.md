@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.5.0** - Now with **Time-Based Learning Algorithm** that automatically waters when trays are empty, plus **Telegram notifications** for watering sessions!
+**Version 1.6.1** - Enhanced Telegram debugging with queue-based retry system, message grouping, and improved status reporting!
 
 ## Core Watering Algorithm
 
@@ -97,11 +97,11 @@ tray | duration(sec) | status
    1 |           3.8 | ✓ OK
 ```
 
-**Status Types**:
-- `✓ OK` - Watering completed successfully
+**Status Types** (v1.6.1 updated):
+- `✓ OK` - Watering completed successfully (sensor became wet after pump started)
+- `✓ FULL` - Tray was already full (sensor already wet before pump started)
 - `⚠️ TIMEOUT` - Exceeded 20s maximum watering time
-- `⚠️ ALREADY_WET` - Sensor was already wet when valve opened
-- `⚠️ MANUAL_STOP` - Watering stopped manually
+- `⚠️ STOPPED` - Watering stopped manually or other interruption
 
 **Configuration** (in `include/secret.h`):
 ```cpp
@@ -114,6 +114,46 @@ tray | duration(sec) | status
 - Only triggers during sequential watering (not individual valves)
 - Works over WiFi using Telegram Bot API
 - Properly aligned table in monospace format
+
+## 🐛 Telegram Debug System (v1.6.1)
+
+The system includes a sophisticated debug message delivery system with automatic retry and message grouping.
+
+### Queue-Based Retry System
+- **Circular buffer queue** - Holds up to 20 messages
+- **Automatic retry** - Up to 5 attempts per message with 2-second delays
+- **Non-blocking** - Processes one message per loop iteration
+- **Failure handling** - Messages dropped after 5 failed attempts
+
+### Message Grouping
+Debug messages arriving close together are automatically grouped:
+- **2-second grouping window** - Messages within 2s are batched
+- **3-minute safety limit** - Groups flush after 3 minutes max (prevents infinite buffering)
+- **Explicit flush on completion** - All buffered messages sent before watering complete notification
+- **Timestamped** - Each message shows exact time: `[DD-MM-YYYY HH:MM:SS.mmm]`
+
+### Configuration (in `include/config.h`)
+```cpp
+#define IS_DEBUG_TO_SERIAL_ENABLED false    // Enable serial console debug
+#define IS_DEBUG_TO_TELEGRAM_ENABLED true   // Enable Telegram debug
+
+const int TELEGRAM_QUEUE_SIZE = 20;
+const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5;
+const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000;
+const unsigned long MESSAGE_GROUP_INTERVAL_MS = 2000;
+const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // 3 minutes
+```
+
+### Example Debug Output
+```
+🐛 Debug
+[17-11-2025 14:23:10.125] ✓ Valve 0 opened - waiting stabilization
+[17-11-2025 14:23:10.625] Step 2: Checking rain sensor (water is flowing now)...
+[17-11-2025 14:23:10.725] ✓ Sensor 0 is DRY - starting pump (timeout: 20s)
+[17-11-2025 14:23:11.825] Valve 0: 1s/19s, Sensor: DRY
+[17-11-2025 14:23:12.925] Valve 0: 2s/18s, Sensor: DRY
+[17-11-2025 14:23:13.125] ✓ Valve 0 COMPLETE - Total: 3s (pump: 2s)
+```
 
 Code was generated in [Claude](https://claude.ai/chat/391e9870-78b7-48cb-8733-b0c53d5dfb42)
 
@@ -685,6 +725,6 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.5.0
+**Version:** 1.6.1
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

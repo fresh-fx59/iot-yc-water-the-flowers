@@ -51,8 +51,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     DebugHelper::debug("  Updated lastWateringCompleteTime - auto-watering will wait for consumption");
 
                     publishStateChange("valve" + String(valveIndex), "already_full_skipped");
-                    valve->phase = PHASE_IDLE;
-                    valve->wateringRequested = false;
+
+                    // Go to PHASE_CLOSING_VALVE for proper cleanup (records session end for Telegram)
+                    valve->phase = PHASE_CLOSING_VALVE;
                 } else {
                     // Sensor dry - start watering
                     DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(MAX_WATERING_TIME / 1000) + "s)");
@@ -126,12 +127,15 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 String status;
                 if (valve->timeoutOccurred) {
                     status = "⚠️ TIMEOUT";
-                } else if (valve->rainDetected) {
+                } else if (valve->rainDetected && valve->wateringStartTime > 0) {
+                    // Sensor became wet AFTER pump started = successful watering
                     status = "✓ OK";
-                } else if (valve->wateringStartTime == 0) {
-                    status = "⚠️ ALREADY_WET";
+                } else if (valve->rainDetected && valve->wateringStartTime == 0) {
+                    // Sensor was already wet BEFORE pump started = tray already full
+                    status = "✓ FULL";
                 } else {
-                    status = "⚠️ MANUAL_STOP";
+                    // Stopped before sensor became wet
+                    status = "⚠️ STOPPED";
                 }
                 recordSessionEnd(valveIndex, status);
             }

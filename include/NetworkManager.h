@@ -5,6 +5,7 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "config.h"
+#include "DebugHelper.h"
 #include "WateringSystem.h"
 
 // External clients (defined in main.cpp)
@@ -32,32 +33,25 @@ public:
         mqttClient.setCallback(messageCallback);
         mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
         mqttClient.setKeepAlive(MQTT_KEEP_ALIVE);
-        DEBUG_SERIAL.println("Network Manager initialized");
+        DebugHelper::debug("Network Manager initialized");
     }
 
     // ========== WiFi Management ==========
     static void connectWiFi() {
-        DEBUG_SERIAL.print("Connecting to WiFi: ");
-        DEBUG_SERIAL.println(SSID);
+        DebugHelper::debug("Connecting to WiFi: " + String(SSID));
         WiFi.mode(WIFI_STA);
         WiFi.begin(SSID, SSID_PASSWORD);
 
         int attempts = 0;
         while (WiFi.status() != WL_CONNECTED && attempts < WIFI_MAX_RETRY_ATTEMPTS) {
             delay(WIFI_RETRY_DELAY_MS);
-            DEBUG_SERIAL.print(".");
             attempts++;
         }
 
         if (WiFi.status() == WL_CONNECTED) {
-            DEBUG_SERIAL.println("\nWiFi Connected!");
-            DEBUG_SERIAL.print("IP Address: ");
-            DEBUG_SERIAL.println(WiFi.localIP());
-            DEBUG_SERIAL.print("Signal Strength (RSSI): ");
-            DEBUG_SERIAL.print(WiFi.RSSI());
-            DEBUG_SERIAL.println(" dBm");
+            DebugHelper::debug("✓ WiFi Connected! IP: " + WiFi.localIP().toString() + ", RSSI: " + String(WiFi.RSSI()) + " dBm");
         } else {
-            DEBUG_SERIAL.println("\nWiFi Connection Failed!");
+            DebugHelper::debugImportant("❌ WiFi Connection Failed!");
         }
     }
 
@@ -69,26 +63,23 @@ public:
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
-        DEBUG_SERIAL.print("Connecting to Yandex IoT Core as ");
-        DEBUG_SERIAL.println(YC_DEVICE_ID);
+        DebugHelper::debug("Connecting to Yandex IoT Core as " + String(YC_DEVICE_ID));
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {
             String clientId = "WateringSystem_" + String(YC_DEVICE_ID);
             if (mqttClient.connect(clientId.c_str(), YC_DEVICE_ID, MQTT_PASSWORD)) {
-                DEBUG_SERIAL.println("MQTT Connected!");
+                DebugHelper::debug("✓ MQTT Connected!");
 
                 if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
-                    DEBUG_SERIAL.println("Subscribed to: " + COMMAND_TOPIC);
+                    DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
                 } else {
-                    DEBUG_SERIAL.println("Failed to subscribe to commands");
+                    DebugHelper::debugImportant("❌ Failed to subscribe to commands");
                 }
 
                 publishConnectionEvent();
             } else {
-                DEBUG_SERIAL.print("MQTT connection failed, rc=");
-                DEBUG_SERIAL.print(mqttClient.state());
-                DEBUG_SERIAL.println(" retrying in 5 seconds");
+                DebugHelper::debugImportant("❌ MQTT connection failed, rc=" + String(mqttClient.state()) + " retrying in 5 seconds");
                 delay(5000);
                 attempts++;
             }
@@ -99,7 +90,7 @@ public:
         if (mqttClient.connected()) {
             mqttClient.loop();
         } else {
-            DEBUG_SERIAL.println("MQTT disconnected, attempting reconnect...");
+            DebugHelper::debugImportant("⚠️ MQTT disconnected, attempting reconnect...");
             connectMQTT();
         }
     }
@@ -116,9 +107,7 @@ private:
             payloadStr += (char)payload[i];
         }
 
-        DEBUG_SERIAL.println("MQTT Message received:");
-        DEBUG_SERIAL.println("Topic: " + String(topic));
-        DEBUG_SERIAL.println("Payload: " + payloadStr);
+        DebugHelper::debug("MQTT Message received - Topic: " + String(topic) + ", Payload: " + payloadStr);
 
         processCommand(payloadStr);
     }
@@ -126,18 +115,17 @@ private:
     // ========== Command Processing ==========
     static void processCommand(const String& command) {
         if (!wateringSystem) {
-            DEBUG_SERIAL.println("Error: WateringSystem not initialized");
+            DebugHelper::debugImportant("❌ Error: WateringSystem not initialized");
             return;
         }
 
         // Only supported command: start_all
         if (command == "start_all") {
-            DEBUG_SERIAL.println("MQTT Command: Start sequential watering (all valves)");
+            DebugHelper::debugImportant("📡 MQTT Command: Start sequential watering (all valves)");
             wateringSystem->startSequentialWatering();
         }
         else {
-            DEBUG_SERIAL.println("Unknown MQTT command: " + command);
-            DEBUG_SERIAL.println("Only 'start_all' command is supported");
+            DebugHelper::debug("Unknown MQTT command: " + command + " (only 'start_all' is supported)");
         }
     }
 
@@ -150,9 +138,9 @@ private:
         String connectTopic = STATE_TOPIC + String("/connection");
 
         if (mqttClient.publish(connectTopic.c_str(), connectMessage.c_str())) {
-            DEBUG_SERIAL.println("Published connection event");
+            DebugHelper::debug("Published connection event");
         } else {
-            DEBUG_SERIAL.println("Failed to publish connection event");
+            DebugHelper::debugImportant("❌ Failed to publish connection event");
         }
     }
 };

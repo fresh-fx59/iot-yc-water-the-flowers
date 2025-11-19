@@ -2,6 +2,7 @@
 #define WATERING_SYSTEM_H
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -12,6 +13,10 @@
 
 // External MQTT client (defined in main.cpp)
 extern PubSubClient mqttClient;
+
+// Learning data file paths
+const char* LEARNING_DATA_FILE_OLD = "/learning_data.json";
+const char* LEARNING_DATA_FILE = "/learning_data_v2.json";
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions
@@ -106,6 +111,9 @@ private:
     String sessionTriggerType;
     WateringSessionData sessionData[NUM_VALVES];
 
+    // Auto-watering tracking
+    int autoWateringValveIndex;  // Currently auto-watering valve (-1 if none)
+
 public:
     // ========== Constructor ==========
     WateringSystem() :
@@ -117,7 +125,8 @@ public:
         currentSequenceIndex(0),
         sequenceLength(0),
         telegramSessionActive(false),
-        sessionTriggerType("")
+        sessionTriggerType(""),
+        autoWateringValveIndex(-1)
     {
         for (int i = 0; i < NUM_VALVES; i++) {
             valves[i] = new ValveController(i);
@@ -165,6 +174,9 @@ public:
     void recordSessionStart(int valveIndex);
     void recordSessionEnd(int valveIndex, const String& status);
     void endTelegramSession();
+
+    // Watering schedule notification
+    void sendWateringSchedule(const String& title);
 
 private:
     // ========== Core Logic ==========
@@ -220,15 +232,13 @@ inline void WateringSystem::init() {
     DebugHelper::debugImportant("✓ WateringSystem initialized");
     publishStateChange("system", "initialized");
 
-    // Load learning data from flash
-    if (!loadLearningData()) {
-        DEBUG_SERIAL.println("⚠️  No saved learning data found or load failed");
-    }
+    // Note: loadLearningData() is called from main.cpp after NTP sync
+    // This ensures real time is available for proper timestamp conversion
 }
 
 // ========== Persistence Functions ==========
 inline bool WateringSystem::saveLearningData() {
-    DEBUG_SERIAL.println("💾 Saving learning data to flash...");
+    DebugHelper::debug("💾 Saving learning data to flash...");
 
     // Create JSON document
     StaticJsonDocument<2048> doc;
@@ -240,6 +250,7 @@ inline bool WateringSystem::saveLearningData() {
 
         valveObj["index"] = valve->valveIndex;
         valveObj["lastWateringCompleteTime"] = (unsigned long)valve->lastWateringCompleteTime;
+        valveObj["lastWateringAttemptTime"] = (unsigned long)valve->lastWateringAttemptTime;
         valveObj["emptyToFullDuration"] = (unsigned long)valve->emptyToFullDuration;
         valveObj["baselineFillDuration"] = (unsigned long)valve->baselineFillDuration;
         valveObj["lastFillDuration"] = (unsigned long)valve->lastFillDuration;
@@ -249,41 +260,42 @@ inline bool WateringSystem::saveLearningData() {
         valveObj["autoWateringEnabled"] = valve->autoWateringEnabled;
     }
 
-    // Save current millis() as reference point
+    // Save current millis() and real time as reference points
     doc["savedAtMillis"] = millis();
+    doc["savedAtRealTime"] = (unsigned long)time(nullptr);
 
     // Open file for writing
-    File file = LittleFS.open("/learning_data.json", "w");
+    File file = LittleFS.open(LEARNING_DATA_FILE, "w");
     if (!file) {
-        DEBUG_SERIAL.println("❌ Failed to open file for writing");
+        DebugHelper::debugImportant("❌ Failed to open file for writing");
         return false;
     }
 
     // Serialize JSON to file
     if (serializeJson(doc, file) == 0) {
-        DEBUG_SERIAL.println("❌ Failed to write JSON to file");
+        DebugHelper::debugImportant("❌ Failed to write JSON to file");
         file.close();
         return false;
     }
 
     file.close();
-    DEBUG_SERIAL.println("✓ Learning data saved successfully");
+    DebugHelper::debug("✓ Learning data saved successfully");
     return true;
 }
 
 inline bool WateringSystem::loadLearningData() {
-    DEBUG_SERIAL.println("📂 Loading learning data from flash...");
+    DebugHelper::debug("📂 Loading learning data from flash...");
 
     // Check if file exists
-    if (!LittleFS.exists("/learning_data.json")) {
-        DEBUG_SERIAL.println("  No learning data file found");
+    if (!LittleFS.exists(LEARNING_DATA_FILE)) {
+        DebugHelper::debug("  No learning data file found");
         return false;
     }
 
     // Open file for reading
-    File file = LittleFS.open("/learning_data.json", "r");
+    File file = LittleFS.open(LEARNING_DATA_FILE, "r");
     if (!file) {
-        DEBUG_SERIAL.println("❌ Failed to open file for reading");
+        DebugHelper::debugImportant("❌ Failed to open file for reading");
         return false;
     }
 
@@ -293,19 +305,39 @@ inline bool WateringSystem::loadLearningData() {
     file.close();
 
     if (error) {
-        DEBUG_SERIAL.println("❌ Failed to parse JSON: " + String(error.c_str()));
+        DebugHelper::debugImportant("❌ Failed to parse JSON: " + String(error.c_str()));
         return false;
     }
 
-    // Get time offset (how long since data was saved)
+    // Get saved timestamps
     unsigned long savedAtMillis = doc["savedAtMillis"] | 0;
+    unsigned long savedAtRealTime = doc["savedAtRealTime"] | 0;
     unsigned long currentMillis = millis();
-    unsigned long timeOffset = (currentMillis >= savedAtMillis) ? (currentMillis - savedAtMillis) : 0;
+    time_t currentRealTime = time(nullptr);
 
-    // Handle millis() overflow: if current < saved, we've overflowed (happens every ~49 days)
-    if (currentMillis < savedAtMillis) {
-        DEBUG_SERIAL.println("⚠️  millis() overflow detected - resetting timestamps");
-        timeOffset = 0;  // Reset time offset
+    // Calculate time offset using real time (if available) or millis()
+    unsigned long timeOffsetMs = 0;
+
+    if (savedAtRealTime > 0 && currentRealTime > 1000000000) {
+        // Use real time - this handles reboots correctly
+        if (currentRealTime >= savedAtRealTime) {
+            unsigned long elapsedSeconds = currentRealTime - savedAtRealTime;
+            timeOffsetMs = elapsedSeconds * 1000UL;
+            DebugHelper::debug("  Using real time for offset calculation");
+            DebugHelper::debug("  Time since save: " + LearningAlgorithm::formatDuration(timeOffsetMs));
+        } else {
+            // Clock went backwards - use current millis as base
+            DebugHelper::debugImportant("⚠️  Clock went backwards - resetting to current time");
+            timeOffsetMs = currentMillis;
+        }
+    } else if (currentMillis >= savedAtMillis) {
+        // Fall back to millis() if no real time available
+        timeOffsetMs = currentMillis - savedAtMillis;
+        DebugHelper::debug("  Using millis() for offset (no real time available)");
+    } else {
+        // Reboot detected without real time - use current millis as base
+        DebugHelper::debugImportant("⚠️  Reboot detected without real time - using current millis");
+        timeOffsetMs = currentMillis;
     }
 
     // Load valve data
@@ -317,7 +349,9 @@ inline bool WateringSystem::loadLearningData() {
         if (index < 0 || index >= NUM_VALVES) continue;
 
         ValveController* valve = valves[index];
-        valve->lastWateringCompleteTime = valveObj["lastWateringCompleteTime"] | 0;
+        unsigned long savedCompleteTime = valveObj["lastWateringCompleteTime"] | 0;
+        unsigned long savedAttemptTime = valveObj["lastWateringAttemptTime"] | 0;
+
         valve->emptyToFullDuration = valveObj["emptyToFullDuration"] | 0;
         valve->baselineFillDuration = valveObj["baselineFillDuration"] | 0;
         valve->lastFillDuration = valveObj["lastFillDuration"] | 0;
@@ -326,16 +360,37 @@ inline bool WateringSystem::loadLearningData() {
         valve->totalWateringCycles = valveObj["totalWateringCycles"] | 0;
         valve->autoWateringEnabled = valveObj["autoWateringEnabled"] | true;
 
-        // Adjust lastWateringCompleteTime for time offset
-        if (valve->lastWateringCompleteTime > 0 && timeOffset > 0) {
-            valve->lastWateringCompleteTime += timeOffset;
+        // Convert saved timestamps to current millis() epoch
+        // New timestamp = current_millis - (time_elapsed_since_save - time_from_save_to_watering)
+        // Simplified: New timestamp = current_millis - time_since_watering
+        if (savedCompleteTime > 0 && savedAtMillis > 0) {
+            // Time from watering to save
+            unsigned long timeFromWateringToSave = savedAtMillis - savedCompleteTime;
+            // Time from watering to now = time_from_watering_to_save + time_since_save
+            unsigned long timeSinceWatering = timeFromWateringToSave + timeOffsetMs;
+            // New timestamp in current epoch
+            if (currentMillis >= timeSinceWatering) {
+                valve->lastWateringCompleteTime = currentMillis - timeSinceWatering;
+            } else {
+                valve->lastWateringCompleteTime = 0;  // Watering was longer ago than millis can represent
+            }
+        }
+
+        if (savedAttemptTime > 0 && savedAtMillis > 0) {
+            unsigned long timeFromAttemptToSave = savedAtMillis - savedAttemptTime;
+            unsigned long timeSinceAttempt = timeFromAttemptToSave + timeOffsetMs;
+            if (currentMillis >= timeSinceAttempt) {
+                valve->lastWateringAttemptTime = currentMillis - timeSinceAttempt;
+            } else {
+                valve->lastWateringAttemptTime = 0;
+            }
         }
 
         loadedCount++;
     }
 
-    DEBUG_SERIAL.println("✓ Loaded data for " + String(loadedCount) + " valves");
-    DEBUG_SERIAL.println("  Time offset applied: " + LearningAlgorithm::formatDuration(timeOffset));
+    DebugHelper::debug("✓ Loaded data for " + String(loadedCount) + " valves");
+    DebugHelper::debug("  Time offset applied: " + LearningAlgorithm::formatDuration(timeOffsetMs));
 
     return true;
 }
@@ -383,8 +438,20 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
 
         // Check if tray is empty and should be watered
         if (shouldWaterNow(valve, currentTime)) {
-            DEBUG_SERIAL.println("\n⏰ AUTO-WATERING TRIGGERED: Valve " + String(i));
-            DEBUG_SERIAL.println("  Tray is empty - starting automatic watering");
+            DebugHelper::debugImportant("⏰ AUTO-WATERING TRIGGERED: Valve " + String(i));
+            DebugHelper::debug("  Tray is empty - starting automatic watering");
+
+            // Start Telegram session for auto-watering
+            startTelegramSession("Auto (Tray " + String(i + 1) + ")");
+            autoWateringValveIndex = i;
+
+            // Flush debug buffer before sending notification
+            DebugHelper::flushBuffer();
+
+            // Send start notification
+            String trayNumber = String(i + 1);
+            TelegramNotifier::sendWateringStarted("Auto", trayNumber);
+
             startWatering(i);
         }
     }
@@ -393,7 +460,7 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
 // ========== Watering Control ==========
 inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
     if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
-        DEBUG_SERIAL.println("Invalid valve index: " + String(valveIndex));
+        DebugHelper::debugImportant("Invalid valve index: " + String(valveIndex));
         publishStateChange("error", "invalid_valve_index");
         return;
     }
@@ -401,7 +468,7 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
     ValveController* valve = valves[valveIndex];
 
     if (valve->phase != PHASE_IDLE) {
-        DEBUG_SERIAL.println("Valve " + String(valveIndex) + " is already active");
+        DebugHelper::debug("Valve " + String(valveIndex) + " is already active");
         return;
     }
 
@@ -417,36 +484,36 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
             float currentWaterLevel = calculateCurrentWaterLevel(valve, currentTime);
             unsigned long timeRemaining = valve->emptyToFullDuration - timeSinceLastWatering;
 
-            DEBUG_SERIAL.println("═══════════════════════════════════════");
-            DEBUG_SERIAL.println("🧠 SMART SKIP: Valve " + String(valveIndex));
-            DEBUG_SERIAL.println("  Tray not empty yet (water level: ~" + String((int)currentWaterLevel) + "%)");
-            DEBUG_SERIAL.println("  Time since last watering: " + LearningAlgorithm::formatDuration(timeSinceLastWatering));
-            DEBUG_SERIAL.println("  Time until empty: " + LearningAlgorithm::formatDuration(timeRemaining));
-            DEBUG_SERIAL.println("═══════════════════════════════════════");
+            DebugHelper::debug("═══════════════════════════════════════");
+            DebugHelper::debug("🧠 SMART SKIP: Valve " + String(valveIndex));
+            DebugHelper::debug("  Tray not empty yet (water level: ~" + String((int)currentWaterLevel) + "%)");
+            DebugHelper::debug("  Time since last watering: " + LearningAlgorithm::formatDuration(timeSinceLastWatering));
+            DebugHelper::debug("  Time until empty: " + LearningAlgorithm::formatDuration(timeRemaining));
+            DebugHelper::debug("═══════════════════════════════════════");
 
             publishStateChange("valve" + String(valveIndex), "cycle_skipped_learning");
             return;
         } else {
-            DEBUG_SERIAL.println("═══════════════════════════════════════");
-            DEBUG_SERIAL.println("⏰ TIME TO WATER: Valve " + String(valveIndex));
-            DEBUG_SERIAL.println("  Tray should be empty now (time elapsed: " + LearningAlgorithm::formatDuration(timeSinceLastWatering) + ")");
+            DebugHelper::debug("═══════════════════════════════════════");
+            DebugHelper::debug("⏰ TIME TO WATER: Valve " + String(valveIndex));
+            DebugHelper::debug("  Tray should be empty now (time elapsed: " + LearningAlgorithm::formatDuration(timeSinceLastWatering) + ")");
         }
     }
 
     // Start watering cycle
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
-    DEBUG_SERIAL.println("Starting watering cycle for valve " + String(valveIndex));
+    DebugHelper::debug("═══════════════════════════════════════");
+    DebugHelper::debug("Starting watering cycle for valve " + String(valveIndex));
 
     if (valve->isCalibrated) {
-        DEBUG_SERIAL.println("🧠 Calibrated - Baseline: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
+        DebugHelper::debug("🧠 Calibrated - Baseline: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
         if (valve->emptyToFullDuration > 0) {
-            DEBUG_SERIAL.println("  Empty time: " + LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
+            DebugHelper::debug("  Empty time: " + LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
         }
     } else {
-        DEBUG_SERIAL.println("🎯 First watering - Establishing baseline");
+        DebugHelper::debug("🎯 First watering - Establishing baseline");
     }
 
-    DEBUG_SERIAL.println("Step 1: Opening valve (sensor needs water flow)...");
+    DebugHelper::debug("Step 1: Opening valve (sensor needs water flow)...");
     valve->wateringRequested = true;
     valve->rainDetected = false;
     valve->lastRainCheck = 0;
@@ -481,13 +548,13 @@ inline void WateringSystem::stopWatering(int valveIndex) {
 
 inline void WateringSystem::startSequentialWatering() {
     if (sequentialMode) {
-        DEBUG_SERIAL.println("Sequential watering already in progress");
+        DebugHelper::debug("Sequential watering already in progress");
         return;
     }
 
-    DEBUG_SERIAL.println("\n╔═══════════════════════════════════════════╗");
-    DEBUG_SERIAL.println("║  SEQUENTIAL WATERING STARTED (ALL VALVES) ║");
-    DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
+    DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
+    DebugHelper::debug("║  SEQUENTIAL WATERING STARTED (ALL VALVES) ║");
+    DebugHelper::debug("╚═══════════════════════════════════════════╝");
 
     // Prepare sequence: all valves in reverse order (5-0)
     sequenceLength = NUM_VALVES;
@@ -514,6 +581,9 @@ inline void WateringSystem::startSequentialWatering() {
         }
     }
 
+    // Flush debug buffer before sending notification
+    DebugHelper::flushBuffer();
+
     TelegramNotifier::sendWateringStarted(sessionTriggerType, trayNumbers);
 
     startNextInSequence();
@@ -521,25 +591,25 @@ inline void WateringSystem::startSequentialWatering() {
 
 inline void WateringSystem::startSequentialWateringCustom(int* valveIndices, int count) {
     if (sequentialMode) {
-        DEBUG_SERIAL.println("Sequential watering already in progress");
+        DebugHelper::debug("Sequential watering already in progress");
         return;
     }
 
     if (count == 0 || count > NUM_VALVES) {
-        DEBUG_SERIAL.println("Invalid valve count for sequential watering");
+        DebugHelper::debug("Invalid valve count for sequential watering");
         return;
     }
 
-    DEBUG_SERIAL.println("\n╔═══════════════════════════════════════════╗");
-    DEBUG_SERIAL.println("║  SEQUENTIAL WATERING STARTED              ║");
-    DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
-    DEBUG_SERIAL.print("Valve sequence: ");
+    DebugHelper::debug("╔═══════════════════════════════════════════╗");
+    DebugHelper::debug("║  SEQUENTIAL WATERING STARTED              ║");
+    DebugHelper::debug("╚═══════════════════════════════════════════╝");
+    String valveSeq = "Valve sequence: ";
     for (int i = 0; i < count; i++) {
-        DEBUG_SERIAL.print(valveIndices[i]);
-        if (i < count - 1) DEBUG_SERIAL.print(", ");
+        valveSeq += String(valveIndices[i]);
+        if (i < count - 1) valveSeq += ", ";
         sequenceValves[i] = valveIndices[i];
     }
-    DEBUG_SERIAL.println();
+    DebugHelper::debug(valveSeq);
 
     sequenceLength = count;
     sequentialMode = true;
@@ -551,7 +621,7 @@ inline void WateringSystem::startSequentialWateringCustom(int* valveIndices, int
 inline void WateringSystem::stopSequentialWatering() {
     if (!sequentialMode) return;
 
-    DEBUG_SERIAL.println("\n⚠️  SEQUENTIAL WATERING STOPPED");
+    DebugHelper::debug("\n⚠️  SEQUENTIAL WATERING STOPPED");
     sequentialMode = false;
 
     for (int i = 0; i < NUM_VALVES; i++) {
@@ -571,9 +641,9 @@ inline void WateringSystem::startNextInSequence() {
     if (!sequentialMode) return;
 
     if (currentSequenceIndex >= sequenceLength) {
-        DEBUG_SERIAL.println("\n╔═══════════════════════════════════════════╗");
-        DEBUG_SERIAL.println("║  SEQUENTIAL WATERING COMPLETE ✓           ║");
-        DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
+        DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
+        DebugHelper::debug("║  SEQUENTIAL WATERING COMPLETE ✓           ║");
+        DebugHelper::debug("╚═══════════════════════════════════════════╝");
         sequentialMode = false;
         publishStateChange("system", "sequential_complete");
 
@@ -597,13 +667,16 @@ inline void WateringSystem::startNextInSequence() {
 
             TelegramNotifier::sendWateringComplete(results, resultCount);
             endTelegramSession();
+
+            // Send updated watering schedule after sequential watering completes
+            sendWateringSchedule("Updated Schedule");
         }
 
         return;
     }
 
     int valveIndex = sequenceValves[currentSequenceIndex];
-    DEBUG_SERIAL.println("\n→ [Sequence " + String(currentSequenceIndex + 1) + "/" + String(sequenceLength) +
+    DebugHelper::debug("\n→ [Sequence " + String(currentSequenceIndex + 1) + "/" + String(sequenceLength) +
                        "] Starting Valve " + String(valveIndex));
 
     startWatering(valveIndex, true);  // Force watering - ignore learning algorithm
@@ -697,15 +770,15 @@ inline void WateringSystem::processLearningData(ValveController* valve, unsigned
     valve->lastFillDuration = fillDuration;
     valve->totalWateringCycles++;
 
-    DEBUG_SERIAL.println("🧠 TIME-BASED LEARNING:");
-    DEBUG_SERIAL.println("  Fill duration: " + LearningAlgorithm::formatDuration(fillDuration));
+    DebugHelper::debug("🧠 TIME-BASED LEARNING:");
+    DebugHelper::debug("  Fill duration: " + LearningAlgorithm::formatDuration(fillDuration));
 
     // Update baseline if this fill was longer (tray was emptier)
     bool baselineUpdated = false;
     if (fillDuration >= valve->baselineFillDuration || valve->baselineFillDuration == 0) {
         valve->baselineFillDuration = fillDuration;
         baselineUpdated = true;
-        DEBUG_SERIAL.println("  📏 Baseline updated: " + LearningAlgorithm::formatDuration(fillDuration));
+        DebugHelper::debug("  📏 Baseline updated: " + LearningAlgorithm::formatDuration(fillDuration));
     }
 
     if (!valve->isCalibrated) {
@@ -715,14 +788,19 @@ inline void WateringSystem::processLearningData(ValveController* valve, unsigned
         valve->emptyToFullDuration = 0;  // Unknown until we have consumption data
         valve->lastWaterLevelPercent = 0.0;
 
-        DEBUG_SERIAL.println("  🎯 INITIAL CALIBRATION: " + LearningAlgorithm::formatDuration(fillDuration));
-        DEBUG_SERIAL.println("  Note: Tray may not have been empty");
-        DEBUG_SERIAL.println("  Baseline will auto-update when tray is emptier");
-        DEBUG_SERIAL.println("  Next watering will start measuring consumption");
+        DebugHelper::debug("  🎯 INITIAL CALIBRATION: " + LearningAlgorithm::formatDuration(fillDuration));
+        DebugHelper::debug("  Note: Tray may not have been empty");
+        DebugHelper::debug("  Baseline will auto-update when tray is emptier");
+        DebugHelper::debug("  Next watering will start measuring consumption");
         publishStateChange("valve" + String(valve->valveIndex), "initial_calibration");
 
         // Save to flash
         saveLearningData();
+
+        // Send updated watering schedule after initial calibration (not during sequential)
+        if (!sequentialMode) {
+            sendWateringSchedule("Updated Schedule");
+        }
     } else {
         // Calculate water level before this watering
         float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(fillDuration, valve->baselineFillDuration);
@@ -749,34 +827,39 @@ inline void WateringSystem::processLearningData(ValveController* valve, unsigned
 
         // Save to flash
         saveLearningData();
+
+        // Send updated watering schedule after individual watering (not during sequential)
+        if (!sequentialMode) {
+            sendWateringSchedule("Updated Schedule");
+        }
     }
 }
 
 inline void WateringSystem::logLearningData(ValveController* valve, float waterLevelBefore, unsigned long emptyDuration) {
-    DEBUG_SERIAL.println("  Baseline fill: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
-    DEBUG_SERIAL.println("  Current fill: " + LearningAlgorithm::formatDuration(valve->lastFillDuration));
+    DebugHelper::debug("  Baseline fill: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
+    DebugHelper::debug("  Current fill: " + LearningAlgorithm::formatDuration(valve->lastFillDuration));
 
     // Check if baseline was just updated
     if (valve->lastFillDuration >= valve->baselineFillDuration && valve->totalWateringCycles > 1) {
-        DEBUG_SERIAL.println("  ✨ Baseline updated - tray was emptier than before");
+        DebugHelper::debug("  ✨ Baseline updated - tray was emptier than before");
     }
 
-    DEBUG_SERIAL.println("  Water level before: " + String((int)waterLevelBefore) + "%");
+    DebugHelper::debug("  Water level before: " + String((int)waterLevelBefore) + "%");
 
     const char* state = getTrayState(waterLevelBefore);
-    DEBUG_SERIAL.println("  Tray state was: " + String(state));
+    DebugHelper::debug("  Tray state was: " + String(state));
 
     if (emptyDuration > 0) {
-        DEBUG_SERIAL.println("  Estimated empty time: " + LearningAlgorithm::formatDuration(emptyDuration));
-        DEBUG_SERIAL.println("  Learning cycles: " + String(valve->totalWateringCycles));
+        DebugHelper::debug("  Estimated empty time: " + LearningAlgorithm::formatDuration(emptyDuration));
+        DebugHelper::debug("  Learning cycles: " + String(valve->totalWateringCycles));
 
         if (valve->autoWateringEnabled) {
-            DEBUG_SERIAL.println("  ⏰ Auto-watering enabled - will water when empty");
+            DebugHelper::debug("  ⏰ Auto-watering enabled - will water when empty");
         } else {
-            DEBUG_SERIAL.println("  ⚠️  Auto-watering disabled - manual watering only");
+            DebugHelper::debug("  ⚠️  Auto-watering disabled - manual watering only");
         }
     } else {
-        DEBUG_SERIAL.println("  ⚠️  Not enough data for consumption estimate yet");
+        DebugHelper::debug("  ⚠️  Not enough data for consumption estimate yet");
     }
 
     String learningMsg = "{\"valve\":" + String(valve->valveIndex) +
@@ -799,10 +882,10 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
     valve->lastWaterLevelPercent = 0.0;
     valve->totalWateringCycles = 0;
 
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
-    DEBUG_SERIAL.println("🔄 CALIBRATION RESET: Valve " + String(valveIndex));
-    DEBUG_SERIAL.println("  Next watering will establish new baseline");
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
+    DebugHelper::debug("═══════════════════════════════════════");
+    DebugHelper::debug("🔄 CALIBRATION RESET: Valve " + String(valveIndex));
+    DebugHelper::debug("  Next watering will establish new baseline");
+    DebugHelper::debug("═══════════════════════════════════════");
     publishStateChange("valve" + String(valveIndex), "calibration_reset");
 
     // Save to flash
@@ -810,8 +893,8 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
 }
 
 inline void WateringSystem::resetAllCalibrations() {
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
-    DEBUG_SERIAL.println("🔄 RESET ALL CALIBRATIONS");
+    DebugHelper::debug("═══════════════════════════════════════");
+    DebugHelper::debug("🔄 RESET ALL CALIBRATIONS");
     for (int i = 0; i < NUM_VALVES; i++) {
         valves[i]->isCalibrated = false;
         valves[i]->baselineFillDuration = 0;
@@ -821,8 +904,8 @@ inline void WateringSystem::resetAllCalibrations() {
         valves[i]->lastWaterLevelPercent = 0.0;
         valves[i]->totalWateringCycles = 0;
     }
-    DEBUG_SERIAL.println("  All valves reset to uncalibrated state");
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
+    DebugHelper::debug("  All valves reset to uncalibrated state");
+    DebugHelper::debug("═══════════════════════════════════════");
     publishStateChange("system", "all_calibrations_reset");
 
     // Save to flash
@@ -830,56 +913,56 @@ inline void WateringSystem::resetAllCalibrations() {
 }
 
 inline void WateringSystem::printLearningStatus() {
-    DEBUG_SERIAL.println("\n╔═══════════════════════════════════════════╗");
-    DEBUG_SERIAL.println("║    TIME-BASED LEARNING SYSTEM STATUS      ║");
-    DEBUG_SERIAL.println("╚═══════════════════════════════════════════╝");
+    DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
+    DebugHelper::debug("║    TIME-BASED LEARNING SYSTEM STATUS      ║");
+    DebugHelper::debug("╚═══════════════════════════════════════════╝");
 
     unsigned long currentTime = millis();
 
     for (int i = 0; i < NUM_VALVES; i++) {
         ValveController* valve = valves[i];
-        DEBUG_SERIAL.println("\n📊 Valve " + String(i) + ":");
+        DebugHelper::debug("\n📊 Valve " + String(i) + ":");
 
         if (valve->isCalibrated) {
-            DEBUG_SERIAL.println("  Status: ✓ Calibrated");
-            DEBUG_SERIAL.println("  Baseline fill: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
-            DEBUG_SERIAL.println("  Last fill: " + LearningAlgorithm::formatDuration(valve->lastFillDuration));
-            DEBUG_SERIAL.println("  Total cycles: " + String(valve->totalWateringCycles));
+            DebugHelper::debug("  Status: ✓ Calibrated");
+            DebugHelper::debug("  Baseline fill: " + LearningAlgorithm::formatDuration(valve->baselineFillDuration));
+            DebugHelper::debug("  Last fill: " + LearningAlgorithm::formatDuration(valve->lastFillDuration));
+            DebugHelper::debug("  Total cycles: " + String(valve->totalWateringCycles));
 
             if (valve->emptyToFullDuration > 0) {
-                DEBUG_SERIAL.println("  Empty-to-full time: " + LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
+                DebugHelper::debug("  Empty-to-full time: " + LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
 
                 // Calculate current water level
                 float currentWaterLevel = calculateCurrentWaterLevel(valve, currentTime);
-                DEBUG_SERIAL.println("  Current water level: ~" + String((int)currentWaterLevel) + "% (" + String(getTrayState(currentWaterLevel)) + ")");
+                DebugHelper::debug("  Current water level: ~" + String((int)currentWaterLevel) + "% (" + String(getTrayState(currentWaterLevel)) + ")");
 
                 // Time until empty
                 if (currentWaterLevel > 0) {
                     unsigned long timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
                     unsigned long timeRemaining = valve->emptyToFullDuration - timeSinceWatering;
-                    DEBUG_SERIAL.println("  Time until empty: ~" + LearningAlgorithm::formatDuration(timeRemaining));
+                    DebugHelper::debug("  Time until empty: ~" + LearningAlgorithm::formatDuration(timeRemaining));
                 } else {
-                    DEBUG_SERIAL.println("  Time until empty: Now (should water!)");
+                    DebugHelper::debug("  Time until empty: Now (should water!)");
                 }
             } else {
-                DEBUG_SERIAL.println("  Empty-to-full time: Unknown (need more data)");
+                DebugHelper::debug("  Empty-to-full time: Unknown (need more data)");
             }
 
-            DEBUG_SERIAL.println("  Auto-watering: " + String(valve->autoWateringEnabled ? "Enabled ✓" : "Disabled ✗"));
+            DebugHelper::debug("  Auto-watering: " + String(valve->autoWateringEnabled ? "Enabled ✓" : "Disabled ✗"));
         } else {
-            DEBUG_SERIAL.println("  Status: ⚠️  Not calibrated");
-            DEBUG_SERIAL.println("  Action: Run first watering to establish baseline");
-            DEBUG_SERIAL.println("  Auto-watering: " + String(valve->autoWateringEnabled ? "Enabled ✓" : "Disabled ✗"));
+            DebugHelper::debug("  Status: ⚠️  Not calibrated");
+            DebugHelper::debug("  Action: Run first watering to establish baseline");
+            DebugHelper::debug("  Auto-watering: " + String(valve->autoWateringEnabled ? "Enabled ✓" : "Disabled ✗"));
         }
     }
-    DEBUG_SERIAL.println("\n═══════════════════════════════════════");
+    DebugHelper::debug("\n═══════════════════════════════════════");
 }
 
 inline void WateringSystem::setAutoWatering(int valveIndex, bool enabled) {
     if (valveIndex < 0 || valveIndex >= NUM_VALVES) return;
 
     valves[valveIndex]->autoWateringEnabled = enabled;
-    DEBUG_SERIAL.println("⏰ Valve " + String(valveIndex) + " auto-watering: " + String(enabled ? "ENABLED" : "DISABLED"));
+    DebugHelper::debug("⏰ Valve " + String(valveIndex) + " auto-watering: " + String(enabled ? "ENABLED" : "DISABLED"));
     publishStateChange("valve" + String(valveIndex), enabled ? "auto_enabled" : "auto_disabled");
 
     // Save to flash
@@ -887,12 +970,12 @@ inline void WateringSystem::setAutoWatering(int valveIndex, bool enabled) {
 }
 
 inline void WateringSystem::setAllAutoWatering(bool enabled) {
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
-    DEBUG_SERIAL.println("⏰ SET ALL AUTO-WATERING: " + String(enabled ? "ENABLED" : "DISABLED"));
+    DebugHelper::debug("═══════════════════════════════════════");
+    DebugHelper::debug("⏰ SET ALL AUTO-WATERING: " + String(enabled ? "ENABLED" : "DISABLED"));
     for (int i = 0; i < NUM_VALVES; i++) {
         valves[i]->autoWateringEnabled = enabled;
     }
-    DEBUG_SERIAL.println("═══════════════════════════════════════");
+    DebugHelper::debug("═══════════════════════════════════════");
     publishStateChange("system", enabled ? "all_auto_enabled" : "all_auto_disabled");
 
     // Save to flash
@@ -902,7 +985,7 @@ inline void WateringSystem::setAllAutoWatering(bool enabled) {
 inline void WateringSystem::clearTimeoutFlag(int valveIndex) {
     if (valveIndex >= 0 && valveIndex < NUM_VALVES) {
         valves[valveIndex]->timeoutOccurred = false;
-        DEBUG_SERIAL.println("Timeout flag cleared for valve " + String(valveIndex));
+        DebugHelper::debug("Timeout flag cleared for valve " + String(valveIndex));
         publishStateChange("valve" + String(valveIndex), "timeout_cleared");
     }
 }
@@ -921,7 +1004,7 @@ inline void WateringSystem::startTelegramSession(const String& triggerType) {
         sessionData[i].duration = 0.0;
     }
 
-    DEBUG_SERIAL.println("📱 Telegram session started - Trigger: " + triggerType);
+    DebugHelper::debug("📱 Telegram session started - Trigger: " + triggerType);
 }
 
 inline void WateringSystem::recordSessionStart(int valveIndex) {
@@ -932,7 +1015,7 @@ inline void WateringSystem::recordSessionStart(int valveIndex) {
     sessionData[valveIndex].startTime = millis();
     sessionData[valveIndex].status = "IN_PROGRESS";
 
-    DEBUG_SERIAL.println("📱 Session tracking: Tray " + String(valveIndex + 1) + " started");
+    DebugHelper::debug("📱 Session tracking: Tray " + String(valveIndex + 1) + " started");
 }
 
 inline void WateringSystem::recordSessionEnd(int valveIndex, const String& status) {
@@ -951,7 +1034,7 @@ inline void WateringSystem::recordSessionEnd(int valveIndex, const String& statu
     sessionData[valveIndex].duration = (sessionData[valveIndex].endTime - startTime) / 1000.0;
     sessionData[valveIndex].status = status;
 
-    DEBUG_SERIAL.println("📱 Session tracking: Tray " + String(valveIndex + 1) +
+    DebugHelper::debug("📱 Session tracking: Tray " + String(valveIndex + 1) +
                         " ended - Status: " + status +
                         ", Duration: " + String(sessionData[valveIndex].duration, 1) + "s (valve open to close)");
 }
@@ -959,8 +1042,110 @@ inline void WateringSystem::recordSessionEnd(int valveIndex, const String& statu
 inline void WateringSystem::endTelegramSession() {
     if (!telegramSessionActive) return;
 
-    DEBUG_SERIAL.println("📱 Telegram session ended - preparing completion report");
+    DebugHelper::debug("📱 Telegram session ended - preparing completion report");
     telegramSessionActive = false;
+}
+
+// ========== Watering Schedule Notification ==========
+inline void WateringSystem::sendWateringSchedule(const String& title) {
+    if (!WiFi.isConnected()) {
+        DebugHelper::debug("❌ Cannot send schedule: WiFi not connected");
+        return;
+    }
+
+    // Get current time
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        DebugHelper::debug("❌ Cannot send schedule: Time not synced");
+        return;
+    }
+
+    // Flush debug buffer before sending schedule notification
+    DebugHelper::flushBuffer();
+
+    unsigned long currentTime = millis();
+    time_t now = time(nullptr);
+
+    // Build schedule data for all valves (4 columns: tray, status, planned, duration)
+    String scheduleData[NUM_VALVES][4];
+
+    for (int i = 0; i < NUM_VALVES; i++) {
+        ValveController* valve = valves[i];
+
+        // Column 1: Tray number (1-indexed)
+        scheduleData[i][0] = String(i + 1);
+
+        // Column 4: Duration (baseline fill time in seconds)
+        if (valve->baselineFillDuration > 0) {
+            float durationSec = valve->baselineFillDuration / 1000.0;
+            scheduleData[i][3] = String(durationSec, 1) + "s";
+        } else {
+            scheduleData[i][3] = "-";
+        }
+
+        // Column 2 & 3: Status and planned time
+        if (!valve->isCalibrated) {
+            scheduleData[i][1] = "NEW";
+            scheduleData[i][2] = "Not calibrated";
+        } else if (!valve->autoWateringEnabled) {
+            scheduleData[i][1] = "OFF";
+            scheduleData[i][2] = "Auto disabled";
+        } else if (valve->emptyToFullDuration == 0) {
+            // Learning mode - use minimum interval (24h) from last attempt
+            scheduleData[i][1] = "LEARN";
+
+            unsigned long referenceTime = valve->lastWateringAttemptTime;
+            if (referenceTime == 0) referenceTime = valve->lastWateringCompleteTime;
+
+            if (referenceTime > 0) {
+                unsigned long timeSinceAttempt = currentTime - referenceTime;
+                if (timeSinceAttempt >= AUTO_WATERING_MIN_INTERVAL_MS) {
+                    scheduleData[i][2] = "Now (learning)";
+                } else {
+                    unsigned long timeUntilNext = AUTO_WATERING_MIN_INTERVAL_MS - timeSinceAttempt;
+                    time_t plannedTime = now + (timeUntilNext / 1000);
+                    struct tm plannedTm;
+                    localtime_r(&plannedTime, &plannedTm);
+                    char buffer[20];
+                    strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
+                    scheduleData[i][2] = String(buffer);
+                }
+            } else {
+                scheduleData[i][2] = "Now (learning)";
+            }
+        } else {
+            // Calculate planned watering time based on learned consumption
+            unsigned long timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
+
+            if (timeSinceWatering >= valve->emptyToFullDuration) {
+                // Already due for watering
+                scheduleData[i][1] = "DUE";
+                scheduleData[i][2] = "Now";
+            } else {
+                // Calculate future watering time
+                unsigned long timeUntilWatering = valve->emptyToFullDuration - timeSinceWatering;
+                time_t plannedTime = now + (timeUntilWatering / 1000);
+
+                // Safety check: if planned time is in the past, show "Now"
+                if (plannedTime <= now) {
+                    scheduleData[i][1] = "DUE";
+                    scheduleData[i][2] = "Now";
+                } else {
+                    // Format as date/time - always show full date for clarity
+                    struct tm plannedTm;
+                    localtime_r(&plannedTime, &plannedTm);
+
+                    char buffer[20];
+                    strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
+
+                    scheduleData[i][1] = "AUTO";
+                    scheduleData[i][2] = String(buffer);
+                }
+            }
+        }
+    }
+
+    TelegramNotifier::sendWateringSchedule(scheduleData, NUM_VALVES, title);
 }
 
 // ============================================

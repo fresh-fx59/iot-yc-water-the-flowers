@@ -6,6 +6,7 @@
 #include <WiFiClientSecure.h>
 #include "config.h"
 #include "secret.h"
+#include "DebugHelper.h"
 
 // ============================================
 // Telegram Notifier Class
@@ -34,7 +35,7 @@ private:
 
     static bool sendMessage(const String& message) {
         if (!WiFi.isConnected()) {
-            DEBUG_SERIAL.println("❌ Cannot send Telegram: WiFi not connected");
+            DebugHelper::debug("❌ Cannot send Telegram: WiFi not connected");
             return false;
         }
 
@@ -54,11 +55,11 @@ private:
         bool success = (httpCode == 200);
 
         if (success) {
-            DEBUG_SERIAL.println("✓ Telegram message sent");
+            DebugHelper::debug("✓ Telegram message sent");
         } else {
-            DEBUG_SERIAL.println("❌ Telegram send failed, HTTP code: " + String(httpCode));
+            DebugHelper::debug("❌ Telegram send failed, HTTP code: " + String(httpCode));
             if (httpCode > 0) {
-                DEBUG_SERIAL.println("Response: " + http.getString());
+                DebugHelper::debug("Response: " + http.getString());
             }
         }
 
@@ -82,7 +83,7 @@ public:
     // Send device online notification
     static void sendDeviceOnline(const String& version, const String& deviceType) {
         if (!WiFi.isConnected()) {
-            DEBUG_SERIAL.println("❌ Cannot send Telegram: WiFi not connected");
+            DebugHelper::debug("❌ Cannot send Telegram: WiFi not connected");
             return;
         }
 
@@ -92,7 +93,7 @@ public:
         message += "📶 WiFi: " + String(WiFi.RSSI()) + " dBm\n";
         message += "🔧 Version: " + version;
 
-        DEBUG_SERIAL.println("\n📱 Sending Telegram online notification...");
+        DebugHelper::debug("\n📱 Sending Telegram online notification...");
         sendMessage(message);
     }
 
@@ -105,7 +106,7 @@ public:
         message += "🔧 Trigger: " + triggerType + "\n";
         message += "🌱 Trays: " + trayNumbers;
 
-        DEBUG_SERIAL.println("\n📱 Sending Telegram start notification...");
+        DebugHelper::debug("\n📱 Sending Telegram start notification...");
         sendMessage(message);
     }
 
@@ -135,7 +136,45 @@ public:
 
         message += "</pre>";
 
-        DEBUG_SERIAL.println("\n📱 Sending Telegram completion notification...");
+        DebugHelper::debug("\n📱 Sending Telegram completion notification...");
+        sendMessage(message);
+    }
+
+    // Send watering schedule notification showing planned watering times
+    // scheduleData[i][0] = tray number, [1] = status, [2] = planned time, [3] = duration
+    static void sendWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
+        String message = "📅 <b>" + title + "</b>\n";
+        message += "⏰ " + getCurrentDateTime() + "\n\n";
+        message += "<pre>";
+        message += "tray | status | planned     | dur\n";
+        message += "-----|--------|-------------|----\n";
+
+        for (int i = 0; i < numTrays; i++) {
+            String tray = scheduleData[i][0];
+            String status = scheduleData[i][1];
+            String planned = scheduleData[i][2];
+            String duration = scheduleData[i][3];
+
+            // Column 1: tray (4 chars, right-aligned)
+            while (tray.length() < 4) tray = " " + tray;
+            message += tray + " | ";
+
+            // Column 2: status (6 chars, centered)
+            while (status.length() < 6) status = " " + status + " ";
+            if (status.length() > 6) status = status.substring(0, 6);
+            message += status + " | ";
+
+            // Column 3: planned time (11 chars, left-aligned)
+            while (planned.length() < 11) planned = planned + " ";
+            message += planned + " | ";
+
+            // Column 4: duration
+            message += duration + "\n";
+        }
+
+        message += "</pre>";
+
+        DebugHelper::debug("\n📱 Sending Telegram schedule notification...");
         sendMessage(message);
     }
 };

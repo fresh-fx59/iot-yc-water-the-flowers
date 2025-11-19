@@ -138,6 +138,21 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     status = "⚠️ STOPPED";
                 }
                 recordSessionEnd(valveIndex, status);
+
+                // Send completion notification for auto-watering (not sequential mode)
+                if (!sequentialMode && autoWateringValveIndex == valveIndex) {
+                    // Build results for single valve
+                    String results[1][3];
+                    results[0][0] = String(sessionData[valveIndex].trayNumber);
+                    results[0][1] = String(sessionData[valveIndex].duration, 1);
+                    results[0][2] = sessionData[valveIndex].status;
+
+                    // Flush debug buffer and send completion
+                    DebugHelper::flushBuffer();
+                    TelegramNotifier::sendWateringComplete(results, 1);
+                    endTelegramSession();
+                    autoWateringValveIndex = -1;
+                }
             }
 
             // Process learning data for successful waterings

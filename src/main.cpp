@@ -35,7 +35,7 @@ WateringSystem wateringSystem;
 // NTP Time Synchronization
 // ============================================
 void syncTime() {
-    DEBUG_SERIAL.println("Synchronizing time with NTP server...");
+    DebugHelper::debug("Synchronizing time with NTP server...");
 
     // Configure time with NTP server
     // GMT+3 (Moscow time) with daylight saving time offset
@@ -45,7 +45,6 @@ void syncTime() {
     struct tm timeinfo;
     int retries = 0;
     while (!getLocalTime(&timeinfo) && retries < 10) {
-        DEBUG_SERIAL.print(".");
         delay(1000);
         retries++;
     }
@@ -53,9 +52,9 @@ void syncTime() {
     if (getLocalTime(&timeinfo)) {
         char buffer[30];
         strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &timeinfo);
-        DEBUG_SERIAL.println("\n✓ Time synchronized: " + String(buffer));
+        DebugHelper::debug("✓ Time synchronized: " + String(buffer));
     } else {
-        DEBUG_SERIAL.println("\n⚠️ Time sync failed - will retry on first watering");
+        DebugHelper::debugImportant("⚠️ Time sync failed - will retry on first watering");
     }
 }
 
@@ -82,27 +81,26 @@ void setup() {
     Serial.println("\n\n\n");
     delay(100);
 
-    // Print banner
-    DEBUG_SERIAL.println("=================================");
-    DEBUG_SERIAL.println("Smart Watering System");
-    DEBUG_SERIAL.println("Platform: ESP32-S3-DevKitC-1");
-    DEBUG_SERIAL.println("Version: " + String(VERSION));
-    DEBUG_SERIAL.println("Device ID: " + String(YC_DEVICE_ID));
-    DEBUG_SERIAL.println("Valves: " + String(NUM_VALVES));
-    DEBUG_SERIAL.println("=================================");
-    DEBUG_SERIAL.println();
+    // Print banner (queued for Telegram)
+    DebugHelper::debug("=================================");
+    DebugHelper::debug("Smart Watering System");
+    DebugHelper::debug("Platform: ESP32-S3-DevKitC-1");
+    DebugHelper::debug("Version: " + String(VERSION));
+    DebugHelper::debug("Device ID: " + String(YC_DEVICE_ID));
+    DebugHelper::debug("Valves: " + String(NUM_VALVES));
+    DebugHelper::debug("=================================");
 
     // Initialize LittleFS for data persistence
-    DEBUG_SERIAL.println("Initializing LittleFS...");
+    DebugHelper::debug("Initializing LittleFS...");
     if (!LittleFS.begin(false)) {
-        DEBUG_SERIAL.println("⚠️  LittleFS mount failed, formatting...");
+        DebugHelper::debugImportant("⚠️  LittleFS mount failed, formatting...");
         if (!LittleFS.begin(true)) {
-            DEBUG_SERIAL.println("❌ LittleFS format failed!");
+            DebugHelper::debugImportant("❌ LittleFS format failed!");
         } else {
-            DEBUG_SERIAL.println("✓ LittleFS formatted and mounted");
+            DebugHelper::debug("✓ LittleFS formatted and mounted");
         }
     } else {
-        DEBUG_SERIAL.println("✓ LittleFS mounted successfully");
+        DebugHelper::debug("✓ LittleFS mounted successfully");
     }
 
     // Initialize watering system (will load learning data from LittleFS)
@@ -119,8 +117,27 @@ void setup() {
         // Synchronize time with NTP
         syncTime();
 
+        // IDEMPOTENT MIGRATION: Check if old learning data file exists
+        // If old file exists, delete it to trigger fresh calibration with new file format
+        // This only runs once - after migration, old file won't exist
+        if (LittleFS.exists("/learning_data.json")) {
+            DebugHelper::debugImportant("🔄 MIGRATION: Found old learning data file, deleting for fresh start...");
+            LittleFS.remove("/learning_data.json");
+        }
+
+        // Load learning data AFTER NTP sync (needs real time for proper timestamp conversion)
+        if (!wateringSystem.loadLearningData()) {
+            DebugHelper::debugImportant("⚠️  No saved learning data found - will calibrate on first watering");
+        }
+
         // Connect to MQTT
         NetworkManager::connectMQTT();
+    } else {
+        // No WiFi - load learning data without real time (will use millis fallback)
+        DebugHelper::debugImportant("⚠️  Loading learning data without NTP sync");
+        if (!wateringSystem.loadLearningData()) {
+            DebugHelper::debugImportant("⚠️  No saved learning data found or load failed");
+        }
     }
 
     // CRITICAL: Set watering system reference for web API
@@ -129,11 +146,19 @@ void setup() {
     // Initialize OTA updates
     setupOta();
 
-    DEBUG_SERIAL.println("Setup completed\n");
+    DebugHelper::debug("Setup completed");
 
-    // Send Telegram online notification
+    // Send Telegram notifications
     if (NetworkManager::isWiFiConnected()) {
         TelegramNotifier::sendDeviceOnline(VERSION, DEVICE_TYPE);
+
+        // Send watering schedule after startup
+        wateringSystem.sendWateringSchedule("Startup Schedule");
+
+        // Auto-water all trays on startup to build learning data
+        // This ensures trays get calibrated without manual intervention
+        DebugHelper::debugImportant("🚿 Starting automatic watering on boot...");
+        wateringSystem.startSequentialWatering();
     }
 }
 

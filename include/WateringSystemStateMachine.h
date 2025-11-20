@@ -48,7 +48,14 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     // CRITICAL: Tray is full - update last watering time to NOW
                     // This makes auto-watering wait for consumption period before retrying
                     valve->lastWateringCompleteTime = currentTime;
-                    DebugHelper::debug("  Updated lastWateringCompleteTime - auto-watering will wait for consumption");
+
+                    // If not calibrated, set temporary retry duration to attempt calibration later
+                    if (!valve->isCalibrated) {
+                        valve->emptyToFullDuration = UNCALIBRATED_RETRY_INTERVAL_MS;
+                        DebugHelper::debug("  Tray not calibrated - will retry watering in " + String(UNCALIBRATED_RETRY_INTERVAL_MS / 3600000) + " hours for calibration");
+                    } else {
+                        DebugHelper::debug("  Updated lastWateringCompleteTime - auto-watering will wait for consumption");
+                    }
 
                     publishStateChange("valve" + String(valveIndex), "already_full_skipped");
 

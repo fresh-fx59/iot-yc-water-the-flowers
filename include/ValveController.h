@@ -124,8 +124,13 @@ inline const char* getTrayState(float waterLevelPercent) {
 
 // Check if tray is empty or nearly empty (should water)
 inline bool shouldWaterNow(const ValveController* valve, unsigned long currentTime) {
-    if (!valve->isCalibrated || !valve->autoWateringEnabled) {
+    if (!valve->autoWateringEnabled) {
         return false;
+    }
+
+    // Allow uncalibrated trays with temporary duration (e.g., 24h retry after found full)
+    if (!valve->isCalibrated && valve->emptyToFullDuration == 0) {
+        return false;  // No consumption data and not calibrated
     }
 
     if (valve->emptyToFullDuration == 0) {

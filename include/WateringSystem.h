@@ -1084,9 +1084,26 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
         }
 
         // Column 2 & 3: Status and planned time
-        if (!valve->isCalibrated) {
+        if (!valve->isCalibrated && valve->emptyToFullDuration == 0) {
+            // Not calibrated and no temporary duration set
             scheduleData[i][1] = "NEW";
             scheduleData[i][2] = "Not calibrated";
+        } else if (!valve->isCalibrated && valve->emptyToFullDuration > 0) {
+            // Not calibrated but has temporary 24h retry duration (tray was found full)
+            scheduleData[i][1] = "RETRY";
+            unsigned long timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
+
+            if (timeSinceWatering >= valve->emptyToFullDuration) {
+                scheduleData[i][2] = "Now (retry)";
+            } else {
+                unsigned long timeUntilRetry = valve->emptyToFullDuration - timeSinceWatering;
+                time_t plannedTime = now + (timeUntilRetry / 1000);
+                struct tm plannedTm;
+                localtime_r(&plannedTime, &plannedTm);
+                char buffer[20];
+                strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
+                scheduleData[i][2] = String(buffer);
+            }
         } else if (!valve->autoWateringEnabled) {
             scheduleData[i][1] = "OFF";
             scheduleData[i][2] = "Auto disabled";

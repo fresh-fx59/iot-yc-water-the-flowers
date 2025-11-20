@@ -57,6 +57,7 @@ const float LEARNING_FULL_THRESHOLD = 0.10;       // If fill_ratio < 0.10, tray 
 const int LEARNING_MAX_SKIP_CYCLES = 15;          // Maximum cycles to skip
 const int LEARNING_FULL_SKIP_CYCLES = 10;         // Skip cycles when tray is almost full
 const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;  // 24 hours minimum between auto-watering attempts
+const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000; // 24 hours retry for uncalibrated trays found full
 
 // ============================================
 // Debug Configuration

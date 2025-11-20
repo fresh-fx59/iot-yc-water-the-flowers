@@ -63,7 +63,9 @@ public:
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
-        DebugHelper::debug("Connecting to Yandex IoT Core as " + String(YC_DEVICE_ID));
+        String deviceIdStr = String(YC_DEVICE_ID);
+        String deviceIdLast4 = deviceIdStr.substring(deviceIdStr.length() - 4);
+        DebugHelper::debug("Connecting to Yandex IoT Core as ****" + deviceIdLast4);
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {

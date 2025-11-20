@@ -74,7 +74,10 @@ public:
                 DebugHelper::debug("✓ MQTT Connected!");
 
                 if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
-                    DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
+                    String deviceIdStr = String(YC_DEVICE_ID);
+                    String deviceIdLast4 = deviceIdStr.substring(deviceIdStr.length() - 4);
+                    String maskedTopic = "$devices/****" + deviceIdLast4 + "/commands";
+                    DebugHelper::debug("Subscribed to: " + maskedTopic);
                 } else {
                     DebugHelper::debugImportant("❌ Failed to subscribe to commands");
                 }

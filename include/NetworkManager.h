@@ -63,9 +63,7 @@ public:
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
-        String deviceIdStr = String(YC_DEVICE_ID);
-        String deviceIdLast4 = deviceIdStr.substring(deviceIdStr.length() - 4);
-        DebugHelper::debug("Connecting to Yandex IoT Core as ****" + deviceIdLast4);
+        DebugHelper::debug("Connecting to Yandex IoT Core as " + String(YC_DEVICE_ID));
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {
@@ -74,10 +72,7 @@ public:
                 DebugHelper::debug("✓ MQTT Connected!");
 
                 if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
-                    String deviceIdStr = String(YC_DEVICE_ID);
-                    String deviceIdLast4 = deviceIdStr.substring(deviceIdStr.length() - 4);
-                    String maskedTopic = "$devices/****" + deviceIdLast4 + "/commands";
-                    DebugHelper::debug("Subscribed to: " + maskedTopic);
+                    DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
                 } else {
                     DebugHelper::debugImportant("❌ Failed to subscribe to commands");
                 }

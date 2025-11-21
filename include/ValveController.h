@@ -128,13 +128,9 @@ inline bool shouldWaterNow(const ValveController* valve, unsigned long currentTi
         return false;
     }
 
-    // Allow uncalibrated trays with temporary duration (e.g., 24h retry after found full)
+    // Block only truly uncalibrated trays without temporary duration
     if (!valve->isCalibrated && valve->emptyToFullDuration == 0) {
         return false;  // No consumption data and not calibrated
-    }
-
-    if (valve->emptyToFullDuration == 0) {
-        return false;  // No consumption data yet
     }
 
     // SAFETY 1: Minimum 24-hour interval between ANY watering attempts
@@ -144,6 +140,12 @@ inline bool shouldWaterNow(const ValveController* valve, unsigned long currentTi
         if (timeSinceLastAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
             return false;  // Minimum interval not reached (prevents retry loops and over-watering)
         }
+    }
+
+    // LEARN mode (calibrated but no consumption data yet): use 24h minimum interval
+    if (valve->emptyToFullDuration == 0) {
+        // Already passed 24h check above, so if we're here, it's time to water
+        return true;
     }
 
     // SAFETY 2: Check if tray is empty based on learned consumption rate

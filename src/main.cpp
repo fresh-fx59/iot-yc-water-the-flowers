@@ -86,9 +86,7 @@ void setup() {
     DebugHelper::debug("Smart Watering System");
     DebugHelper::debug("Platform: ESP32-S3-DevKitC-1");
     DebugHelper::debug("Version: " + String(VERSION));
-    String deviceIdStr = String(YC_DEVICE_ID);
-    String deviceIdLast4 = deviceIdStr.substring(deviceIdStr.length() - 4);
-    DebugHelper::debug("Device ID: ****" + deviceIdLast4);
+    DebugHelper::debug("Device ID: " + String(YC_DEVICE_ID));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
 

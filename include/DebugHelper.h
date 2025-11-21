@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <time.h>
 #include "config.h"
+#include "secret.h"
 
 // Forward declaration
 extern bool sendTelegramDebug(const String& msg);
@@ -72,6 +73,29 @@ public:
         return String(buffer);
     }
 
+    // Mask device ID in message: are3tumc1rl90r7kflvl -> are3****flvl
+    static String maskDeviceId(const String& message) {
+        String deviceId = String(YC_DEVICE_ID);
+        if (deviceId.length() < 8) {
+            return message;  // Device ID too short to mask
+        }
+
+        int index = message.indexOf(deviceId);
+        if (index == -1) {
+            return message;  // Device ID not found
+        }
+
+        // Build masked version: first 4 + **** + last 4
+        String first4 = deviceId.substring(0, 4);
+        String last4 = deviceId.substring(deviceId.length() - 4);
+        String masked = first4 + "****" + last4;
+
+        // Replace all occurrences
+        String result = message;
+        result.replace(deviceId, masked);
+        return result;
+    }
+
     // Queue a message for Telegram delivery with grouping
     static bool queueMessage(const String& message, bool important = false) {
         #if !IS_DEBUG_TO_TELEGRAM_ENABLED
@@ -80,7 +104,8 @@ public:
 
         unsigned long currentTime = millis();
         String timestamp = getCurrentTimestamp();
-        String formattedMessage = "[" + timestamp + "] " + message;
+        String maskedMessage = maskDeviceId(message);
+        String formattedMessage = "[" + timestamp + "] " + maskedMessage;
 
         // Grouping logic: batch messages that arrive within 2 seconds
         if (groupingBuffer.length() == 0) {

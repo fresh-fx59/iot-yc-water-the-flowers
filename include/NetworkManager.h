@@ -45,6 +45,7 @@ public:
         int attempts = 0;
         while (WiFi.status() != WL_CONNECTED && attempts < WIFI_MAX_RETRY_ATTEMPTS) {
             delay(WIFI_RETRY_DELAY_MS);
+            yield();  // Feed watchdog
             attempts++;
         }
 
@@ -67,6 +68,7 @@ public:
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {
+            yield();  // Feed watchdog
             String clientId = "WateringSystem_" + String(YC_DEVICE_ID);
             if (mqttClient.connect(clientId.c_str(), YC_DEVICE_ID, MQTT_PASSWORD)) {
                 DebugHelper::debug("✓ MQTT Connected!");

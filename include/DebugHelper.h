@@ -41,6 +41,10 @@ private:
     static unsigned long lastGroupMessageTime;
     static unsigned long firstGroupMessageTime;  // Track when group started (for max age)
 
+    // Cached device ID strings for performance
+    static String cachedDeviceId;
+    static String cachedMaskedDeviceId;
+
 public:
     // Get current timestamp with milliseconds
     static String getCurrentTimestamp() {
@@ -73,26 +77,28 @@ public:
         return String(buffer);
     }
 
-    // Mask device ID in message: are3tumc1rl90r7kflvl -> are3****flvl
+    // Mask device ID in message: are3tumc1rl90r7kflvl -> are3****flvl (cached for performance)
     static String maskDeviceId(const String& message) {
-        String deviceId = String(YC_DEVICE_ID);
-        if (deviceId.length() < 8) {
-            return message;  // Device ID too short to mask
+        // Initialize cache on first use
+        if (cachedDeviceId.length() == 0) {
+            cachedDeviceId = String(YC_DEVICE_ID);
+            if (cachedDeviceId.length() >= 8) {
+                String first4 = cachedDeviceId.substring(0, 4);
+                String last4 = cachedDeviceId.substring(cachedDeviceId.length() - 4);
+                cachedMaskedDeviceId = first4 + "****" + last4;
+            } else {
+                cachedMaskedDeviceId = cachedDeviceId;  // Too short to mask
+            }
         }
 
-        int index = message.indexOf(deviceId);
-        if (index == -1) {
-            return message;  // Device ID not found
+        // Quick check if device ID is in message
+        if (message.indexOf(cachedDeviceId) == -1) {
+            return message;  // Device ID not found, return as-is
         }
 
-        // Build masked version: first 4 + **** + last 4
-        String first4 = deviceId.substring(0, 4);
-        String last4 = deviceId.substring(deviceId.length() - 4);
-        String masked = first4 + "****" + last4;
-
-        // Replace all occurrences
+        // Replace all occurrences using cached values
         String result = message;
-        result.replace(deviceId, masked);
+        result.replace(cachedDeviceId, cachedMaskedDeviceId);
         return result;
     }
 
@@ -347,5 +353,7 @@ unsigned long DebugHelper::lastProcessTime = 0;
 String DebugHelper::groupingBuffer = "";
 unsigned long DebugHelper::lastGroupMessageTime = 0;
 unsigned long DebugHelper::firstGroupMessageTime = 0;
+String DebugHelper::cachedDeviceId = "";
+String DebugHelper::cachedMaskedDeviceId = "";
 
 #endif // DEBUG_HELPER_H

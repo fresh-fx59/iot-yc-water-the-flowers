@@ -83,6 +83,7 @@ void setup() {
 
     // Print banner (queued for Telegram)
     DebugHelper::debug("=================================");
+    DebugHelper::debug("🚀 BOOT START");
     DebugHelper::debug("Smart Watering System");
     DebugHelper::debug("Platform: ESP32-S3-DevKitC-1");
     DebugHelper::debug("Version: " + String(VERSION));
@@ -150,26 +151,27 @@ void setup() {
     // Initialize OTA updates
     setupOta();
 
-    DebugHelper::debug("Setup completed");
-
-    // Send Telegram notifications
-    if (NetworkManager::isWiFiConnected()) {
-        TelegramNotifier::sendDeviceOnline(VERSION, DEVICE_TYPE);
-
-        // Send watering schedule after startup
-        wateringSystem.sendWateringSchedule("Startup Schedule");
-
-        // Auto-water all trays on startup to build learning data
-        // This ensures trays get calibrated without manual intervention
-        DebugHelper::debugImportant("🚿 Starting automatic watering on boot...");
-        wateringSystem.startSequentialWatering();
-    }
+    DebugHelper::debug("Setup completed - starting main loop");
 }
+
+// ============================================
+// Boot Flag for First Loop
+// ============================================
+bool firstLoop = true;
 
 // ============================================
 // Main Loop
 // ============================================
 void loop() {
+    // First loop: Send notifications and start auto-watering
+    if (firstLoop && NetworkManager::isWiFiConnected()) {
+        firstLoop = false;
+        TelegramNotifier::sendDeviceOnline(VERSION, DEVICE_TYPE);
+        wateringSystem.sendWateringSchedule("Startup Schedule");
+        DebugHelper::debugImportant("🚿 Starting automatic watering on boot...");
+        wateringSystem.startSequentialWatering();
+    }
+
     // Check WiFi connection
     if (!NetworkManager::isWiFiConnected()) {
         DebugHelper::debugImportant("⚠️ WiFi disconnected, attempting reconnect...");

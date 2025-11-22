@@ -15,8 +15,8 @@
 extern PubSubClient mqttClient;
 
 // Learning data file paths
-const char* LEARNING_DATA_FILE_OLD = "/learning_data.json";
-const char* LEARNING_DATA_FILE = "/learning_data_v2.json";
+const char* LEARNING_DATA_FILE_OLD = "/learning_data_v2.json";  // Corrupted data from wateringStartTime bug
+const char* LEARNING_DATA_FILE = "/learning_data_v3.json";
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions

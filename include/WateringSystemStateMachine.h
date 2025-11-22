@@ -124,6 +124,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
                     valve->phase = PHASE_IDLE;  // Go directly to IDLE (no learning data for manual stop)
                     valve->wateringRequested = false;
+                    valve->wateringStartTime = 0;  // Reset for next watering cycle
                 }
             }
             break;
@@ -169,6 +170,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             closeValve(valveIndex);
             valve->phase = PHASE_IDLE;
             valve->wateringRequested = false;
+            valve->wateringStartTime = 0;  // CRITICAL: Reset for next watering cycle
             publishStateChange("valve" + String(valveIndex), "valve_closed");
             updatePumpState();
             break;
@@ -177,6 +179,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             DebugHelper::debugImportant("❌ ERROR: Valve " + String(valveIndex) + " in error state");
             closeValve(valveIndex);
             valve->phase = PHASE_IDLE;
+            valve->wateringStartTime = 0;  // Reset for next watering cycle
             updatePumpState();
             break;
     }

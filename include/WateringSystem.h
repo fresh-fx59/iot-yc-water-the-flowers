@@ -830,6 +830,8 @@ inline void WateringSystem::processLearningData(ValveController* valve, unsigned
 
         // Send updated watering schedule after individual watering (not during sequential)
         if (!sequentialMode) {
+            DebugHelper::debug("📅 Sending updated watering schedule...");
+            delay(500);  // Brief delay to ensure WiFi is stable
             sendWateringSchedule("Updated Schedule");
         }
     }
@@ -1049,14 +1051,14 @@ inline void WateringSystem::endTelegramSession() {
 // ========== Watering Schedule Notification ==========
 inline void WateringSystem::sendWateringSchedule(const String& title) {
     if (!WiFi.isConnected()) {
-        DebugHelper::debug("❌ Cannot send schedule: WiFi not connected");
+        DebugHelper::debugImportant("❌ Cannot send schedule: WiFi not connected - will retry on next watering");
         return;
     }
 
     // Get current time
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) {
-        DebugHelper::debug("❌ Cannot send schedule: Time not synced");
+        DebugHelper::debugImportant("❌ Cannot send schedule: Time not synced - will retry on next watering");
         return;
     }
 

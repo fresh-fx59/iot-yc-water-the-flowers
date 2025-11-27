@@ -52,10 +52,14 @@ struct ValveController {
     unsigned long emptyToFullDuration;       // Learned time for tray to go from full to empty (consumption time, ms)
     unsigned long baselineFillDuration;      // Time to fill from completely empty (ms)
     unsigned long lastFillDuration;          // Most recent fill duration (ms)
+    unsigned long previousFillDuration;      // Previous fill duration for trend analysis (adaptive interval)
     float lastWaterLevelPercent;             // Last measured water level before watering (0-100%)
     bool isCalibrated;                       // Has baseline been established?
     int totalWateringCycles;                 // Total successful cycles
     bool autoWateringEnabled;                // Enable automatic watering when empty
+
+    // Adaptive interval learning (binary search for optimal watering interval)
+    float intervalMultiplier;                // Multiplier for base 24h interval (1.0=24h, 2.0=48h, 3.5=84h, etc.)
 
     // Constructor
     ValveController(int idx) :
@@ -73,10 +77,12 @@ struct ValveController {
         emptyToFullDuration(0),
         baselineFillDuration(0),
         lastFillDuration(0),
+        previousFillDuration(0),
         lastWaterLevelPercent(0.0),
         isCalibrated(false),
         totalWateringCycles(0),
-        autoWateringEnabled(true) {}
+        autoWateringEnabled(true),
+        intervalMultiplier(1.0) {}
 };
 
 // ============================================

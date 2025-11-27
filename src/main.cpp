@@ -119,15 +119,19 @@ void setup() {
         syncTime();
 
         // IDEMPOTENT MIGRATION: Check if old learning data files exist
-        // Delete corrupted v2 file (wateringStartTime bug) and v1 file
+        // Delete old versions to ensure fresh start with new adaptive interval algorithm
         // This only runs once - after migration, old files won't exist
         if (LittleFS.exists("/learning_data.json")) {
             DebugHelper::debugImportant("🔄 MIGRATION: Found v1 learning data file, deleting...");
             LittleFS.remove("/learning_data.json");
         }
         if (LittleFS.exists("/learning_data_v2.json")) {
-            DebugHelper::debugImportant("🔄 MIGRATION: Found corrupted v2 learning data file (wateringStartTime bug), deleting for fresh start...");
+            DebugHelper::debugImportant("🔄 MIGRATION: Found v2 learning data file (wateringStartTime bug), deleting...");
             LittleFS.remove("/learning_data_v2.json");
+        }
+        if (LittleFS.exists("/learning_data_v3.json")) {
+            DebugHelper::debugImportant("🔄 MIGRATION: Found v3 learning data file (old algorithm), deleting for adaptive interval learning...");
+            LittleFS.remove("/learning_data_v3.json");
         }
 
         // Load learning data AFTER NTP sync (needs real time for proper timestamp conversion)

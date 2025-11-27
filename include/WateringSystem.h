@@ -15,8 +15,8 @@
 extern PubSubClient mqttClient;
 
 // Learning data file paths
-const char* LEARNING_DATA_FILE_OLD = "/learning_data_v2.json";  // Corrupted data from wateringStartTime bug
-const char* LEARNING_DATA_FILE = "/learning_data_v3.json";
+const char* LEARNING_DATA_FILE_OLD = "/learning_data_v3.json";  // Old fixed consumption algorithm
+const char* LEARNING_DATA_FILE = "/learning_data_v4.json";      // ACTIVE: New adaptive interval learning
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions
@@ -194,6 +194,7 @@ private:
     // ========== Time-Based Learning Algorithm ==========
     void processLearningData(ValveController* valve, unsigned long currentTime);
     void logLearningData(ValveController* valve, float waterLevelBefore, unsigned long emptyDuration);
+    void sendScheduleUpdateIfNeeded();  // Helper: sends schedule update unless in sequential mode
 
     // ========== Utilities ==========
     void publishStateChange(const String& component, const String& state);
@@ -254,10 +255,12 @@ inline bool WateringSystem::saveLearningData() {
         valveObj["emptyToFullDuration"] = (unsigned long)valve->emptyToFullDuration;
         valveObj["baselineFillDuration"] = (unsigned long)valve->baselineFillDuration;
         valveObj["lastFillDuration"] = (unsigned long)valve->lastFillDuration;
+        valveObj["previousFillDuration"] = (unsigned long)valve->previousFillDuration;
         valveObj["lastWaterLevelPercent"] = valve->lastWaterLevelPercent;
         valveObj["isCalibrated"] = valve->isCalibrated;
         valveObj["totalWateringCycles"] = valve->totalWateringCycles;
         valveObj["autoWateringEnabled"] = valve->autoWateringEnabled;
+        valveObj["intervalMultiplier"] = valve->intervalMultiplier;
     }
 
     // Save current millis() and real time as reference points
@@ -355,10 +358,12 @@ inline bool WateringSystem::loadLearningData() {
         valve->emptyToFullDuration = valveObj["emptyToFullDuration"] | 0;
         valve->baselineFillDuration = valveObj["baselineFillDuration"] | 0;
         valve->lastFillDuration = valveObj["lastFillDuration"] | 0;
+        valve->previousFillDuration = valveObj["previousFillDuration"] | 0;
         valve->lastWaterLevelPercent = valveObj["lastWaterLevelPercent"] | 0.0;
         valve->isCalibrated = valveObj["isCalibrated"] | false;
         valve->totalWateringCycles = valveObj["totalWateringCycles"] | 0;
         valve->autoWateringEnabled = valveObj["autoWateringEnabled"] | true;
+        valve->intervalMultiplier = valveObj["intervalMultiplier"] | 1.0;
 
         // Convert saved timestamps to current millis() epoch
         // New timestamp = current_millis - (time_elapsed_since_save - time_from_save_to_watering)
@@ -754,87 +759,161 @@ inline void WateringSystem::updatePumpState() {
     }
 }
 
+// ========== Helper: Schedule Update ==========
+inline void WateringSystem::sendScheduleUpdateIfNeeded() {
+    if (!sequentialMode) {
+        DebugHelper::debug("📅 Sending updated watering schedule...");
+        delay(500);  // Brief delay to ensure WiFi is stable
+        sendWateringSchedule("Updated Schedule");
+    }
+}
+
 // ========== Time-Based Learning Algorithm ==========
 inline void WateringSystem::processLearningData(ValveController* valve, unsigned long currentTime) {
-    if (valve->wateringStartTime == 0 || valve->timeoutOccurred || !valve->rainDetected) {
-        return; // Only process successful waterings
+    // Algorithm constants (extracted for easy tuning)
+    const unsigned long BASE_INTERVAL_MS = 86400000;  // 24 hours
+    const float BASELINE_TOLERANCE = 0.95;            // 95% - threshold for "tray not fully empty"
+    const long FILL_STABLE_TOLERANCE_MS = 500;        // ±0.5s - threshold for "same fill time"
+    const float MIN_INTERVAL_MULTIPLIER = 1.0;        // Never go below 24h
+    const float INTERVAL_DOUBLE = 2.0;                // Double when tray already full
+    const float INTERVAL_INCREMENT_LARGE = 1.0;       // Large adjustment for coarse search
+    const float INTERVAL_DECREMENT_BINARY = 0.5;      // Binary search refinement (decrease)
+    const float INTERVAL_INCREMENT_FINE = 0.25;       // Fine-tuning adjustment
+
+    // Skip if timeout occurred
+    if (valve->timeoutOccurred) {
+        DebugHelper::debug("🧠 Skipping learning - timeout occurred");
+        return;
+    }
+
+    // CASE 1: Tray already full (sensor wet before pump started)
+    // wateringStartTime == 0 means pump never started, rainDetected == true means sensor is wet
+    if (valve->wateringStartTime == 0 && valve->rainDetected) {
+        DebugHelper::debugImportant("🧠 ADAPTIVE LEARNING: Tray already full");
+
+        // Double the interval (exponential backoff) - tray is consuming water slower than expected
+        float oldMultiplier = valve->intervalMultiplier;
+        valve->intervalMultiplier *= INTERVAL_DOUBLE;
+        valve->emptyToFullDuration = (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
+        valve->totalWateringCycles++;
+
+        DebugHelper::debugImportant("  Interval: " + String(oldMultiplier, 2) + "x → " +
+            String(valve->intervalMultiplier, 2) + "x (doubled)");
+        DebugHelper::debugImportant("  Next attempt in: " + LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
+
+        saveLearningData();
+        sendScheduleUpdateIfNeeded();
+        return;
+    }
+
+    // CASE 2: Successful watering (pump ran and sensor became wet)
+    if (!valve->rainDetected || valve->wateringStartTime == 0) {
+        return; // Not a successful watering
     }
 
     unsigned long fillDuration = currentTime - valve->wateringStartTime;
-    unsigned long timeSinceLastWatering = 0;
-
-    if (valve->lastWateringCompleteTime > 0) {
-        timeSinceLastWatering = valve->wateringStartTime - valve->lastWateringCompleteTime;
-    }
-
     valve->lastFillDuration = fillDuration;
     valve->totalWateringCycles++;
 
-    DebugHelper::debug("🧠 TIME-BASED LEARNING:");
-    DebugHelper::debug("  Fill duration: " + LearningAlgorithm::formatDuration(fillDuration));
+    DebugHelper::debug("🧠 ADAPTIVE LEARNING:");
+    DebugHelper::debug("  Fill duration: " + String(fillDuration / 1000.0, 1) + "s");
 
-    // Update baseline if this fill was longer (tray was emptier)
-    bool baselineUpdated = false;
-    if (fillDuration >= valve->baselineFillDuration || valve->baselineFillDuration == 0) {
-        valve->baselineFillDuration = fillDuration;
-        baselineUpdated = true;
-        DebugHelper::debug("  📏 Baseline updated: " + LearningAlgorithm::formatDuration(fillDuration));
-    }
-
+    // CASE 2A: First successful watering - establish baseline
     if (!valve->isCalibrated) {
-        // First successful watering - record initial data
         valve->isCalibrated = true;
+        valve->baselineFillDuration = fillDuration;
+        valve->previousFillDuration = fillDuration;
+        valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER;
+        valve->emptyToFullDuration = BASE_INTERVAL_MS; // Start with 24h interval
         valve->lastWateringCompleteTime = currentTime;
-        valve->emptyToFullDuration = 0;  // Unknown until we have consumption data
         valve->lastWaterLevelPercent = 0.0;
 
-        DebugHelper::debug("  🎯 INITIAL CALIBRATION: " + LearningAlgorithm::formatDuration(fillDuration));
-        DebugHelper::debug("  Note: Tray may not have been empty");
+        DebugHelper::debugImportant("  ✨ INITIAL CALIBRATION: " + String(fillDuration / 1000.0, 1) + "s");
         DebugHelper::debug("  Baseline will auto-update when tray is emptier");
-        DebugHelper::debug("  Next watering will start measuring consumption");
+        DebugHelper::debug("  Starting interval: 1.0x (24 hours)");
+
         publishStateChange("valve" + String(valve->valveIndex), "initial_calibration");
-
-        // Save to flash
         saveLearningData();
+        sendScheduleUpdateIfNeeded();
+        return;
+    }
 
-        // Send updated watering schedule after initial calibration (not during sequential)
-        if (!sequentialMode) {
-            sendWateringSchedule("Updated Schedule");
-        }
-    } else {
-        // Calculate water level before this watering
-        float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(fillDuration, valve->baselineFillDuration);
-        valve->lastWaterLevelPercent = waterLevelBefore;
+    // CASE 2B: Subsequent waterings - adaptive interval adjustment
+    float fillSeconds = fillDuration / 1000.0;
+    float baselineSeconds = valve->baselineFillDuration / 1000.0;
+    float previousSeconds = valve->previousFillDuration / 1000.0;
+    float oldMultiplier = valve->intervalMultiplier;
 
-        // Only calculate consumption if we have valid time data
-        unsigned long emptyDuration = 0;
-        if (timeSinceLastWatering > 0 && fillDuration > 0) {
-            emptyDuration = LearningAlgorithm::calculateEmptyDuration(
-                fillDuration, valve->baselineFillDuration, timeSinceLastWatering);
+    DebugHelper::debug("  Baseline: " + String(baselineSeconds, 1) + "s");
+    DebugHelper::debug("  Previous: " + String(previousSeconds, 1) + "s");
+    DebugHelper::debug("  Current multiplier: " + String(oldMultiplier, 2) + "x");
 
-            // Update emptyToFullDuration with running average for stability
-            if (valve->emptyToFullDuration == 0) {
-                valve->emptyToFullDuration = emptyDuration;
-            } else {
-                // Weighted average: 70% old value, 30% new value (smoothing)
-                valve->emptyToFullDuration = (valve->emptyToFullDuration * 7 + emptyDuration * 3) / 10;
+    // Adaptive interval adjustment algorithm
+    if (fillDuration < valve->baselineFillDuration * BASELINE_TOLERANCE) {
+        // Fill < 95% of baseline - tray not fully empty, need longer interval
+        valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
+        DebugHelper::debugImportant("  ⬆️  Fill < baseline → Interval: " + String(oldMultiplier, 2) +
+            "x → " + String(valve->intervalMultiplier, 2) + "x (+" + String(INTERVAL_INCREMENT_LARGE, 1) + ")");
+    }
+    else if (fillDuration > valve->baselineFillDuration) {
+        // Fill > baseline - tray was emptier than ever! Update baseline AND increase interval
+        valve->baselineFillDuration = fillDuration;
+        valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
+        DebugHelper::debugImportant("  ✨ NEW BASELINE: " + String(fillSeconds, 1) + "s");
+        DebugHelper::debugImportant("  ⬆️  Interval: " + String(oldMultiplier, 2) +
+            "x → " + String(valve->intervalMultiplier, 2) + "x (+" + String(INTERVAL_INCREMENT_LARGE, 1) + ")");
+    }
+    else {
+        // Fill ≈ baseline (within 5%) - fine-tuning phase
+        long fillDiff = (long)(fillDuration - valve->previousFillDuration);
+
+        if (abs(fillDiff) < FILL_STABLE_TOLERANCE_MS) {
+            // Same as last time (±0.5s) - interval might be too long, decrease for binary search
+            valve->intervalMultiplier -= INTERVAL_DECREMENT_BINARY;
+            if (valve->intervalMultiplier < MIN_INTERVAL_MULTIPLIER) {
+                valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER; // Never go below 24h
+            }
+            DebugHelper::debugImportant("  🎯 Fill stable → Interval: " + String(oldMultiplier, 2) +
+                "x → " + String(valve->intervalMultiplier, 2) + "x (-" + String(INTERVAL_DECREMENT_BINARY, 1) + ")");
+
+            // Check if we've found optimal (stable baseline for 2+ cycles)
+            if (valve->totalWateringCycles > 2 && fillDiff == 0) {
+                DebugHelper::debugImportant("  ✅ OPTIMAL INTERVAL FOUND: " +
+                    String(valve->intervalMultiplier, 2) + "x");
             }
         }
-
-        valve->lastWateringCompleteTime = currentTime;
-
-        logLearningData(valve, waterLevelBefore, valve->emptyToFullDuration);
-
-        // Save to flash
-        saveLearningData();
-
-        // Send updated watering schedule after individual watering (not during sequential)
-        if (!sequentialMode) {
-            DebugHelper::debug("📅 Sending updated watering schedule...");
-            delay(500);  // Brief delay to ensure WiFi is stable
-            sendWateringSchedule("Updated Schedule");
+        else if (fillDuration < valve->previousFillDuration) {
+            // Fill decreased from last time - interval was too long, fine-tune upward
+            valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
+            DebugHelper::debugImportant("  ⬆️  Fill decreased → Interval: " + String(oldMultiplier, 2) +
+                "x → " + String(valve->intervalMultiplier, 2) + "x (+" + String(INTERVAL_INCREMENT_FINE, 2) + ")");
+        }
+        else {
+            // Fill increased from last time - can try longer interval
+            valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
+            DebugHelper::debugImportant("  ⬆️  Fill increased → Interval: " + String(oldMultiplier, 2) +
+                "x → " + String(valve->intervalMultiplier, 2) + "x (+" + String(INTERVAL_INCREMENT_FINE, 2) + ")");
         }
     }
+
+    // Update state
+    valve->previousFillDuration = fillDuration;
+    valve->emptyToFullDuration = (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
+    valve->lastWateringCompleteTime = currentTime;
+
+    // Calculate water level before this watering (for logging)
+    float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(fillDuration, valve->baselineFillDuration);
+    valve->lastWaterLevelPercent = waterLevelBefore;
+
+    DebugHelper::debugImportant("  ⏰ Next watering in: " +
+        LearningAlgorithm::formatDuration(valve->emptyToFullDuration) +
+        " (" + String(valve->intervalMultiplier, 2) + "x)");
+    DebugHelper::debug("  Water level before: " + String((int)waterLevelBefore) + "% (" +
+        String(getTrayState(waterLevelBefore)) + ")");
+    DebugHelper::debug("  Total cycles: " + String(valve->totalWateringCycles));
+
+    saveLearningData();
+    sendScheduleUpdateIfNeeded();
 }
 
 inline void WateringSystem::logLearningData(ValveController* valve, float waterLevelBefore, unsigned long emptyDuration) {

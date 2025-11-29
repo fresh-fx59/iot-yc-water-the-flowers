@@ -118,20 +118,13 @@ void setup() {
         // Synchronize time with NTP
         syncTime();
 
-        // IDEMPOTENT MIGRATION: Check if old learning data files exist
-        // Delete old versions to ensure fresh start with new adaptive interval algorithm
-        // This only runs once - after migration, old files won't exist
-        if (LittleFS.exists("/learning_data.json")) {
-            DebugHelper::debugImportant("🔄 MIGRATION: Found v1 learning data file, deleting...");
-            LittleFS.remove("/learning_data.json");
-        }
-        if (LittleFS.exists("/learning_data_v2.json")) {
-            DebugHelper::debugImportant("🔄 MIGRATION: Found v2 learning data file (wateringStartTime bug), deleting...");
-            LittleFS.remove("/learning_data_v2.json");
-        }
-        if (LittleFS.exists("/learning_data_v3.json")) {
-            DebugHelper::debugImportant("🔄 MIGRATION: Found v3 learning data file (old algorithm), deleting for adaptive interval learning...");
-            LittleFS.remove("/learning_data_v3.json");
+        // IDEMPOTENT MIGRATION: Delete old learning data files
+        // File list is defined in WateringSystem.h - just update constants there, no code changes needed!
+        for (int i = 0; i < LEARNING_DATA_FILES_TO_DELETE_COUNT; i++) {
+            if (LittleFS.exists(LEARNING_DATA_FILES_TO_DELETE[i])) {
+                DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILES_TO_DELETE[i]));
+                LittleFS.remove(LEARNING_DATA_FILES_TO_DELETE[i]);
+            }
         }
 
         // Load learning data AFTER NTP sync (needs real time for proper timestamp conversion)
@@ -167,13 +160,25 @@ bool firstLoop = true;
 // Main Loop
 // ============================================
 void loop() {
-    // First loop: Send notifications and start auto-watering
+    // First loop: Send notifications and smart boot watering
     if (firstLoop && NetworkManager::isWiFiConnected()) {
         firstLoop = false;
         TelegramNotifier::sendDeviceOnline(VERSION, DEVICE_TYPE);
         wateringSystem.sendWateringSchedule("Startup Schedule");
-        DebugHelper::debugImportant("🚿 Starting automatic watering on boot...");
-        wateringSystem.startSequentialWatering();
+
+        // Smart boot watering: only water if needed
+        // 1. Fresh device (no calibration data) - water to establish baseline
+        // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
+        // This prevents over-watering during frequent power cycles
+        if (wateringSystem.isFirstBoot()) {
+            DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
+            wateringSystem.startSequentialWatering();
+        } else if (wateringSystem.hasOverdueValves()) {
+            DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
+            wateringSystem.startSequentialWatering();
+        } else {
+            DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
+        }
     }
 
     // Check WiFi connection

@@ -11,7 +11,7 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.6.1 (defined in config.h:10)
+- Current Version: 1.8.1 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -198,73 +198,73 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 - Power-on sequence: Set GPIO 18 HIGH, delay 100ms, read sensor, set LOW
 - Sensors configured with INPUT_PULLUP mode in setup
 
-### Time-Based Learning Algorithm (v1.5.0)
+### Adaptive Interval Learning Algorithm (v1.8.0+)
 
-**Purpose**: Automatically learns each tray's capacity and water consumption rate to determine when to water based on actual time elapsed, not cycles.
+**Purpose**: Uses binary search/gradient ascent to find the optimal watering interval where trays are consistently empty (maximum fill time). Each tray learns its own optimal interval based on consumption rate.
 
-**How It Works**:
+**Algorithm Phases**:
 
-1. **First Watering (Initial Calibration)**:
-   - Records fill duration as initial baseline
-   - Notes "Tray may not have been empty"
-   - Marks valve as calibrated
-   - Baseline will auto-update if a longer fill is observed later
+**Phase 1: Exponential Search (Coarse Adjustment)**
+- **Tray already full** → Double interval (1.0x → 2.0x → 4.0x)
+- **Fill < 95% baseline** → Increase by 1.0x (tray not fully empty yet)
+- **Fill > baseline** → Update baseline + increase by 1.0x (tray was emptier!)
 
-2. **Adaptive Baseline Learning**:
-   - If `fillDuration >= baselineFillDuration` → Updates baseline (tray was emptier)
-   - Baseline converges to true maximum capacity over time
-   - Self-calibrating, no manual intervention needed
+**Phase 2: Binary Search Refinement (Fine-Tuning)**
+- **Fill ≈ baseline and stable** → Decrease by 0.5x (interval too long)
+- **Fill decreasing from previous** → Increase by 0.25x (interval was too long)
+- **Fill increasing from previous** → Increase by 0.25x (can try longer)
 
-3. **Consumption Tracking** (waterings after first):
-   - Measures current fill duration
-   - Calculates water level before watering: `(1 - fillDuration/baseline) × 100%`
-   - Calculates time to empty: `timeSinceLastWatering / (fillDuration/baseline)`
-   - Uses weighted average (70% old, 30% new) for stability
-   - Example:
-     - Baseline: 5.0s (max capacity)
-     - Current fill: 4.2s
-     - Water level before: (1 - 4.2/5.0) × 100% = 16%
-     - Time since last: 48 hours
-     - Estimated empty time: 48h / 0.84 = 57 hours
-
-4. **Automatic Watering Decision**:
-   - System checks: `currentTime - lastWateringCompleteTime >= emptyToFullDuration`
-   - If true AND `autoWateringEnabled` → Waters automatically
-   - Manual watering also checks this condition (smart skip)
-
-5. **Tray State Classification**:
-   - **Empty**: < 10% water level
-   - **Between**: 10-90% water level
-   - **Full**: > 90% water level
-
-**Key Features**:
-- Each valve learns independently (different tray sizes supported)
-- Adapts to varying consumption rates (temperature, humidity, plant needs)
-- Baseline auto-updates when tray is emptier than before
-- Consumption smoothing prevents erratic behavior
-- Persists to flash storage (`/learning_data.json`)
-- Survives reboots and power cycles
-- Handles `millis()` overflow (every ~49 days)
-- Learning data published in MQTT state updates
-
-**Edge Cases**:
-- Timeout occurred: Learning data not updated (sensor may be faulty)
-- Manual stop: Learning data not updated (incomplete watering)
-- First watering after reset: No skip logic applied
-- No consumption data yet: Auto-watering disabled until second successful watering
+**Constants** (tunable in `processLearningData()`):
+```cpp
+const float BASELINE_TOLERANCE = 0.95;            // 95% - threshold for "tray not fully empty"
+const long FILL_STABLE_TOLERANCE_MS = 500;        // ±0.5s - threshold for "same fill time"
+const float INTERVAL_DOUBLE = 2.0;                // Double when tray already full
+const float INTERVAL_INCREMENT_LARGE = 1.0;       // Large adjustment for coarse search
+const float INTERVAL_DECREMENT_BINARY = 0.5;      // Binary search refinement
+const float INTERVAL_INCREMENT_FINE = 0.25;       // Fine-tuning adjustment
+```
 
 **Example Learning Sequence**:
 ```
-Cycle 1: Fill 3.5s → Baseline: 3.5s (initial, may be partial)
-Cycle 2: Fill 5.0s → Baseline: 5.0s ✨ (updated - tray was emptier)
-         Water before: 30%, Time to empty: 2d 4h
-Cycle 3: Fill 4.2s → Baseline: 5.0s (water was 16%)
-         Refines consumption estimate
-Cycle 4: Fill 5.2s → Baseline: 5.2s ✨ (even emptier)
-         Water before: 0%, Consumption rate updated
-Cycle 5: Fill 3.8s → Baseline: 5.2s (water was 27%)
-         System now stable and accurate
+1. water 15s → baseline=15s, interval=1.0x (24h)
+2. tray full → interval=2.0x (48h) [doubled - consuming slower]
+3. water 10s < 15s → interval=3.0x (72h) [+1.0, not empty yet]
+4. water 16s > 15s → baseline=16s, interval=4.0x (96h) [+1.0, emptier!]
+5. water 16s = 16s → interval=3.5x (84h) [-0.5, stable - binary search]
+6. water 15s < 16s → interval=3.75x (90h) [+0.25, worse - fine tune]
+7. water 16s = 16s → interval=3.25x (78h) [-0.5, stable]
+8. ✅ OPTIMAL FOUND: 3.25x (78 hours) with 16s baseline
 ```
+
+**Key Features**:
+- Self-adjusting per tray (different consumption rates)
+- Converges to optimal interval (not too soon, not too late)
+- Adaptive baseline updates when tray emptier than ever seen
+- Uses actual fill duration trends, not fixed calculations
+- Persists to flash storage (`/learning_data_v5.json`)
+- Survives reboots and power cycles
+- Handles `millis()` overflow
+
+**Smart Boot Watering (v1.8.1)**:
+
+System intelligently decides whether to water on power-on:
+
+```
+Boot Decision Tree:
+├─ 1️⃣ First boot (no calibration data)?
+│   └─ Water all valves (initial calibration needed)
+├─ 2️⃣ Any valve overdue for watering?
+│   └─ Check: currentTime >= (lastWatering + learnedInterval)
+│   └─ Water overdue valves (catch up after long outage)
+└─ 3️⃣ All valves on schedule?
+    └─ Skip boot watering (prevents over-watering during power outages)
+```
+
+**Benefits**:
+- Prevents over-watering during frequent power cycles
+- Catches missed waterings after long outages
+- Uses learned intervals (not arbitrary thresholds)
+- Self-recovering from power issues
 
 ### MQTT Commands
 

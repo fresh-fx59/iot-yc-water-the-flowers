@@ -15,8 +15,17 @@
 extern PubSubClient mqttClient;
 
 // Learning data file paths
-const char* LEARNING_DATA_FILE_OLD = "/learning_data_v3.json";  // Old fixed consumption algorithm
-const char* LEARNING_DATA_FILE = "/learning_data_v4.json";      // ACTIVE: New adaptive interval learning
+const char* LEARNING_DATA_FILE = "/learning_data_v5.json";  // ACTIVE: Adaptive interval + smart boot (v1.8.1)
+
+// Old files to delete on boot (idempotent migration)
+// When upgrading to a new version, just add the old file here - no code changes needed!
+const char* LEARNING_DATA_FILES_TO_DELETE[] = {
+    "/learning_data.json",      // v1
+    "/learning_data_v2.json",   // v2 - wateringStartTime bug
+    "/learning_data_v3.json",   // v3 - fixed consumption algorithm
+    "/learning_data_v4.json"    // v4 - adaptive interval (v1.8.0)
+};
+const int LEARNING_DATA_FILES_TO_DELETE_COUNT = 4;
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions
@@ -177,6 +186,10 @@ public:
 
     // Watering schedule notification
     void sendWateringSchedule(const String& title);
+
+    // Boot watering decision helpers
+    bool isFirstBoot();         // Check if device has no calibration data (needs initial watering)
+    bool hasOverdueValves();    // Check if any valve's next watering time is in the past
 
 private:
     // ========== Core Logic ==========
@@ -1244,6 +1257,49 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
     }
 
     TelegramNotifier::sendWateringSchedule(scheduleData, NUM_VALVES, title);
+}
+
+// ========== Boot Watering Decision Helpers ==========
+inline bool WateringSystem::isFirstBoot() {
+    // Check if all valves are uncalibrated (fresh device, no learning data)
+    for (int i = 0; i < NUM_VALVES; i++) {
+        if (valves[i]->isCalibrated) {
+            return false;  // At least one valve has data
+        }
+    }
+    return true;  // All valves uncalibrated = first boot
+}
+
+inline bool WateringSystem::hasOverdueValves() {
+    unsigned long currentTime = millis();
+
+    for (int i = 0; i < NUM_VALVES; i++) {
+        ValveController* valve = valves[i];
+
+        // Skip if auto-watering disabled
+        if (!valve->autoWateringEnabled) {
+            continue;
+        }
+
+        // Skip if not calibrated
+        if (!valve->isCalibrated) {
+            continue;
+        }
+
+        // Calculate next watering time
+        if (valve->emptyToFullDuration > 0 && valve->lastWateringCompleteTime > 0) {
+            unsigned long nextWateringTime = valve->lastWateringCompleteTime + valve->emptyToFullDuration;
+
+            // Check if next watering time is in the past (overdue)
+            if (currentTime >= nextWateringTime) {
+                DebugHelper::debug("Valve " + String(i) + " is overdue - scheduled for " +
+                    LearningAlgorithm::formatDuration(currentTime - nextWateringTime) + " ago");
+                return true;
+            }
+        }
+    }
+
+    return false;  // No overdue valves
 }
 
 // ============================================

@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char* VERSION = "watering_system_1.8.1";
+const char* VERSION = "watering_system_1.8.2";
 const char* DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -46,7 +46,7 @@ const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RA
 const unsigned long RAIN_CHECK_INTERVAL = 100;           // Check rain sensor every 100ms
 const unsigned long VALVE_STABILIZATION_DELAY = 500;     // Wait 500ms for valve to open
 const unsigned long STATE_PUBLISH_INTERVAL = 2000;       // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 20000;           // Maximum watering time (20s)
+const unsigned long MAX_WATERING_TIME = 25000;           // Maximum watering time (25s)
 const unsigned long SENSOR_POWER_STABILIZATION = 100;    // Sensor power-on delay
 
 // ============================================

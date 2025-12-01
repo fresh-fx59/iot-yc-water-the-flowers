@@ -14,18 +14,10 @@
 // External MQTT client (defined in main.cpp)
 extern PubSubClient mqttClient;
 
-// Learning data file paths
-const char* LEARNING_DATA_FILE = "/learning_data_v5.json";  // ACTIVE: Adaptive interval + smart boot (v1.8.1)
-
-// Old files to delete on boot (idempotent migration)
-// When upgrading to a new version, just add the old file here - no code changes needed!
-const char* LEARNING_DATA_FILES_TO_DELETE[] = {
-    "/learning_data.json",      // v1
-    "/learning_data_v2.json",   // v2 - wateringStartTime bug
-    "/learning_data_v3.json",   // v3 - fixed consumption algorithm
-    "/learning_data_v4.json"    // v4 - adaptive interval (v1.8.0)
-};
-const int LEARNING_DATA_FILES_TO_DELETE_COUNT = 4;
+// Learning data file paths (simplified two-file system)
+// To reset learning data: swap the filenames below, old file auto-deletes on boot
+const char* LEARNING_DATA_FILE = "/learning_data.json";      // ACTIVE: Current learning data
+const char* LEARNING_DATA_FILE_OLD = "/learning_data_v5.json"; // OLD: Will be deleted on boot
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions

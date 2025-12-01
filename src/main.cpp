@@ -118,13 +118,10 @@ void setup() {
         // Synchronize time with NTP
         syncTime();
 
-        // IDEMPOTENT MIGRATION: Delete old learning data files
-        // File list is defined in WateringSystem.h - just update constants there, no code changes needed!
-        for (int i = 0; i < LEARNING_DATA_FILES_TO_DELETE_COUNT; i++) {
-            if (LittleFS.exists(LEARNING_DATA_FILES_TO_DELETE[i])) {
-                DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILES_TO_DELETE[i]));
-                LittleFS.remove(LEARNING_DATA_FILES_TO_DELETE[i]);
-            }
+        // IDEMPOTENT MIGRATION: Delete old learning data file (if exists)
+        if (LittleFS.exists(LEARNING_DATA_FILE_OLD)) {
+            DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILE_OLD));
+            LittleFS.remove(LEARNING_DATA_FILE_OLD);
         }
 
         // Load learning data AFTER NTP sync (needs real time for proper timestamp conversion)

@@ -11,7 +11,7 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.8.1 (defined in config.h:10)
+- Current Version: 1.8.4 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -241,11 +241,12 @@ const float INTERVAL_INCREMENT_FINE = 0.25;       // Fine-tuning adjustment
 - Converges to optimal interval (not too soon, not too late)
 - Adaptive baseline updates when tray emptier than ever seen
 - Uses actual fill duration trends, not fixed calculations
-- Persists to flash storage (`/learning_data_v5.json`)
+- Persists to flash storage (`/learning_data.json`)
 - Survives reboots and power cycles
 - Handles `millis()` overflow
+- **Migration system**: Uses two-file approach (current + old) for idempotent resets
 
-**Smart Boot Watering (v1.8.1)**:
+**Smart Boot Watering (v1.8.1+, fixed in v1.8.4)**:
 
 System intelligently decides whether to water on power-on:
 
@@ -257,7 +258,7 @@ Boot Decision Tree:
 │   └─ Check: currentTime >= (lastWatering + learnedInterval)
 │   └─ Water overdue valves (catch up after long outage)
 └─ 3️⃣ All valves on schedule?
-    └─ Skip boot watering (prevents over-watering during power outages)
+    └─ Skip boot watering (prevents over-watering during frequent power cycles)
 ```
 
 **Benefits**:
@@ -265,6 +266,8 @@ Boot Decision Tree:
 - Catches missed waterings after long outages
 - Uses learned intervals (not arbitrary thresholds)
 - Self-recovering from power issues
+
+**v1.8.4 Fix**: Fixed auto-watering fallback bug that caused immediate watering on reboot when timestamps were invalid. System now safely defaults to NOT watering when timestamp data is uncertain, letting boot logic handle truly overdue valves instead.
 
 ### MQTT Commands
 
@@ -545,11 +548,13 @@ Test menu commands:
 - **Auto-watering decision**: `shouldWaterNow()` helper in `ValveController.h`
 
 ### Working with Persistence
-- **Save location**: `/learning_data.json` on LittleFS
+- **Save location**: `/learning_data.json` on LittleFS (current active file)
+- **Old file location**: `/learning_data_v5.json` (auto-deleted on boot via idempotent migration)
 - **Save triggers**: After each successful watering, after calibration reset, manual `save_data` command
 - **Load trigger**: On `wateringSystem.init()` during startup
 - **Data format**: JSON with valve array containing all learning fields
 - **Testing**: Use LittleFS browser or read file via serial commands
+- **Resetting learning data**: Swap filenames in `WateringSystem.h` (LEARNING_DATA_FILE ↔ LEARNING_DATA_FILE_OLD), old file auto-deletes on next boot
 
 ## Program Flow & Initialization
 

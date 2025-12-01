@@ -161,8 +161,9 @@ inline bool shouldWaterNow(const ValveController* valve, unsigned long currentTi
         return timeSinceLastWatering >= valve->emptyToFullDuration;
     }
 
-    // If no lastWateringCompleteTime, fall back to attempt time check (already passed above)
-    return true;
+    // If no lastWateringCompleteTime, don't water (invalid/uncertain timestamp data)
+    // Boot watering logic will handle truly overdue valves instead
+    return false;
 }
 
 #endif // VALVE_CONTROLLER_H

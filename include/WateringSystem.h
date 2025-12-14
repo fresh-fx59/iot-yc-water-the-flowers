@@ -16,8 +16,8 @@ extern PubSubClient mqttClient;
 
 // Learning data file paths (simplified two-file system)
 // To reset learning data: swap the filenames below, old file auto-deletes on boot
-const char* LEARNING_DATA_FILE = "/learning_data.json";      // ACTIVE: Current learning data
-const char* LEARNING_DATA_FILE_OLD = "/learning_data_v5.json"; // OLD: Will be deleted on boot
+const char* LEARNING_DATA_FILE = "/learning_data_v1.8.5.json";      // ACTIVE: Current learning data
+const char* LEARNING_DATA_FILE_OLD = "/learning_data.json"; // OLD: Will be deleted on boot
 
 // ============================================
 // Time-Based Learning Algorithm Helper Functions
@@ -1278,7 +1278,16 @@ inline bool WateringSystem::hasOverdueValves() {
             continue;
         }
 
-        // Calculate next watering time
+        // CASE 1: Valve has learning data but lastWateringCompleteTime is 0
+        // This happens when outage was longer than millis() can represent
+        // If calibrated with emptyToFullDuration but no timestamp, watering was DEFINITELY overdue
+        if (valve->emptyToFullDuration > 0 && valve->lastWateringCompleteTime == 0) {
+            DebugHelper::debugImportant("Valve " + String(i) + " is overdue - timestamp too old to represent (outage > " +
+                LearningAlgorithm::formatDuration(currentTime) + ")");
+            return true;
+        }
+
+        // CASE 2: Normal case - calculate next watering time from timestamp
         if (valve->emptyToFullDuration > 0 && valve->lastWateringCompleteTime > 0) {
             unsigned long nextWateringTime = valve->lastWateringCompleteTime + valve->emptyToFullDuration;
 

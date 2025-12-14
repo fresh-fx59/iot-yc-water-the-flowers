@@ -11,7 +11,7 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.8.4 (defined in config.h:10)
+- Current Version: 1.8.5 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -268,6 +268,8 @@ Boot Decision Tree:
 - Self-recovering from power issues
 
 **v1.8.4 Fix**: Fixed auto-watering fallback bug that caused immediate watering on reboot when timestamps were invalid. System now safely defaults to NOT watering when timestamp data is uncertain, letting boot logic handle truly overdue valves instead.
+
+**v1.8.5 Fix**: Fixed critical boot watering bug where valves missed waterings after long outages. When outage duration exceeded `millis()` range, timestamps couldn't be represented in the new epoch (set to 0), causing `hasOverdueValves()` to incorrectly skip watering. Now detects calibrated valves with learning data but zero timestamps as definitely overdue.
 
 ### MQTT Commands
 

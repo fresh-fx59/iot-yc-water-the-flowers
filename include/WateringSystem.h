@@ -1152,35 +1152,37 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
     unsigned long currentTime = millis();
     time_t now = time(nullptr);
 
-    // Build schedule data for all valves (4 columns: tray, status, planned, duration)
+    // Build schedule data for all valves (4 columns: tray, planned, duration, cycle)
     String scheduleData[NUM_VALVES][4];
 
     for (int i = 0; i < NUM_VALVES; i++) {
         ValveController* valve = valves[i];
 
-        // Column 1: Tray number (1-indexed)
+        // Column 0: Tray number (1-indexed)
         scheduleData[i][0] = String(i + 1);
 
-        // Column 4: Duration (baseline fill time in seconds)
+        // Column 2: Duration (baseline fill time in seconds)
         if (valve->baselineFillDuration > 0) {
             float durationSec = valve->baselineFillDuration / 1000.0;
-            scheduleData[i][3] = String(durationSec, 1) + "s";
+            scheduleData[i][2] = String(durationSec, 1);
         } else {
-            scheduleData[i][3] = "-";
+            scheduleData[i][2] = "-";
         }
 
-        // Column 2 & 3: Status and planned time
+        // Column 3: Cycle (watering interval in hours)
+        float cycleHours = valve->intervalMultiplier * 24.0;
+        scheduleData[i][3] = String((int)cycleHours);
+
+        // Column 1: Planned time
         if (!valve->isCalibrated && valve->emptyToFullDuration == 0) {
             // Not calibrated and no temporary duration set
-            scheduleData[i][1] = "NEW";
-            scheduleData[i][2] = "Not calibrated";
+            scheduleData[i][1] = "Not calibrtd";
         } else if (!valve->isCalibrated && valve->emptyToFullDuration > 0) {
             // Not calibrated but has temporary 24h retry duration (tray was found full)
-            scheduleData[i][1] = "RETRY";
             unsigned long timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
 
             if (timeSinceWatering >= valve->emptyToFullDuration) {
-                scheduleData[i][2] = "Now (retry)";
+                scheduleData[i][1] = "Now (retry)";
             } else {
                 unsigned long timeUntilRetry = valve->emptyToFullDuration - timeSinceWatering;
                 time_t plannedTime = now + (timeUntilRetry / 1000);
@@ -1188,22 +1190,19 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
                 localtime_r(&plannedTime, &plannedTm);
                 char buffer[20];
                 strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
-                scheduleData[i][2] = String(buffer);
+                scheduleData[i][1] = String(buffer);
             }
         } else if (!valve->autoWateringEnabled) {
-            scheduleData[i][1] = "OFF";
-            scheduleData[i][2] = "Auto disabled";
+            scheduleData[i][1] = "Auto disbld";
         } else if (valve->emptyToFullDuration == 0) {
             // Learning mode - use minimum interval (24h) from last attempt
-            scheduleData[i][1] = "LEARN";
-
             unsigned long referenceTime = valve->lastWateringAttemptTime;
             if (referenceTime == 0) referenceTime = valve->lastWateringCompleteTime;
 
             if (referenceTime > 0) {
                 unsigned long timeSinceAttempt = currentTime - referenceTime;
                 if (timeSinceAttempt >= AUTO_WATERING_MIN_INTERVAL_MS) {
-                    scheduleData[i][2] = "Now (learning)";
+                    scheduleData[i][1] = "Now (learn)";
                 } else {
                     unsigned long timeUntilNext = AUTO_WATERING_MIN_INTERVAL_MS - timeSinceAttempt;
                     time_t plannedTime = now + (timeUntilNext / 1000);
@@ -1211,10 +1210,10 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
                     localtime_r(&plannedTime, &plannedTm);
                     char buffer[20];
                     strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
-                    scheduleData[i][2] = String(buffer);
+                    scheduleData[i][1] = String(buffer);
                 }
             } else {
-                scheduleData[i][2] = "Now (learning)";
+                scheduleData[i][1] = "Now (learn)";
             }
         } else {
             // Calculate planned watering time based on learned consumption
@@ -1222,8 +1221,7 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
 
             if (timeSinceWatering >= valve->emptyToFullDuration) {
                 // Already due for watering
-                scheduleData[i][1] = "DUE";
-                scheduleData[i][2] = "Now";
+                scheduleData[i][1] = "Now";
             } else {
                 // Calculate future watering time
                 unsigned long timeUntilWatering = valve->emptyToFullDuration - timeSinceWatering;
@@ -1231,8 +1229,7 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
 
                 // Safety check: if planned time is in the past, show "Now"
                 if (plannedTime <= now) {
-                    scheduleData[i][1] = "DUE";
-                    scheduleData[i][2] = "Now";
+                    scheduleData[i][1] = "Now";
                 } else {
                     // Format as date/time - always show full date for clarity
                     struct tm plannedTm;
@@ -1241,8 +1238,7 @@ inline void WateringSystem::sendWateringSchedule(const String& title) {
                     char buffer[20];
                     strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
 
-                    scheduleData[i][1] = "AUTO";
-                    scheduleData[i][2] = String(buffer);
+                    scheduleData[i][1] = String(buffer);
                 }
             }
         }

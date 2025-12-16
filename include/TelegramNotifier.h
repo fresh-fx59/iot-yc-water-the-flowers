@@ -141,35 +141,34 @@ public:
     }
 
     // Send watering schedule notification showing planned watering times
-    // scheduleData[i][0] = tray number, [1] = status, [2] = planned time, [3] = duration
+    // scheduleData[i][0] = tray number, [1] = planned time, [2] = duration, [3] = cycle (hours)
     static void sendWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
         String message = "📅 <b>" + title + "</b>\n";
         message += "⏰ " + getCurrentDateTime() + "\n\n";
         message += "<pre>";
-        message += "tray | status | planned     | dur\n";
-        message += "-----|--------|-------------|----\n";
+        message += " tr | planned     | dur  | cycle\n";
+        message += "----|-------------|------|------\n";
 
         for (int i = 0; i < numTrays; i++) {
             String tray = scheduleData[i][0];
-            String status = scheduleData[i][1];
-            String planned = scheduleData[i][2];
-            String duration = scheduleData[i][3];
+            String planned = scheduleData[i][1];
+            String duration = scheduleData[i][2];
+            String cycle = scheduleData[i][3];
 
-            // Column 1: tray (4 chars, right-aligned)
-            while (tray.length() < 4) tray = " " + tray;
+            // Column 1: tray (3 chars, right-aligned)
+            while (tray.length() < 3) tray = " " + tray;
             message += tray + " | ";
 
-            // Column 2: status (6 chars, centered)
-            while (status.length() < 6) status = " " + status + " ";
-            if (status.length() > 6) status = status.substring(0, 6);
-            message += status + " | ";
-
-            // Column 3: planned time (11 chars, left-aligned)
+            // Column 2: planned time (11 chars, left-aligned)
             while (planned.length() < 11) planned = planned + " ";
             message += planned + " | ";
 
-            // Column 4: duration
-            message += duration + "\n";
+            // Column 3: duration (4 chars, right-aligned)
+            while (duration.length() < 4) duration = " " + duration;
+            message += duration + " | ";
+
+            // Column 4: cycle
+            message += cycle + "\n";
         }
 
         message += "</pre>";

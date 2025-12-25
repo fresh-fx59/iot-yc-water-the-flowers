@@ -7,8 +7,8 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char* VERSION = "watering_system_1.8.6";
-const char* DEVICE_TYPE = "smart_watering_system_time_based";
+const char *VERSION = "watering_system_1.8.7";
+const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
 // Hardware Pin Definitions (ESP32-S3-DevKitC-1)
@@ -37,27 +37,37 @@ const char* DEVICE_TYPE = "smart_watering_system_time_based";
 // System Constants
 // ============================================
 const int NUM_VALVES = 6;
-const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
-const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN, RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
+const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN,
+                                    VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
+const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN,
+                                          RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN,
+                                          RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
 
 // ============================================
 // Timing Constants
 // ============================================
-const unsigned long RAIN_CHECK_INTERVAL = 100;           // Check rain sensor every 100ms
-const unsigned long VALVE_STABILIZATION_DELAY = 500;     // Wait 500ms for valve to open
-const unsigned long STATE_PUBLISH_INTERVAL = 2000;       // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 25000;           // Maximum watering time (25s)
-const unsigned long SENSOR_POWER_STABILIZATION = 100;    // Sensor power-on delay
+const unsigned long RAIN_CHECK_INTERVAL = 100; // Check rain sensor every 100ms
+const unsigned long VALVE_STABILIZATION_DELAY =
+    500; // Wait 500ms for valve to open
+const unsigned long STATE_PUBLISH_INTERVAL =
+    2000;                                      // Publish state every 2 seconds
+const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s)
+const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 
 // ============================================
 // Learning Algorithm Constants
 // ============================================
-const float LEARNING_EMPTY_THRESHOLD = 0.95;      // If fill_ratio >= 0.95, consider tray empty
-const float LEARNING_FULL_THRESHOLD = 0.10;       // If fill_ratio < 0.10, tray was almost full
-const int LEARNING_MAX_SKIP_CYCLES = 15;          // Maximum cycles to skip
-const int LEARNING_FULL_SKIP_CYCLES = 10;         // Skip cycles when tray is almost full
-const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;  // 24 hours minimum between auto-watering attempts
-const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000; // 24 hours retry for uncalibrated trays found full
+const float LEARNING_EMPTY_THRESHOLD =
+    0.95; // If fill_ratio >= 0.95, consider tray empty
+const float LEARNING_FULL_THRESHOLD =
+    0.10; // If fill_ratio < 0.10, tray was almost full
+const int LEARNING_MAX_SKIP_CYCLES = 15; // Maximum cycles to skip
+const int LEARNING_FULL_SKIP_CYCLES =
+    10; // Skip cycles when tray is almost full
+const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
+    86400000; // 24 hours minimum between auto-watering attempts
+const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
+    86400000; // 24 hours retry for uncalibrated trays found full
 
 // ============================================
 // Debug Configuration
@@ -68,11 +78,13 @@ const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000; // 24 hours retry
 // ============================================
 // Telegram Queue Configuration
 // ============================================
-const int TELEGRAM_QUEUE_SIZE = 20;              // Max messages in queue
-const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5;       // Retry attempts per message
-const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000;  // Wait 2s between retries
-const unsigned long MESSAGE_GROUP_INTERVAL_MS = 2000;  // Group messages within 2 seconds
-const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // Flush after 3 min max (safety limit)
+const int TELEGRAM_QUEUE_SIZE = 20;        // Max messages in queue
+const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5; // Retry attempts per message
+const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000; // Wait 2s between retries
+const unsigned long MESSAGE_GROUP_INTERVAL_MS =
+    2000; // Group messages within 2 seconds
+const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
+    180000; // Flush after 3 min max (safety limit)
 
 // ============================================
 // Serial Configuration
@@ -83,13 +95,14 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // Flush after 3 min max
 // ============================================
 // MQTT Configuration
 // ============================================
-const char* MQTT_SERVER = "mqtt.cloud.yandex.net";
+const char *MQTT_SERVER = "mqtt.cloud.yandex.net";
 const int MQTT_PORT = 8883;
 const int MQTT_BUFFER_SIZE = 1024;
 const int MQTT_KEEP_ALIVE = 15;
 
 // MQTT Topics
-const String DEVICE_TOPIC_PREFIX = String("$devices/") + YC_DEVICE_ID + String("/");
+const String DEVICE_TOPIC_PREFIX =
+    String("$devices/") + YC_DEVICE_ID + String("/");
 const String COMMAND_TOPIC = DEVICE_TOPIC_PREFIX + String("commands");
 const String EVENT_TOPIC = DEVICE_TOPIC_PREFIX + String("events");
 const String STATE_TOPIC = DEVICE_TOPIC_PREFIX + String("state");
@@ -103,6 +116,6 @@ const int WIFI_RETRY_DELAY_MS = 500;
 // ============================================
 // OTA Configuration
 // ============================================
-const char* OTA_HOSTNAME = "esp32-watering";
+const char *OTA_HOSTNAME = "esp32-watering";
 
 #endif // CONFIG_H

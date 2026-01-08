@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 
 // Forward declarations
 void printMenu();
@@ -24,6 +25,14 @@ void printMenu();
 #define RAIN_SENSOR4_PIN 11
 #define RAIN_SENSOR5_PIN 12
 #define RAIN_SENSOR6_PIN 13
+
+// Water level sensor pin
+#define WATER_LEVEL_SENSOR_PIN 19
+
+// DS3231 RTC I2C pins
+#define I2C_SDA_PIN 14
+#define I2C_SCL_PIN 3
+#define DS3231_I2C_ADDRESS 0x68
 
 const int NUM_VALVES = 6;
 const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
@@ -58,7 +67,14 @@ void setup() {
   for (int i = 0; i < NUM_VALVES; i++) {
     pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
   }
-  
+
+  // Initialize water level sensor pin with internal pull-up
+  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
+
+  // Initialize I2C for DS3231 RTC
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Serial.println("I2C initialized (SDA: GPIO 14, SCL: GPIO 3)");
+
   Serial.println("Hardware initialized. All outputs set to LOW/OFF.");
   Serial.println();
   printMenu();
@@ -90,6 +106,14 @@ void printMenu() {
   Serial.println("  R - Read ALL rain sensors (once)");
   Serial.println("  M - Monitor ALL rain sensors (continuous)");
   Serial.println("  S - Stop monitoring");
+  Serial.println();
+  Serial.println("WATER LEVEL SENSOR TEST:");
+  Serial.println("  W - Read water level sensor (GPIO 19)");
+  Serial.println("  N - Monitor water level sensor (continuous)");
+  Serial.println();
+  Serial.println("DS3231 RTC TESTS:");
+  Serial.println("  T - Read RTC time and temperature");
+  Serial.println("  I - Scan I2C bus for devices");
   Serial.println();
   Serial.println("FULL SYSTEM TESTS:");
   Serial.println("  F - Full sequence test (all components)");
@@ -179,6 +203,7 @@ void readRainSensors() {
 }
 
 bool monitorMode = false;
+bool waterLevelMonitorMode = false;
 unsigned long lastMonitorTime = 0;
 
 void monitorRainSensors() {
@@ -189,12 +214,144 @@ void monitorRainSensors() {
       int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
       String bar = (sensorValue == LOW) ? "████████" : "░░░░░░░░";
       String status = (sensorValue == LOW) ? "WET" : "DRY";
-      Serial.println("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" + 
+      Serial.println("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
                      bar + "] " + status);
     }
     Serial.println("╚════════════════════════════════════════════════╝");
     lastMonitorTime = currentTime;
   }
+}
+
+void readWaterLevelSensor() {
+  Serial.println("WATER LEVEL SENSOR READING:");
+  Serial.println("(LOW = Water detected / Tank has water)");
+  Serial.println("(HIGH = No water / Tank empty)");
+  Serial.println();
+
+  int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
+  String status = (sensorValue == LOW) ? "WATER DETECTED 💧" : "NO WATER/EMPTY ⚠️";
+  Serial.println("  Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " +
+                 String(sensorValue) + " = " + status);
+  Serial.println();
+  Serial.println("→ Sensor should show LOW when submerged in water");
+  printSeparator();
+}
+
+void monitorWaterLevelSensor() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastMonitorTime >= 500) {
+    Serial.println("\n╔═══ WATER LEVEL MONITOR (Press 'S' to stop) ═══╗");
+    int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
+    String bar = (sensorValue == LOW) ? "████████████████" : "░░░░░░░░░░░░░░░░";
+    String status = (sensorValue == LOW) ? "WATER 💧" : "EMPTY ⚠️ ";
+    Serial.println("Water Level (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): [" +
+                   bar + "] " + status);
+    Serial.println("╚════════════════════════════════════════════════╝");
+    lastMonitorTime = currentTime;
+  }
+}
+
+// DS3231 Helper Functions
+uint8_t bcdToDec(uint8_t val) {
+  return (val / 16 * 10) + (val % 16);
+}
+
+uint8_t readDS3231Register(uint8_t reg) {
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  Wire.write(reg);
+  Wire.endTransmission();
+  Wire.requestFrom(DS3231_I2C_ADDRESS, 1);
+  return Wire.read();
+}
+
+void readDS3231Time() {
+  Serial.println("DS3231 RTC READING:");
+  Serial.println("I2C Address: 0x68");
+  Serial.println();
+
+  // Check if DS3231 is responding
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  byte error = Wire.endTransmission();
+
+  if (error != 0) {
+    Serial.println("❌ ERROR: DS3231 not found on I2C bus!");
+    Serial.println("   Check connections:");
+    Serial.println("   - SDA → GPIO 14");
+    Serial.println("   - SCL → GPIO 3");
+    Serial.println("   - VCC → 3.3V or 5V");
+    Serial.println("   - GND → GND");
+    printSeparator();
+    return;
+  }
+
+  // Read time registers (0x00 to 0x06)
+  uint8_t second = bcdToDec(readDS3231Register(0x00) & 0x7F);
+  uint8_t minute = bcdToDec(readDS3231Register(0x01));
+  uint8_t hour = bcdToDec(readDS3231Register(0x02) & 0x3F);
+  uint8_t dayOfWeek = bcdToDec(readDS3231Register(0x03));
+  uint8_t day = bcdToDec(readDS3231Register(0x04));
+  uint8_t month = bcdToDec(readDS3231Register(0x05) & 0x1F);
+  uint8_t year = bcdToDec(readDS3231Register(0x06));
+
+  // Read temperature (0x11 and 0x12)
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  Wire.write(0x11);
+  Wire.endTransmission();
+  Wire.requestFrom(DS3231_I2C_ADDRESS, 2);
+  int8_t tempMSB = Wire.read();
+  uint8_t tempLSB = Wire.read();
+  float temperature = tempMSB + ((tempLSB >> 6) * 0.25);
+
+  Serial.println("✓ DS3231 Connected!");
+  Serial.println();
+  Serial.println("DATE & TIME:");
+  Serial.printf("  %04d-%02d-%02d (20%02d-%02d-%02d)\n",
+                2000 + year, month, day, year, month, day);
+
+  const char* daysOfWeek[] = {"", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  Serial.printf("  %s %02d:%02d:%02d\n",
+                dayOfWeek >= 1 && dayOfWeek <= 7 ? daysOfWeek[dayOfWeek] : "???",
+                hour, minute, second);
+  Serial.println();
+  Serial.println("TEMPERATURE:");
+  Serial.printf("  %.2f °C (%.2f °F)\n", temperature, temperature * 9.0/5.0 + 32.0);
+  Serial.println();
+  Serial.println("→ If time is incorrect, you can set it via Arduino code");
+  printSeparator();
+}
+
+void scanI2CBus() {
+  Serial.println("I2C BUS SCANNER:");
+  Serial.println("Scanning I2C bus (addresses 0x01 to 0x7F)...");
+  Serial.println();
+
+  int devicesFound = 0;
+  for (byte addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    byte error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("✓ Device found at 0x");
+      if (addr < 16) Serial.print("0");
+      Serial.print(addr, HEX);
+
+      // Identify known devices
+      if (addr == 0x68) Serial.print(" (DS3231 RTC)");
+      else if (addr == 0x57) Serial.print(" (AT24C32 EEPROM)");
+
+      Serial.println();
+      devicesFound++;
+    }
+  }
+
+  Serial.println();
+  if (devicesFound == 0) {
+    Serial.println("❌ No I2C devices found!");
+    Serial.println("   Check your wiring and power supply.");
+  } else {
+    Serial.println("Total devices found: " + String(devicesFound));
+  }
+  printSeparator();
 }
 
 void fullSequenceTest() {
@@ -233,9 +390,17 @@ void fullSequenceTest() {
   }
   
   // Test rain sensors
-  Serial.println("\n4/4 Testing Rain Sensors...");
+  Serial.println("\n4/6 Testing Rain Sensors...");
   readRainSensors();
-  
+
+  // Test water level sensor
+  Serial.println("\n5/6 Testing Water Level Sensor...");
+  readWaterLevelSensor();
+
+  // Test DS3231 RTC
+  Serial.println("\n6/6 Testing DS3231 RTC...");
+  readDS3231Time();
+
   Serial.println("\n╔════════════════════════════════════════════╗");
   Serial.println("║       FULL SEQUENCE TEST COMPLETE          ║");
   Serial.println("╚════════════════════════════════════════════╝");
@@ -255,11 +420,14 @@ void emergencyStop() {
 }
 
 void loop() {
-  // Handle monitoring mode
+  // Handle monitoring modes
   if (monitorMode) {
     monitorRainSensors();
   }
-  
+  if (waterLevelMonitorMode) {
+    monitorWaterLevelSensor();
+  }
+
   // Check for serial input
   if (Serial.available() > 0) {
     char cmd = Serial.read();
@@ -328,10 +496,34 @@ void loop() {
       case 'S':
       case 's':
         monitorMode = false;
-        Serial.println("→ Rain sensor monitoring STOPPED");
+        waterLevelMonitorMode = false;
+        Serial.println("→ All monitoring STOPPED");
         printSeparator();
         break;
-        
+
+      case 'W':
+      case 'w':
+        readWaterLevelSensor();
+        break;
+
+      case 'N':
+      case 'n':
+        waterLevelMonitorMode = true;
+        Serial.println("→ Water level sensor monitoring ENABLED");
+        Serial.println("  (Press 'S' to stop)");
+        printSeparator();
+        break;
+
+      case 'T':
+      case 't':
+        readDS3231Time();
+        break;
+
+      case 'I':
+      case 'i':
+        scanI2CBus();
+        break;
+
       case 'F':
       case 'f':
         fullSequenceTest();

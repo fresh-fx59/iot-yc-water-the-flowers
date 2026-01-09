@@ -6,18 +6,32 @@
 #include <Update.h>
 #include <LittleFS.h>
 #include <secret.h>
+#include <Adafruit_NeoPixel.h>
 
 // Forward declarations
 void printMenu();
 void setupOTA();
 void handleOTA();
 void webLog(const String& message);
+void readDS3231Time();
 
 // WebSocket server on port 81
 WebSocketsServer webSocket = WebSocketsServer(81);
 
 // Command queue for WebSocket commands
 char pendingCommand = '\0';
+
+// Global variable to store time data from WebSocket
+struct TimeData {
+  uint8_t second;
+  uint8_t minute;
+  uint8_t hour;
+  uint8_t dayOfWeek;
+  uint8_t day;
+  uint8_t month;
+  uint8_t year;
+  bool hasData;
+} pendingTimeData = {0, 0, 0, 0, 0, 0, 0, false};
 
 // Helper function to log to both Serial and WebSocket
 void webLog(const String& message) {
@@ -44,7 +58,40 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
         // Command received from web dashboard
         String cmd = String((char*)payload);
         cmd.trim();
-        if (cmd.length() == 1) {
+
+        // Handle heartbeat PING
+        if (cmd == "PING") {
+          webSocket.sendTXT(num, "PONG");
+          return;
+        }
+
+        // Check if this is a time data packet (format: TIME:YYYY,MM,DD,HH,MM,SS,DOW)
+        if (cmd.startsWith("TIME:")) {
+          String timeStr = cmd.substring(5);
+          int year, month, day, hour, minute, second, dow;
+
+          if (sscanf(timeStr.c_str(), "%d,%d,%d,%d,%d,%d,%d",
+                     &year, &month, &day, &hour, &minute, &second, &dow) == 7) {
+            // Store the time data
+            pendingTimeData.year = year - 2000;  // Convert to years since 2000
+            pendingTimeData.month = month;
+            pendingTimeData.day = day;
+            pendingTimeData.hour = hour;
+            pendingTimeData.minute = minute;
+            pendingTimeData.second = second;
+            pendingTimeData.dayOfWeek = dow;
+            pendingTimeData.hasData = true;
+
+            Serial.printf("[WebSocket] Time data received: 20%02d-%02d-%02d %02d:%02d:%02d (DOW:%d)\n",
+                         pendingTimeData.year, pendingTimeData.month, pendingTimeData.day,
+                         pendingTimeData.hour, pendingTimeData.minute, pendingTimeData.second,
+                         pendingTimeData.dayOfWeek);
+
+            // Trigger the set RTC command
+            pendingCommand = 'U';
+          }
+        }
+        else if (cmd.length() == 1) {
           pendingCommand = cmd.charAt(0);
           Serial.printf("[WebSocket] Command queued: %c\n", pendingCommand);
         }
@@ -53,8 +100,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-// Pin definitions for ESP32-S3-DevKitC-1
-#define LED_PIN 2  // Built-in LED
+// Pin definitions for ESP32-S3-N8R2
+#define LED_PIN 48  // Built-in RGB NeoPixel LED
+#define NUM_LEDS 1
+
+// NeoPixel LED object (global)
+Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // Pump control
 #define PUMP_PIN 4
@@ -83,6 +134,17 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 #define I2C_SCL_PIN 3
 #define DS3231_I2C_ADDRESS 0x68
 
+// DS3231 Battery Measurement pins
+#define BATTERY_ADC_PIN 1        // ADC pin (reads voltage divider)
+#define BATTERY_CONTROL_PIN 2    // Controls transistor (HIGH = measure, LOW = off)
+
+// Battery measurement calibration
+// Adjust this value to match your multimeter reading
+// Formula: CALIBRATION_FACTOR = (multimeter_voltage / program_voltage)
+// Example: If multimeter shows 3.23V and program shows 3.02V:
+//          CALIBRATION_FACTOR = 3.23 / 3.02 = 1.0695
+const float BATTERY_VOLTAGE_CALIBRATION = 1.0695;  // Calibrated for your setup
+
 const int NUM_VALVES = 6;
 const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN, VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};
 const int RAIN_SENSOR_PINS[NUM_VALVES] = {RAIN_SENSOR1_PIN, RAIN_SENSOR2_PIN, RAIN_SENSOR3_PIN, RAIN_SENSOR4_PIN, RAIN_SENSOR5_PIN, RAIN_SENSOR6_PIN};
@@ -97,11 +159,13 @@ void setup() {
   Serial.println("║   Version: 1.0.0                           ║");
   Serial.println("╚════════════════════════════════════════════╝");
   Serial.println();
-  
-  // Initialize LED
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-  
+
+  // Initialize NeoPixel LED
+  pixels.begin();
+  pixels.clear();
+  pixels.show();  // Initialize all pixels to 'off'
+  Serial.println("RGB NeoPixel LED initialized (GPIO 48)");
+
   // Initialize pump pin
   pinMode(PUMP_PIN, OUTPUT);
   digitalWrite(PUMP_PIN, LOW);
@@ -123,6 +187,16 @@ void setup() {
   // Initialize I2C for DS3231 RTC
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Serial.println("I2C initialized (SDA: GPIO 14, SCL: GPIO 3)");
+
+  // Initialize battery measurement pins
+  pinMode(BATTERY_CONTROL_PIN, OUTPUT);
+  digitalWrite(BATTERY_CONTROL_PIN, LOW);  // Transistor OFF by default
+  pinMode(BATTERY_ADC_PIN, INPUT);         // ADC input
+
+  // Configure ADC for battery measurement (0-3.3V range)
+  analogReadResolution(12);  // 12-bit resolution (0-4095)
+  analogSetAttenuation(ADC_11db);  // 0-3.3V range
+  Serial.println("Battery measurement initialized (GPIO 1: ADC, GPIO 2: Control)");
 
   Serial.println("Hardware initialized. All outputs set to LOW/OFF.");
   Serial.println();
@@ -188,8 +262,8 @@ void printMenu() {
   Serial.println("═══════════════════════════════════════════════");
   Serial.println("              HARDWARE TEST MENU");
   Serial.println("═══════════════════════════════════════════════");
-  Serial.println("LED TEST:");
-  Serial.println("  L - Toggle LED (GPIO 2)");
+  Serial.println("RGB LED TEST:");
+  Serial.println("  L - Cycle RGB LED colors (GPIO 48 NeoPixel)");
   Serial.println();
   Serial.println("PUMP TEST:");
   Serial.println("  P - Toggle Pump (GPIO 4)");
@@ -218,6 +292,9 @@ void printMenu() {
   Serial.println("DS3231 RTC TESTS:");
   Serial.println("  T - Read RTC time and temperature");
   Serial.println("  I - Scan I2C bus for devices");
+  Serial.println("  U - Set RTC to current time (use dashboard)");
+  Serial.println("  K - Reset RTC to epoch (2000-01-01 00:00:00)");
+  Serial.println("  B - Read battery voltage (VBAT)");
   Serial.println();
   Serial.println("FULL SYSTEM TESTS:");
   Serial.println("  F - Full sequence test (all components)");
@@ -230,15 +307,32 @@ void printMenu() {
 }
 
 void printSeparator() {
-  Serial.println("───────────────────────────────────────────────");
+  webLog("───────────────────────────────────────────────");
 }
 
 void testLED() {
-  static bool ledState = false;
-  ledState = !ledState;
-  digitalWrite(LED_PIN, ledState);
-  Serial.println("LED (GPIO 2): " + String(ledState ? "ON ✓" : "OFF ✗"));
-  Serial.println("→ Check if onboard LED is " + String(ledState ? "lit" : "off"));
+  static uint8_t colorIndex = 0;
+
+  // Cycle through colors: OFF → RED → GREEN → BLUE → YELLOW → CYAN → MAGENTA → WHITE → OFF
+  const uint32_t colors[] = {
+    pixels.Color(0, 0, 0),       // OFF
+    pixels.Color(255, 0, 0),     // RED
+    pixels.Color(0, 255, 0),     // GREEN
+    pixels.Color(0, 0, 255),     // BLUE
+    pixels.Color(255, 255, 0),   // YELLOW
+    pixels.Color(0, 255, 255),   // CYAN
+    pixels.Color(255, 0, 255),   // MAGENTA
+    pixels.Color(255, 255, 255)  // WHITE
+  };
+  const char* colorNames[] = {"OFF", "RED", "GREEN", "BLUE", "YELLOW", "CYAN", "MAGENTA", "WHITE"};
+
+  pixels.setPixelColor(0, colors[colorIndex]);
+  pixels.show();
+
+  webLog("RGB LED (GPIO 48): " + String(colorNames[colorIndex]));
+  webLog("→ Check if onboard RGB LED shows " + String(colorNames[colorIndex]));
+
+  colorIndex = (colorIndex + 1) % 8;
   printSeparator();
 }
 
@@ -246,63 +340,63 @@ void testPump() {
   static bool pumpState = false;
   pumpState = !pumpState;
   digitalWrite(PUMP_PIN, pumpState);
-  Serial.println("PUMP (GPIO 4): " + String(pumpState ? "ON ✓" : "OFF ✗"));
-  Serial.println("→ Check if pump relay clicks and pump runs");
-  Serial.println("⚠ WARNING: Make sure pump has water!");
+  webLog("PUMP (GPIO 4): " + String(pumpState ? "ON ✓" : "OFF ✗"));
+  webLog("→ Check if pump relay clicks and pump runs");
+  webLog("⚠ WARNING: Make sure pump has water!");
   printSeparator();
 }
 
 void testValve(int valveNum) {
   if (valveNum < 1 || valveNum > 6) return;
-  
+
   int idx = valveNum - 1;
   static bool valveStates[6] = {false, false, false, false, false, false};
   valveStates[idx] = !valveStates[idx];
-  
+
   digitalWrite(VALVE_PINS[idx], valveStates[idx]);
-  Serial.println("VALVE " + String(valveNum) + " (GPIO " + String(VALVE_PINS[idx]) + "): " + 
-                 String(valveStates[idx] ? "OPEN ✓" : "CLOSED ✗"));
-  Serial.println("→ Check if valve " + String(valveNum) + " relay clicks and valve opens/closes");
+  webLog("VALVE " + String(valveNum) + " (GPIO " + String(VALVE_PINS[idx]) + "): " +
+         String(valveStates[idx] ? "OPEN ✓" : "CLOSED ✗"));
+  webLog("→ Check if valve " + String(valveNum) + " relay clicks and valve opens/closes");
   printSeparator();
 }
 
 void testAllValvesOn() {
-  Serial.println("Opening ALL valves...");
+  webLog("Opening ALL valves...");
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], HIGH);
-    Serial.println("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): OPEN ✓");
+    webLog("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): OPEN ✓");
     delay(200);
   }
-  Serial.println("→ All valves should be open now");
-  Serial.println("⚠ WARNING: Make sure you have enough water pressure!");
+  webLog("→ All valves should be open now");
+  webLog("⚠ WARNING: Make sure you have enough water pressure!");
   printSeparator();
 }
 
 void testAllValvesOff() {
-  Serial.println("Closing ALL valves...");
+  webLog("Closing ALL valves...");
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], LOW);
-    Serial.println("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): CLOSED ✗");
+    webLog("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): CLOSED ✗");
     delay(200);
   }
-  Serial.println("→ All valves should be closed now");
+  webLog("→ All valves should be closed now");
   printSeparator();
 }
 
 void readRainSensors() {
-  Serial.println("RAIN SENSOR READINGS:");
-  Serial.println("(LOW = Rain detected / Sensor wet)");
-  Serial.println("(HIGH = Dry / No rain)");
-  Serial.println();
-  
+  webLog("RAIN SENSOR READINGS:");
+  webLog("(LOW = Rain detected / Sensor wet)");
+  webLog("(HIGH = Dry / No rain)");
+  webLog("");
+
   for (int i = 0; i < NUM_VALVES; i++) {
     int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
     String status = (sensorValue == LOW) ? "WET/RAIN ☔" : "DRY ☀";
-    Serial.println("  Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): " + 
-                   String(sensorValue) + " = " + status);
+    webLog("  Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): " +
+           String(sensorValue) + " = " + status);
   }
-  Serial.println();
-  Serial.println("→ Test by touching sensor with wet finger");
+  webLog("");
+  webLog("→ Test by touching sensor with wet finger");
   printSeparator();
 }
 
@@ -313,44 +407,46 @@ unsigned long lastMonitorTime = 0;
 void monitorRainSensors() {
   unsigned long currentTime = millis();
   if (currentTime - lastMonitorTime >= 500) {
-    Serial.println("\n╔══ RAIN SENSOR MONITOR (Press 'S' to stop) ══╗");
+    webLog("");
+    webLog("╔══ RAIN SENSOR MONITOR (Press 'S' to stop) ══╗");
     for (int i = 0; i < NUM_VALVES; i++) {
       int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
       String bar = (sensorValue == LOW) ? "████████" : "░░░░░░░░";
       String status = (sensorValue == LOW) ? "WET" : "DRY";
-      Serial.println("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
-                     bar + "] " + status);
+      webLog("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
+             bar + "] " + status);
     }
-    Serial.println("╚════════════════════════════════════════════════╝");
+    webLog("╚════════════════════════════════════════════════╝");
     lastMonitorTime = currentTime;
   }
 }
 
 void readWaterLevelSensor() {
-  Serial.println("WATER LEVEL SENSOR READING:");
-  Serial.println("(LOW = Water detected / Tank has water)");
-  Serial.println("(HIGH = No water / Tank empty)");
-  Serial.println();
+  webLog("WATER LEVEL SENSOR READING:");
+  webLog("(LOW = Water detected / Tank has water)");
+  webLog("(HIGH = No water / Tank empty)");
+  webLog("");
 
   int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
   String status = (sensorValue == LOW) ? "WATER DETECTED 💧" : "NO WATER/EMPTY ⚠️";
-  Serial.println("  Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " +
-                 String(sensorValue) + " = " + status);
-  Serial.println();
-  Serial.println("→ Sensor should show LOW when submerged in water");
+  webLog("  Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " +
+         String(sensorValue) + " = " + status);
+  webLog("");
+  webLog("→ Sensor should show LOW when submerged in water");
   printSeparator();
 }
 
 void monitorWaterLevelSensor() {
   unsigned long currentTime = millis();
   if (currentTime - lastMonitorTime >= 500) {
-    Serial.println("\n╔═══ WATER LEVEL MONITOR (Press 'S' to stop) ═══╗");
+    webLog("");
+    webLog("╔═══ WATER LEVEL MONITOR (Press 'S' to stop) ═══╗");
     int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
     String bar = (sensorValue == LOW) ? "████████████████" : "░░░░░░░░░░░░░░░░";
     String status = (sensorValue == LOW) ? "WATER 💧" : "EMPTY ⚠️ ";
-    Serial.println("Water Level (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): [" +
-                   bar + "] " + status);
-    Serial.println("╚════════════════════════════════════════════════╝");
+    webLog("Water Level (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): [" +
+           bar + "] " + status);
+    webLog("╚════════════════════════════════════════════════╝");
     lastMonitorTime = currentTime;
   }
 }
@@ -358,6 +454,10 @@ void monitorWaterLevelSensor() {
 // DS3231 Helper Functions
 uint8_t bcdToDec(uint8_t val) {
   return (val / 16 * 10) + (val % 16);
+}
+
+uint8_t decToBcd(uint8_t val) {
+  return ((val / 10 * 16) + (val % 10));
 }
 
 uint8_t readDS3231Register(uint8_t reg) {
@@ -368,22 +468,209 @@ uint8_t readDS3231Register(uint8_t reg) {
   return Wire.read();
 }
 
-void readDS3231Time() {
-  Serial.println("DS3231 RTC READING:");
-  Serial.println("I2C Address: 0x68");
-  Serial.println();
+void writeDS3231Register(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  Wire.write(reg);
+  Wire.write(val);
+  Wire.endTransmission();
+}
+
+void setDS3231Time(uint8_t second, uint8_t minute, uint8_t hour, uint8_t dayOfWeek, uint8_t day, uint8_t month, uint8_t year) {
+  writeDS3231Register(0x00, decToBcd(second));
+  writeDS3231Register(0x01, decToBcd(minute));
+  writeDS3231Register(0x02, decToBcd(hour));
+  writeDS3231Register(0x03, decToBcd(dayOfWeek));
+  writeDS3231Register(0x04, decToBcd(day));
+  writeDS3231Register(0x05, decToBcd(month));
+  writeDS3231Register(0x06, decToBcd(year));
+}
+
+void setRTCFromBrowser() {
+  webLog("SET DS3231 RTC FROM BROWSER TIME:");
+  webLog("");
 
   // Check if DS3231 is responding
   Wire.beginTransmission(DS3231_I2C_ADDRESS);
   byte error = Wire.endTransmission();
 
   if (error != 0) {
-    Serial.println("❌ ERROR: DS3231 not found on I2C bus!");
-    Serial.println("   Check connections:");
-    Serial.println("   - SDA → GPIO 14");
-    Serial.println("   - SCL → GPIO 3");
-    Serial.println("   - VCC → 3.3V or 5V");
-    Serial.println("   - GND → GND");
+    webLog("❌ ERROR: DS3231 not found on I2C bus!");
+    printSeparator();
+    return;
+  }
+
+  if (!pendingTimeData.hasData) {
+    webLog("❌ ERROR: No time data received from browser!");
+    webLog("   This command should be triggered from the web dashboard.");
+    printSeparator();
+    return;
+  }
+
+  // Display the time to be set
+  const char* daysOfWeek[] = {"", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  char buffer[50];
+  snprintf(buffer, sizeof(buffer), "20%02d-%02d-%02d %s %02d:%02d:%02d",
+           pendingTimeData.year, pendingTimeData.month, pendingTimeData.day,
+           daysOfWeek[pendingTimeData.dayOfWeek],
+           pendingTimeData.hour, pendingTimeData.minute, pendingTimeData.second);
+
+  webLog("Setting RTC to browser time:");
+  webLog("  " + String(buffer));
+  webLog("");
+
+  // Write to DS3231
+  setDS3231Time(
+    pendingTimeData.second,
+    pendingTimeData.minute,
+    pendingTimeData.hour,
+    pendingTimeData.dayOfWeek,
+    pendingTimeData.day,
+    pendingTimeData.month,
+    pendingTimeData.year
+  );
+
+  // Clear the data
+  pendingTimeData.hasData = false;
+
+  delay(100);
+  webLog("✓ DS3231 RTC updated successfully!");
+  webLog("");
+  webLog("Verifying RTC time...");
+  delay(500);
+  readDS3231Time();
+}
+
+void resetRTCToEpoch() {
+  webLog("RESET DS3231 RTC TO EPOCH:");
+  webLog("");
+
+  // Check if DS3231 is responding
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  byte error = Wire.endTransmission();
+
+  if (error != 0) {
+    webLog("❌ ERROR: DS3231 not found on I2C bus!");
+    printSeparator();
+    return;
+  }
+
+  webLog("Setting RTC to: 2000-01-01 Saturday 00:00:00");
+
+  // Set to epoch: 2000-01-01 00:00:00 (Saturday)
+  setDS3231Time(
+    0,   // second
+    0,   // minute
+    0,   // hour
+    7,   // dayOfWeek (7 = Saturday, 2000-01-01 was Saturday)
+    1,   // day
+    1,   // month
+    0    // year (0 = 2000)
+  );
+
+  delay(100);
+  webLog("✓ RTC reset to epoch!");
+  webLog("");
+  webLog("Verifying RTC time...");
+  delay(500);
+  readDS3231Time();
+}
+
+void readBatteryVoltage() {
+  webLog("DS3231 BATTERY VOLTAGE MEASUREMENT:");
+  webLog("");
+  webLog("Circuit: VBAT → 100kΩ → GPIO1(ADC) → 100kΩ → Transistor → GND");
+  webLog("Control: GPIO2 → 10kΩ → Transistor Base");
+  webLog("");
+
+  // Turn on transistor to enable voltage divider
+  digitalWrite(BATTERY_CONTROL_PIN, HIGH);
+  webLog("Enabling measurement circuit...");
+  delay(100);  // Wait for circuit to stabilize
+
+  // Take multiple readings and average them
+  const int numReadings = 10;
+  long adcSum = 0;
+
+  for (int i = 0; i < numReadings; i++) {
+    adcSum += analogRead(BATTERY_ADC_PIN);
+    delay(10);
+  }
+
+  // Turn off transistor to save battery
+  digitalWrite(BATTERY_CONTROL_PIN, LOW);
+  webLog("Measurement circuit disabled.");
+  webLog("");
+
+  // Calculate average ADC value
+  float adcAverage = adcSum / (float)numReadings;
+
+  // Convert to voltage (ESP32-S3 ADC with 11db attenuation: 0-3.3V → 0-4095)
+  // Note: ESP32 ADC is non-linear, this is approximate
+  float adcVoltage = (adcAverage / 4095.0) * 3.3;
+
+  // Battery voltage is 2x the ADC voltage (voltage divider with R1=R2=100kΩ)
+  float batteryVoltageRaw = adcVoltage * 2.0;
+
+  // Apply calibration factor to correct ESP32 ADC non-linearity
+  float batteryVoltage = batteryVoltageRaw * BATTERY_VOLTAGE_CALIBRATION;
+
+  char buffer[100];
+  webLog("MEASUREMENT RESULTS:");
+  snprintf(buffer, sizeof(buffer), "  ADC Raw Value: %.0f (average of %d readings)", adcAverage, numReadings);
+  webLog(buffer);
+  snprintf(buffer, sizeof(buffer), "  ADC Voltage: %.3f V", adcVoltage);
+  webLog(buffer);
+  snprintf(buffer, sizeof(buffer), "  Battery Voltage (raw): %.3f V", batteryVoltageRaw);
+  webLog(buffer);
+  snprintf(buffer, sizeof(buffer), "  Battery Voltage (calibrated): %.3f V", batteryVoltage);
+  webLog(buffer);
+  snprintf(buffer, sizeof(buffer), "  Calibration Factor: %.4f", BATTERY_VOLTAGE_CALIBRATION);
+  webLog(buffer);
+  webLog("");
+
+  // Battery status interpretation (CR2032 typical voltages)
+  webLog("BATTERY STATUS:");
+  if (batteryVoltage >= 2.8) {
+    webLog("  ✓ GOOD (≥2.8V) - Battery is healthy");
+  } else if (batteryVoltage >= 2.5) {
+    webLog("  ⚠️ FAIR (2.5-2.8V) - Battery is usable but aging");
+  } else if (batteryVoltage >= 2.0) {
+    webLog("  ⚠️ LOW (2.0-2.5V) - Consider replacing soon");
+  } else if (batteryVoltage >= 1.5) {
+    webLog("  ❌ CRITICAL (<2.0V) - Replace battery immediately");
+  } else {
+    webLog("  ❌ ERROR - Check circuit connections");
+  }
+  webLog("");
+
+  webLog("CIRCUIT NOTES:");
+  webLog("  • Measurement only active when GPIO2 is HIGH");
+  webLog("  • Voltage divider draws ~15µA during measurement");
+  webLog("  • CR2032 nominal: 3.0V, min: 2.0V");
+  webLog("");
+  webLog("CALIBRATION:");
+  webLog("  To recalibrate, measure battery with multimeter,");
+  webLog("  then update BATTERY_VOLTAGE_CALIBRATION in code:");
+  webLog("  CALIBRATION = (multimeter_reading / raw_reading)");
+  printSeparator();
+}
+
+void readDS3231Time() {
+  webLog("DS3231 RTC READING:");
+  webLog("I2C Address: 0x68");
+  webLog("");
+
+  // Check if DS3231 is responding
+  Wire.beginTransmission(DS3231_I2C_ADDRESS);
+  byte error = Wire.endTransmission();
+
+  if (error != 0) {
+    webLog("❌ ERROR: DS3231 not found on I2C bus!");
+    webLog("   Check connections:");
+    webLog("   - SDA → GPIO 14");
+    webLog("   - SCL → GPIO 3");
+    webLog("   - VCC → 3.3V or 5V");
+    webLog("   - GND → GND");
     printSeparator();
     return;
   }
@@ -406,120 +693,157 @@ void readDS3231Time() {
   uint8_t tempLSB = Wire.read();
   float temperature = tempMSB + ((tempLSB >> 6) * 0.25);
 
-  Serial.println("✓ DS3231 Connected!");
-  Serial.println();
-  Serial.println("DATE & TIME:");
-  Serial.printf("  %04d-%02d-%02d (20%02d-%02d-%02d)\n",
-                2000 + year, month, day, year, month, day);
+  webLog("✓ DS3231 Connected!");
+  webLog("");
+  webLog("DATE & TIME:");
+
+  char buffer[100];
+  snprintf(buffer, sizeof(buffer), "  %04d-%02d-%02d (20%02d-%02d-%02d)",
+           2000 + year, month, day, year, month, day);
+  webLog(buffer);
 
   const char* daysOfWeek[] = {"", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  Serial.printf("  %s %02d:%02d:%02d\n",
-                dayOfWeek >= 1 && dayOfWeek <= 7 ? daysOfWeek[dayOfWeek] : "???",
-                hour, minute, second);
-  Serial.println();
-  Serial.println("TEMPERATURE:");
-  Serial.printf("  %.2f °C (%.2f °F)\n", temperature, temperature * 9.0/5.0 + 32.0);
-  Serial.println();
-  Serial.println("→ If time is incorrect, you can set it via Arduino code");
+  snprintf(buffer, sizeof(buffer), "  %s %02d:%02d:%02d",
+           dayOfWeek >= 1 && dayOfWeek <= 7 ? daysOfWeek[dayOfWeek] : "???",
+           hour, minute, second);
+  webLog(buffer);
+
+  webLog("");
+  webLog("TEMPERATURE:");
+  snprintf(buffer, sizeof(buffer), "  %.2f °C (%.2f °F)", temperature, temperature * 9.0/5.0 + 32.0);
+  webLog(buffer);
+  webLog("");
+  webLog("→ Use 'U' to set time or 'K' to reset");
   printSeparator();
 }
 
 void scanI2CBus() {
-  Serial.println("I2C BUS SCANNER:");
-  Serial.println("Scanning I2C bus (addresses 0x01 to 0x7F)...");
-  Serial.println();
+  webLog("I2C BUS SCANNER:");
+  webLog("Scanning I2C bus (addresses 0x01 to 0x7F)...");
+  webLog("");
 
   int devicesFound = 0;
+  char buffer[100];
+
   for (byte addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
     byte error = Wire.endTransmission();
 
     if (error == 0) {
-      Serial.print("✓ Device found at 0x");
-      if (addr < 16) Serial.print("0");
-      Serial.print(addr, HEX);
+      String device = "";
+      if (addr == 0x68) device = " (DS3231 RTC)";
+      else if (addr == 0x57) device = " (AT24C32 EEPROM)";
 
-      // Identify known devices
-      if (addr == 0x68) Serial.print(" (DS3231 RTC)");
-      else if (addr == 0x57) Serial.print(" (AT24C32 EEPROM)");
-
-      Serial.println();
+      snprintf(buffer, sizeof(buffer), "✓ Device found at 0x%02X%s", addr, device.c_str());
+      webLog(buffer);
       devicesFound++;
     }
   }
 
-  Serial.println();
+  webLog("");
   if (devicesFound == 0) {
-    Serial.println("❌ No I2C devices found!");
-    Serial.println("   Check your wiring and power supply.");
+    webLog("❌ No I2C devices found!");
+    webLog("   Check your wiring and power supply.");
   } else {
-    Serial.println("Total devices found: " + String(devicesFound));
+    webLog("Total devices found: " + String(devicesFound));
   }
   printSeparator();
 }
 
 void fullSequenceTest() {
-  Serial.println("\n");
-  Serial.println("╔════════════════════════════════════════════╗");
-  Serial.println("║       FULL SEQUENCE TEST STARTING          ║");
-  Serial.println("╚════════════════════════════════════════════╝");
-  Serial.println();
-  
-  // Test LED
-  Serial.println("1/4 Testing LED...");
-  digitalWrite(LED_PIN, HIGH);
+  webLog("");
+  webLog("╔════════════════════════════════════════════╗");
+  webLog("║       FULL SEQUENCE TEST STARTING          ║");
+  webLog("╚════════════════════════════════════════════╝");
+  webLog("");
+
+  // Test RGB LED
+  webLog("1/7 Testing RGB LED...");
+
+  // Red
+  pixels.setPixelColor(0, pixels.Color(255, 0, 0));
+  pixels.show();
+  webLog("    RED");
+  delay(500);
+
+  // Green
+  pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+  pixels.show();
+  webLog("    GREEN");
+  delay(500);
+
+  // Blue
+  pixels.setPixelColor(0, pixels.Color(0, 0, 255));
+  pixels.show();
+  webLog("    BLUE");
+  delay(500);
+
+  // Off
+  pixels.clear();
+  pixels.show();
+  webLog("    ✓ RGB LED test complete");
   delay(1000);
-  digitalWrite(LED_PIN, LOW);
-  Serial.println("    ✓ LED test complete");
-  delay(1000);
-  
+
   // Test Pump
-  Serial.println("\n2/4 Testing Pump...");
+  webLog("");
+  webLog("2/7 Testing Pump...");
   digitalWrite(PUMP_PIN, HIGH);
-  Serial.println("    Pump ON for 3 seconds");
+  webLog("    Pump ON for 3 seconds");
   delay(3000);
   digitalWrite(PUMP_PIN, LOW);
-  Serial.println("    ✓ Pump test complete");
+  webLog("    ✓ Pump test complete");
   delay(1000);
-  
+
   // Test each valve individually
-  Serial.println("\n3/4 Testing Valves (one by one)...");
+  webLog("");
+  webLog("3/7 Testing Valves (one by one)...");
   for (int i = 0; i < NUM_VALVES; i++) {
-    Serial.println("    Testing Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + ")...");
+    webLog("    Testing Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + ")...");
     digitalWrite(VALVE_PINS[i], HIGH);
     delay(2000);
     digitalWrite(VALVE_PINS[i], LOW);
-    Serial.println("    ✓ Valve " + String(i + 1) + " complete");
+    webLog("    ✓ Valve " + String(i + 1) + " complete");
     delay(500);
   }
-  
+
   // Test rain sensors
-  Serial.println("\n4/6 Testing Rain Sensors...");
+  webLog("");
+  webLog("4/7 Testing Rain Sensors...");
   readRainSensors();
 
   // Test water level sensor
-  Serial.println("\n5/6 Testing Water Level Sensor...");
+  webLog("");
+  webLog("5/7 Testing Water Level Sensor...");
   readWaterLevelSensor();
 
   // Test DS3231 RTC
-  Serial.println("\n6/6 Testing DS3231 RTC...");
+  webLog("");
+  webLog("6/7 Testing DS3231 RTC...");
   readDS3231Time();
 
-  Serial.println("\n╔════════════════════════════════════════════╗");
-  Serial.println("║       FULL SEQUENCE TEST COMPLETE          ║");
-  Serial.println("╚════════════════════════════════════════════╝");
-  Serial.println();
+  // Test Battery Voltage
+  webLog("");
+  webLog("7/7 Testing DS3231 Battery Voltage...");
+  readBatteryVoltage();
+
+  webLog("");
+  webLog("╔════════════════════════════════════════════╗");
+  webLog("║       FULL SEQUENCE TEST COMPLETE          ║");
+  webLog("╚════════════════════════════════════════════╝");
+  webLog("");
   printSeparator();
 }
 
 void emergencyStop() {
-  Serial.println("\n⚠️ EMERGENCY STOP - TURNING EVERYTHING OFF ⚠️");
+  webLog("");
+  webLog("⚠️ EMERGENCY STOP - TURNING EVERYTHING OFF ⚠️");
   digitalWrite(PUMP_PIN, LOW);
-  digitalWrite(LED_PIN, LOW);
+  pixels.clear();
+  pixels.show();
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], LOW);
   }
-  Serial.println("✓ All outputs disabled");
+  webLog("✓ All outputs disabled");
   printSeparator();
 }
 
@@ -684,16 +1008,16 @@ void loop() {
       case 'M':
       case 'm':
         monitorMode = true;
-        Serial.println("→ Rain sensor monitoring ENABLED");
-        Serial.println("  (Press 'S' to stop)");
+        webLog("→ Rain sensor monitoring ENABLED");
+        webLog("  (Press 'S' to stop)");
         printSeparator();
         break;
-        
+
       case 'S':
       case 's':
         monitorMode = false;
         waterLevelMonitorMode = false;
-        Serial.println("→ All monitoring STOPPED");
+        webLog("→ All monitoring STOPPED");
         printSeparator();
         break;
 
@@ -705,8 +1029,8 @@ void loop() {
       case 'N':
       case 'n':
         waterLevelMonitorMode = true;
-        Serial.println("→ Water level sensor monitoring ENABLED");
-        Serial.println("  (Press 'S' to stop)");
+        webLog("→ Water level sensor monitoring ENABLED");
+        webLog("  (Press 'S' to stop)");
         printSeparator();
         break;
 
@@ -718,6 +1042,21 @@ void loop() {
       case 'I':
       case 'i':
         scanI2CBus();
+        break;
+
+      case 'U':
+      case 'u':
+        setRTCFromBrowser();
+        break;
+
+      case 'K':
+      case 'k':
+        resetRTCToEpoch();
+        break;
+
+      case 'B':
+      case 'b':
+        readBatteryVoltage();
         break;
 
       case 'F':
@@ -737,7 +1076,7 @@ void loop() {
         break;
         
       default:
-        Serial.println("Unknown command. Press 'H' for menu.");
+        webLog("Unknown command. Press 'H' for menu.");
         printSeparator();
         break;
     }

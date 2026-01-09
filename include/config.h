@@ -7,13 +7,13 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.10.3";
+const char *VERSION = "watering_system_1.10.4";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
-// Hardware Pin Definitions (ESP32-S3-DevKitC-1)
+// Hardware Pin Definitions (ESP32-S3-N8R2)
 // ============================================
-#define LED_PIN 2
+#define LED_PIN 48  // Built-in RGB NeoPixel LED
 #define PUMP_PIN 4
 #define RAIN_SENSOR_POWER_PIN 18
 

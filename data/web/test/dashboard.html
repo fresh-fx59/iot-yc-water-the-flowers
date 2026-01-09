@@ -224,6 +224,7 @@
   <div class="header">
     <h1>🔧 Hardware Test Dashboard</h1>
     <div class="status">
+      <a href="/firmware" style="color: #ecf0f1; text-decoration: none; margin-right: 20px; padding: 8px 16px; background: rgba(255,255,255,0.1); border-radius: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">📤 Firmware Upload</a>
       <div class="status-indicator" id="status"></div>
       <span id="statusText">Connecting...</span>
     </div>
@@ -232,10 +233,10 @@
   <div class="container">
     <div class="sidebar">
       <div class="section">
-        <h3>LED & Pump</h3>
+        <h3>RGB LED & Pump</h3>
         <div class="btn-group">
           <button class="btn" onclick="sendCommand('L')">
-            <span>Toggle LED</span>
+            <span>Cycle RGB LED</span>
             <span class="btn-key">L</span>
           </button>
           <button class="btn" onclick="sendCommand('P')">
@@ -294,6 +295,10 @@
             <span>Monitor Continuous</span>
             <span class="btn-key">N</span>
           </button>
+          <button class="btn" onclick="sendCommand('S')">
+            <span>Stop Monitoring</span>
+            <span class="btn-key">S</span>
+          </button>
         </div>
       </div>
 
@@ -307,6 +312,18 @@
           <button class="btn" onclick="sendCommand('I')">
             <span>Scan I2C Bus</span>
             <span class="btn-key">I</span>
+          </button>
+          <button class="btn" onclick="sendCommand('B')">
+            <span>Read Battery Voltage</span>
+            <span class="btn-key">B</span>
+          </button>
+          <button class="btn success" onclick="setRTCToCurrentTime()">
+            <span>Set to Current Time</span>
+            <span class="btn-key">U</span>
+          </button>
+          <button class="btn" onclick="sendCommand('K')">
+            <span>Reset to Epoch</span>
+            <span class="btn-key">K</span>
           </button>
         </div>
       </div>
@@ -346,50 +363,183 @@
   <script>
     let ws = null;
     let reconnectInterval = null;
+    let pingInterval = null;
+    let pongTimeout = null;
+    let lastPongTime = Date.now();
+    let isReconnecting = false;
 
     function connect() {
+      // Prevent multiple simultaneous connection attempts
+      if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+        console.log('Connection already in progress or open, skipping');
+        return;
+      }
+
+      // Clean up old WebSocket if exists
+      if (ws) {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch (e) {
+          // Ignore errors on close
+        }
+      }
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.hostname}:81/`;
 
+      console.log('Connecting to WebSocket...');
       ws = new WebSocket(wsUrl);
 
       ws.onopen = function() {
         console.log('WebSocket connected');
+        isReconnecting = false;
         document.getElementById('status').classList.add('connected');
         document.getElementById('statusText').textContent = 'Connected';
-        clearInterval(reconnectInterval);
+
+        // Stop reconnection attempts
+        if (reconnectInterval) {
+          clearInterval(reconnectInterval);
+          reconnectInterval = null;
+        }
+
         addLog('✓ Connected to device', 'success');
+
+        // Start heartbeat ping every 5 seconds
+        startHeartbeat();
       };
 
       ws.onmessage = function(event) {
-        addLog(event.data);
+        const message = event.data;
+
+        // Handle PONG response
+        if (message === 'PONG') {
+          lastPongTime = Date.now();
+          if (pongTimeout) {
+            clearTimeout(pongTimeout);
+            pongTimeout = null;
+          }
+          console.log('Heartbeat: PONG received');
+          return;
+        }
+
+        // Regular message - display in console
+        addLog(message);
       };
 
       ws.onerror = function(error) {
         console.error('WebSocket error:', error);
-        addLog('WebSocket error occurred', 'error');
+        // Only log error if not already reconnecting (reduces spam)
+        if (!isReconnecting) {
+          addLog('WebSocket error occurred', 'error');
+        }
       };
 
       ws.onclose = function() {
         console.log('WebSocket disconnected');
+        stopHeartbeat();
         document.getElementById('status').classList.remove('connected');
         document.getElementById('statusText').textContent = 'Disconnected';
-        addLog('✗ Disconnected from device', 'error');
 
-        // Attempt to reconnect every 3 seconds
+        // Only log disconnect message if not already reconnecting
+        if (!isReconnecting) {
+          addLog('✗ Disconnected from device', 'error');
+        }
+
+        // Start reconnection attempts (if not already running)
         if (!reconnectInterval) {
+          isReconnecting = true;
+          addLog('Attempting to reconnect...', 'warning');
+
           reconnectInterval = setInterval(function() {
-            addLog('Attempting to reconnect...', 'warning');
+            console.log('Reconnect attempt...');
             connect();
           }, 3000);
         }
       };
     }
 
+    function startHeartbeat() {
+      // Clear any existing intervals
+      stopHeartbeat();
+
+      // Send PING every 2 seconds
+      pingInterval = setInterval(function() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          // Clear any previous timeout
+          if (pongTimeout) {
+            clearTimeout(pongTimeout);
+          }
+
+          ws.send('PING');
+          console.log('Heartbeat: PING sent');
+
+          // Expect PONG within 4 seconds
+          pongTimeout = setTimeout(function() {
+            const timeSincePong = Date.now() - lastPongTime;
+            console.error('Heartbeat timeout: No PONG received for ' + timeSincePong + 'ms');
+            addLog('⚠️ Connection timeout - no response from device', 'warning');
+
+            // Stop heartbeat first
+            stopHeartbeat();
+
+            // Update UI immediately (don't wait for onclose)
+            document.getElementById('status').classList.remove('connected');
+            document.getElementById('statusText').textContent = 'Disconnected';
+
+            // Close connection to trigger reconnect
+            if (ws) {
+              ws.close();
+            }
+          }, 4000);
+        }
+      }, 2000);
+
+      // Initialize last pong time
+      lastPongTime = Date.now();
+    }
+
+    function stopHeartbeat() {
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+      if (pongTimeout) {
+        clearTimeout(pongTimeout);
+        pongTimeout = null;
+      }
+    }
+
     function sendCommand(cmd) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(cmd);
         addLog(`> Command sent: ${cmd}`, 'info');
+      } else {
+        addLog('✗ Not connected to device', 'error');
+      }
+    }
+
+    function setRTCToCurrentTime() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const now = new Date();
+
+        // Get date/time components
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;  // JavaScript months are 0-indexed
+        const day = now.getDate();
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        const second = now.getSeconds();
+        const dow = now.getDay() + 1;  // DS3231: 1=Sunday, 7=Saturday
+
+        // Format: TIME:YYYY,MM,DD,HH,MM,SS,DOW
+        const timeData = `TIME:${year},${month},${day},${hour},${minute},${second},${dow}`;
+
+        ws.send(timeData);
+        addLog(`> Setting RTC to current time: ${now.toLocaleString()}`, 'info');
       } else {
         addLog('✗ Not connected to device', 'error');
       }

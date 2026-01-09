@@ -5,6 +5,7 @@
 #include "TelegramNotifier.h"
 #include "ValveController.h"
 #include "config.h"
+#include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -13,6 +14,9 @@
 
 // External MQTT client (defined in main.cpp)
 extern PubSubClient mqttClient;
+
+// NeoPixel LED (1 pixel on GPIO 48)
+Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 // Learning data file paths (simplified two-file system)
 // To reset learning data: swap the filenames below, old file auto-deletes on
@@ -222,12 +226,15 @@ private:
 inline void WateringSystem::init() {
   // Initialize hardware pins
   pinMode(PUMP_PIN, OUTPUT);
-  pinMode(LED_PIN, OUTPUT);
   pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
 
   digitalWrite(PUMP_PIN, LOW);
-  digitalWrite(LED_PIN, LOW);
   digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+
+  // Initialize NeoPixel LED
+  statusLED.begin();
+  statusLED.clear();
+  statusLED.show();  // Initialize to OFF
 
   // Initialize valve pins
   String valvePinsInfo = "Valve GPIOs: ";
@@ -814,13 +821,17 @@ inline void WateringSystem::updatePumpState() {
   // Turn pump on if any valve is watering
   if (wateringCount > 0 && pumpState == PUMP_OFF) {
     digitalWrite(PUMP_PIN, HIGH);
-    digitalWrite(LED_PIN, HIGH);
+    // Turn LED blue when pump is on
+    statusLED.setPixelColor(0, statusLED.Color(0, 0, 255));
+    statusLED.show();
     pumpState = PUMP_ON;
     DebugHelper::debugImportant("💧 Pump ON (GPIO " + String(PUMP_PIN) + ")");
     publishStateChange("pump", "on");
   } else if (wateringCount == 0 && pumpState == PUMP_ON) {
     digitalWrite(PUMP_PIN, LOW);
-    digitalWrite(LED_PIN, LOW);
+    // Turn LED off when pump is off
+    statusLED.clear();
+    statusLED.show();
     pumpState = PUMP_OFF;
     DebugHelper::debugImportant("💧 Pump OFF (GPIO " + String(PUMP_PIN) + ")");
     publishStateChange("pump", "off");

@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.6.1** - Enhanced Telegram debugging with queue-based retry system, message grouping, and improved status reporting!
+**Version 1.10.0** - Two separate firmware builds: production and hardware testing (DS3231 RTC + water level sensor support)!
 
 ## Core Watering Algorithm
 
@@ -157,6 +157,104 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS = 180000;  // 3 minutes
 
 Code was generated in [Claude](https://claude.ai/chat/391e9870-78b7-48cb-8733-b0c53d5dfb42)
 
+---
+
+# Build System & Deployment
+
+This project uses **two separate firmware builds** for clean separation between production and testing.
+
+## Build Environments
+
+| Environment | Source File | Purpose | Flash Usage |
+|------------|-------------|---------|-------------|
+| `esp32-s3-devkitc-1` | `src/main.cpp` | Production watering system | ~80% (1055 KB) |
+| `esp32-s3-devkitc-1-test` | `src/test-main.cpp` | Hardware testing only | ~24% (308 KB) |
+
+## Production Firmware
+
+**Build and upload:**
+```bash
+platformio run -t upload -e esp32-s3-devkitc-1
+platformio device monitor -b 115200 --raw
+```
+
+**Features:**
+- Full watering system with time-based learning
+- WiFi, MQTT, Telegram notifications
+- Web interface for control and OTA updates
+- Persistent learning data in LittleFS
+
+**Excludes:** Test code (saves ~750 KB flash, better stability)
+
+## Test Firmware
+
+**Build and upload:**
+```bash
+platformio run -t upload -e esp32-s3-devkitc-1-test
+platformio device monitor -b 115200 --raw
+```
+
+**Features:**
+- Interactive serial menu (press `H` for help)
+- Test all hardware: LED, pump, 6 valves, 6 rain sensors
+- Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL)
+- Test water level sensor (GPIO 19)
+- I2C bus scanner
+- No WiFi/MQTT/production logic
+
+### Test Menu Commands
+
+**Hardware Components:**
+- `L` - Toggle LED
+- `P` - Toggle pump
+- `1-6` - Toggle individual valves
+- `A` / `Z` - All valves on/off
+- `X` - Emergency stop (turn everything off)
+
+**Rain Sensors:**
+- `R` - Read all sensors once
+- `M` - Monitor continuously
+- `S` - Stop monitoring
+
+**Water Level Sensor (GPIO 19):**
+- `W` - Read once
+- `N` - Monitor continuously
+
+**DS3231 RTC (I2C):**
+- `T` - Read time/date/temperature
+- `I` - Scan I2C bus for devices
+
+**System:**
+- `F` - Full sequence test (all components)
+- `H` - Show menu
+
+## Switching Between Production/Test
+
+### Via USB Cable
+```bash
+# Switch to test mode
+platformio run -t upload -e esp32-s3-devkitc-1-test
+
+# Switch back to production
+platformio run -t upload -e esp32-s3-devkitc-1
+```
+
+### Via OTA (Remote)
+1. Build firmware: `platformio run -e <environment>`
+2. Access: `http://<device-ip>/firmware` (login: admin/OTA_PASSWORD)
+3. Upload firmware file:
+   - Production: `.pio/build/esp32-s3-devkitc-1/firmware.bin`
+   - Test: `.pio/build/esp32-s3-devkitc-1-test/firmware.bin`
+
+## Why Two Separate Builds?
+
+✅ **Industry Best Practice** - Standard for embedded systems
+✅ **No Code Bloat** - Production excludes test code (saves 750 KB)
+✅ **Zero Risk** - Test code never runs in production
+✅ **Better Stability** - Smaller binary = more reliable
+✅ **Clear Separation** - Easier maintenance and debugging
+
+---
 
 # Deployment Checklist & Troubleshooting
 
@@ -566,77 +664,6 @@ When **auto-watering triggers**:
 - Valve 2: Baseline 5.0s (medium tray) → Empty: 1 day → Waters daily
 - Each learns capacity and consumption independently
 
-# How to Test Your Hardware
-Step 1: Upload the Test Program
-
-rename src/main.cpp to main.cpp.bak test-main.cpp.bak to test-main.cpp
-Build and upload to your ESP32:
-
-bash   platformio run -t upload -e esp32-s3-devkitc-1
-   platformio device monitor -b 115200 --raw
-```
-
-### Step 2: Systematic Testing
-
-Once uploaded, you'll see a menu. Test components in this order:
-
-#### **Test 1: LED (Verify ESP32 is working)**
-- Type: `L`
-- **Expected:** Onboard LED toggles ON/OFF
-- **If fails:** ESP32 issue or GPIO 2 problem
-
-#### **Test 2: Rain Sensors (Read First)**
-- Type: `R`
-- **Expected:** Shows readings for all 6 sensors
-  - `HIGH (1) = DRY ☀`
-  - `LOW (0) = WET ☔`
-- **Test:** Touch each sensor with wet finger to see value change
-- **If always LOW:** Check pull-up resistors or wiring
-- **If always HIGH:** Sensor not connected or broken
-
-#### **Test 3: Monitor Rain Sensors Continuously**
-- Type: `M`
-- **Expected:** Live updating display every 500ms
-- **Test:** Touch sensors with wet finger - should see bars change
-- Type: `S` to stop monitoring
-
-#### **Test 4: Pump**
-- Type: `P`
-- **Expected:** Relay clicks, pump turns ON
-- Type: `P` again to turn OFF
-- **⚠ WARNING:** Make sure pump has water!
-
-#### **Test 5: Individual Valves**
-- Type: `1`, `2`, `3`, `4`, `5`, `6`
-- **Expected:** Each valve relay clicks and opens/closes
-- Toggle each one ON and OFF to verify
-
-#### **Test 6: All Valves Together**
-- Type: `A` - Opens all valves
-- Type: `Z` - Closes all valves
-- **⚠ WARNING:** Need good water pressure!
-
-#### **Test 7: Full Automatic Sequence**
-- Type: `F`
-- **Runs:** LED → Pump → Each valve individually → Rain sensors
-- **Great for:** Complete system verification
-
-### Emergency Commands
-- `X` - **EMERGENCY STOP** - Turns everything OFF immediately
-- `H` - Show menu again
-
-## What to Check
-
-### ✅ Rain Sensors (Most Important!)
-```
-Dry sensor should read: 1 (HIGH)
-Wet sensor should read: 0 (LOW)
-If stuck at one value:
-
-Always LOW: Wiring short or no pull-up
-Always HIGH: Sensor disconnected
-
----
 
 # 📋 Quick Reference: MQTT Commands
 
@@ -725,6 +752,6 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.6.1
+**Version:** 1.10.0
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

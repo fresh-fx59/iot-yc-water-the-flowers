@@ -11,18 +11,38 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.8.5 (defined in config.h:10)
+- Current Version: 1.10.0 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
-### Standard Build/Upload
+The project has **two separate build environments**:
+- `esp32-s3-devkitc-1` - **Production firmware** (src/main.cpp)
+- `esp32-s3-devkitc-1-test` - **Hardware testing firmware** (src/test-main.cpp)
+
+### Production Build/Upload
 ```bash
-# Build and upload firmware only
+# Build and upload production firmware
 platformio run -t upload -e esp32-s3-devkitc-1
 
 # Monitor serial output
 platformio device monitor -b 115200 --raw
 ```
+
+### Hardware Test Build/Upload
+```bash
+# Build and upload test firmware
+platformio run -t upload -e esp32-s3-devkitc-1-test
+
+# Monitor test output
+platformio device monitor -b 115200 --raw
+```
+
+**Test Firmware Features:**
+- Test all hardware components (pump, valves, rain sensors)
+- Test DS3231 RTC (I2C at GPIO 14/3)
+- Test water level sensor (GPIO 19)
+- Interactive serial menu (press 'H' for help)
+- No WiFi/MQTT/production logic - pure hardware testing
 
 ### Filesystem Operations
 ```bash
@@ -70,10 +90,15 @@ include/
   └── secret.h                      # WiFi/MQTT/Telegram credentials (not in git)
 
 src/
-  └── main.cpp                      # Entry point (~165 lines)
+  ├── main.cpp                      # Production firmware entry point (~165 lines)
+  └── test-main.cpp                 # Hardware test firmware (~550 lines)
 
 data/
   └── web/                          # Web UI files (served via LittleFS)
+
+platformio.ini                      # Two build environments:
+                                    # - esp32-s3-devkitc-1 (production)
+                                    # - esp32-s3-devkitc-1-test (testing)
 ```
 
 ### Key Design Principles
@@ -472,19 +497,22 @@ DebugHelper::loop();
 
 ### Testing & Debugging
 
-**Hardware test program**: `test-main.cpp.bak`
-To use: rename `src/main.cpp` → `main.cpp.bak`, rename `test-main.cpp.bak` → `src/main.cpp`, then build/upload
+**Hardware test firmware**: `src/test-main.cpp`
+Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 
-Test menu commands:
-- `L`: Toggle LED
-- `R`: Read all rain sensors once
-- `M`: Monitor sensors continuously (press `S` to stop)
-- `P`: Toggle pump
-- `1-6`: Toggle individual valves
-- `A`/`Z`: All valves on/off
-- `F`: Full automatic test
-- `X`: Emergency stop
-- `H`: Show menu
+**Test menu commands** (via serial at 115200 baud):
+- **LED**: `L` - Toggle LED
+- **Pump**: `P` - Toggle pump
+- **Valves**: `1-6` - Toggle individual valves, `A` - All on, `Z` - All off
+- **Rain Sensors**: `R` - Read once, `M` - Monitor continuous, `S` - Stop monitoring
+- **Water Level**: `W` - Read once, `N` - Monitor continuous
+- **DS3231 RTC**: `T` - Read time/temperature, `I` - Scan I2C bus
+- **System**: `F` - Full sequence test, `X` - Emergency stop, `H` - Show menu
+
+**Switching between Production/Test firmware:**
+1. **To Test Mode**: `platformio run -t upload -e esp32-s3-devkitc-1-test`
+2. **To Production**: `platformio run -t upload -e esp32-s3-devkitc-1`
+3. **Via OTA** (when remote): Upload appropriate `.bin` file from `.pio/build/` folder
 
 **Debug Output**: All system events print to serial console at 115200 baud. Key debug patterns:
 - `═══` headers mark major state changes (valve cycle start, sequential mode)

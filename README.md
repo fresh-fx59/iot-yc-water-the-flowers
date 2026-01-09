@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.10.1** - OTA support added to test firmware for remote hardware debugging!
+**Version 1.10.2** - Shared filesystem structure preserves learning data when switching firmware modes!
 
 ## Core Watering Algorithm
 
@@ -190,15 +190,14 @@ platformio device monitor -b 115200 --raw
 
 **Build and upload:**
 ```bash
-# Upload filesystem first (for OTA web UI)
-platformio run -t uploadfs -e esp32-s3-devkitc-1-test
-
-# Upload firmware
+# Upload firmware (filesystem already contains test HTML)
 platformio run -t upload -e esp32-s3-devkitc-1-test
 
 # Monitor serial output
 platformio device monitor -b 115200 --raw
 ```
+
+**Note:** Both production and test firmware share the same filesystem. Upload filesystem once with production firmware, then switch modes without re-uploading filesystem to preserve learning data.
 
 **Features:**
 - Interactive serial menu (press `H` for help)
@@ -239,13 +238,14 @@ platformio device monitor -b 115200 --raw
 
 ### Via USB Cable
 ```bash
-# Switch to test mode
-platformio run -t uploadfs -e esp32-s3-devkitc-1-test  # Upload test web UI
-platformio run -t upload -e esp32-s3-devkitc-1-test    # Upload firmware
+# Switch to test mode (firmware only - preserves learning data!)
+platformio run -t upload -e esp32-s3-devkitc-1-test
 
-# Switch back to production
+# Switch back to production (firmware only - preserves learning data!)
 platformio run -t upload -e esp32-s3-devkitc-1
 ```
+
+**Important:** Only upload **firmware**, not filesystem! Both modes share the same filesystem, which contains your learning data.
 
 ### Via OTA (Remote)
 **Both firmware modes support OTA!** You can switch remotely:
@@ -266,6 +266,37 @@ platformio run -t upload -e esp32-s3-devkitc-1
 ✅ **Zero Risk** - Test code never runs in production
 ✅ **Better Stability** - Smaller binary = more reliable
 ✅ **Clear Separation** - Easier maintenance and debugging
+
+## Shared Filesystem & Learning Data Preservation
+
+**Both firmware modes share the same LittleFS filesystem:**
+```
+/web/
+  ├── prod/                # Production UI
+  │   ├── index.html
+  │   ├── css/style.css
+  │   └── js/app.js
+  └── test/                # Test mode UI
+      ├── index.html
+      └── firmware.html
+/learning_data_v1.8.7.json  # Learning data (preserved!)
+```
+
+**Key Benefits:**
+- ✅ **Upload filesystem ONCE** (with production firmware)
+- ✅ **Switch modes anytime** without losing learning data
+- ✅ **Learning data persists** across firmware switches
+- ⚠️ **Only re-upload filesystem** when updating web UI files
+
+**When to Upload Filesystem:**
+- Initial deployment
+- Web UI updates (HTML/CSS/JS changes)
+- After factory reset / flash erase
+
+**When NOT to Upload Filesystem:**
+- Switching between production/test modes
+- Firmware updates only
+- Any time you want to preserve learning data
 
 ---
 
@@ -765,6 +796,6 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.10.1
+**Version:** 1.10.2
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

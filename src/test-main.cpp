@@ -492,7 +492,7 @@ void handleOTAPage() {
   if (!otaServer.authenticate(OTA_USER, OTA_PASSWORD)) {
     return otaServer.requestAuthentication();
   }
-  serveFile("/test/firmware.html", "text/html");
+  serveFile("/web/test/firmware.html", "text/html");
 }
 
 void handleOTAUpdate() {
@@ -523,7 +523,7 @@ void handleOTAUpdateComplete() {
 }
 
 void handleRoot() {
-  serveFile("/test/index.html", "text/html");
+  serveFile("/web/test/index.html", "text/html");
 }
 
 void handleDeviceInfo() {

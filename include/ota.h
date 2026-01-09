@@ -140,19 +140,19 @@ void setupOta() {
   // Serve index.html from root
   httpServer.on("/", HTTP_GET, []() {
     Serial.println("GET / requested");
-    serveFile("/web/index.html", "text/html");
+    serveFile("/web/prod/index.html", "text/html");
   });
 
   // Serve CSS
   httpServer.on("/css/style.css", HTTP_GET, []() {
     Serial.println("GET /css/style.css requested");
-    serveFile("/web/css/style.css", "text/css");
+    serveFile("/web/prod/css/style.css", "text/css");
   });
 
   // Serve JavaScript
   httpServer.on("/js/app.js", HTTP_GET, []() {
     Serial.println("GET /js/app.js requested");
-    serveFile("/web/js/app.js", "application/javascript");
+    serveFile("/web/prod/js/app.js", "application/javascript");
   });
 
   // Firmware update page

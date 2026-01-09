@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.10.4";
+const char *VERSION = "watering_system_1.11.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -32,6 +32,15 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 #define RAIN_SENSOR4_PIN 11
 #define RAIN_SENSOR5_PIN 12
 #define RAIN_SENSOR6_PIN 13
+
+// DS3231 RTC I2C pins
+#define I2C_SDA_PIN 14
+#define I2C_SCL_PIN 3
+#define DS3231_I2C_ADDRESS 0x68
+
+// DS3231 Battery Measurement pins
+#define BATTERY_ADC_PIN 1        // ADC pin (reads voltage divider)
+#define BATTERY_CONTROL_PIN 2    // Controls transistor (HIGH = measure, LOW = off)
 
 // ============================================
 // System Constants
@@ -68,6 +77,15 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
     86400000; // 24 hours minimum between auto-watering attempts
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
+
+// ============================================
+// DS3231 Battery Voltage Calibration
+// ============================================
+// Adjust this value to match your multimeter reading
+// Formula: CALIBRATION_FACTOR = (multimeter_voltage / raw_reading)
+// Example: If multimeter shows 3.23V and program shows 3.02V:
+//          CALIBRATION_FACTOR = 3.23 / 3.02 = 1.0695
+const float BATTERY_VOLTAGE_CALIBRATION = 1.0695;
 
 // ============================================
 // Debug Configuration

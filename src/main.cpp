@@ -1,21 +1,24 @@
 /**
  * Smart Watering System - Main Entry Point
- * ESP32-S3-DevKitC-1
- * Version: 1.5.0 - Time-Based Learning
+ * ESP32-S3-N8R2
+ * Version: 1.10.4 - DS3231 RTC Integration
  *
  * Controls 6 valves, 6 rain sensors, and 1 water pump
  * Features time-based learning algorithm with automatic watering
  * Persists learning data to flash storage
+ * Uses DS3231 RTC as source of truth for time
  */
 
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <LittleFS.h>
+#include <Wire.h>
 #include <time.h>
 
 // Project headers
 #include <config.h>
+#include <DS3231RTC.h>
 #include <ValveController.h>
 #include <WateringSystem.h>
 #include <NetworkManager.h>
@@ -32,29 +35,43 @@ PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
 
 // ============================================
-// NTP Time Synchronization
+// DS3231 RTC Initialization
 // ============================================
-void syncTime() {
-    DebugHelper::debug("Synchronizing time with NTP server...");
+void initializeRTC() {
+    DebugHelper::debug("Initializing DS3231 RTC...");
 
-    // Configure time with NTP server
-    // GMT+3 (Moscow time) with daylight saving time offset
-    configTime(3 * 3600, 0, "pool.ntp.org", "time.nist.gov");
-
-    // Wait for time to be set
-    struct tm timeinfo;
-    int retries = 0;
-    while (!getLocalTime(&timeinfo) && retries < 10) {
-        delay(1000);
-        retries++;
+    // Initialize DS3231
+    if (!DS3231RTC::init()) {
+        DebugHelper::debugImportant("❌ DS3231 initialization failed!");
+        DebugHelper::debugImportant("   System will continue but time may be incorrect");
+        return;
     }
 
-    if (getLocalTime(&timeinfo)) {
+    // Read and display current time
+    struct tm timeinfo;
+    if (DS3231RTC::getLocalTime(&timeinfo)) {
         char buffer[30];
-        strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &timeinfo);
-        DebugHelper::debug("✓ Time synchronized: " + String(buffer));
+        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
+        DebugHelper::debug("✓ DS3231 Time: " + String(buffer));
+
+        // Read and display temperature
+        float temp = DS3231RTC::getTemperature();
+        char tempBuffer[20];
+        snprintf(tempBuffer, sizeof(tempBuffer), "%.2f °C", temp);
+        DebugHelper::debug("✓ DS3231 Temperature: " + String(tempBuffer));
+
+        // Read and display battery voltage
+        float battery = DS3231RTC::getBatteryVoltage();
+        char batteryBuffer[30];
+        snprintf(batteryBuffer, sizeof(batteryBuffer), "%.3f V", battery);
+        DebugHelper::debug("✓ DS3231 Battery: " + String(batteryBuffer));
+
+        // Warn if battery is low
+        if (battery < 2.5) {
+            DebugHelper::debugImportant("⚠️ DS3231 battery low (" + String(batteryBuffer) + ") - replace soon!");
+        }
     } else {
-        DebugHelper::debugImportant("⚠️ Time sync failed - will retry on first watering");
+        DebugHelper::debugImportant("⚠️ Failed to read time from DS3231");
     }
 }
 
@@ -85,11 +102,23 @@ void setup() {
     DebugHelper::debug("=================================");
     DebugHelper::debug("🚀 BOOT START");
     DebugHelper::debug("Smart Watering System");
-    DebugHelper::debug("Platform: ESP32-S3-DevKitC-1");
+    DebugHelper::debug("Platform: ESP32-S3-N8R2");
     DebugHelper::debug("Version: " + String(VERSION));
     DebugHelper::debug("Device ID: " + String(YC_DEVICE_ID));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
+
+    // Initialize battery measurement pins
+    pinMode(BATTERY_CONTROL_PIN, OUTPUT);
+    digitalWrite(BATTERY_CONTROL_PIN, LOW);  // Transistor OFF by default
+    pinMode(BATTERY_ADC_PIN, INPUT);
+
+    // Configure ADC for battery measurement
+    analogReadResolution(12);        // 12-bit resolution (0-4095)
+    analogSetAttenuation(ADC_11db);  // 0-3.3V range
+
+    // Initialize DS3231 RTC (source of truth for time)
+    initializeRTC();
 
     // Initialize LittleFS for data persistence
     DebugHelper::debug("Initializing LittleFS...");
@@ -111,32 +140,23 @@ void setup() {
     NetworkManager::setWateringSystem(&wateringSystem);
     NetworkManager::init();
 
+    // IDEMPOTENT MIGRATION: Delete old learning data file (if exists)
+    if (LittleFS.exists(LEARNING_DATA_FILE_OLD)) {
+        DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILE_OLD));
+        LittleFS.remove(LEARNING_DATA_FILE_OLD);
+    }
+
+    // Load learning data (DS3231 provides time, no WiFi dependency)
+    if (!wateringSystem.loadLearningData()) {
+        DebugHelper::debugImportant("⚠️  No saved learning data found - will calibrate on first watering");
+    }
+
     // Connect to WiFi
     NetworkManager::connectWiFi();
 
+    // Connect to MQTT (if WiFi available)
     if (NetworkManager::isWiFiConnected()) {
-        // Synchronize time with NTP
-        syncTime();
-
-        // IDEMPOTENT MIGRATION: Delete old learning data file (if exists)
-        if (LittleFS.exists(LEARNING_DATA_FILE_OLD)) {
-            DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILE_OLD));
-            LittleFS.remove(LEARNING_DATA_FILE_OLD);
-        }
-
-        // Load learning data AFTER NTP sync (needs real time for proper timestamp conversion)
-        if (!wateringSystem.loadLearningData()) {
-            DebugHelper::debugImportant("⚠️  No saved learning data found - will calibrate on first watering");
-        }
-
-        // Connect to MQTT
         NetworkManager::connectMQTT();
-    } else {
-        // No WiFi - load learning data without real time (will use millis fallback)
-        DebugHelper::debugImportant("⚠️  Loading learning data without NTP sync");
-        if (!wateringSystem.loadLearningData()) {
-            DebugHelper::debugImportant("⚠️  No saved learning data found or load failed");
-        }
     }
 
     // CRITICAL: Set watering system reference for web API

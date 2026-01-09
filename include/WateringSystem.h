@@ -5,6 +5,7 @@
 #include "TelegramNotifier.h"
 #include "ValveController.h"
 #include "config.h"
+#include "DS3231RTC.h"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -255,7 +256,7 @@ inline void WateringSystem::init() {
   DebugHelper::debugImportant("✓ WateringSystem initialized");
   publishStateChange("system", "initialized");
 
-  // Note: loadLearningData() is called from main.cpp after NTP sync
+  // Note: loadLearningData() is called from main.cpp after DS3231 RTC init
   // This ensures real time is available for proper timestamp conversion
 }
 
@@ -289,9 +290,9 @@ inline bool WateringSystem::saveLearningData() {
     valveObj["intervalMultiplier"] = valve->intervalMultiplier;
   }
 
-  // Save current millis() and real time as reference points
+  // Save current millis() and DS3231 RTC time as reference points
   doc["savedAtMillis"] = millis();
-  doc["savedAtRealTime"] = (unsigned long)time(nullptr);
+  doc["savedAtRealTime"] = (unsigned long)DS3231RTC::getTime();
 
   // Open file for writing
   File file = LittleFS.open(LEARNING_DATA_FILE, "w");
@@ -343,9 +344,9 @@ inline bool WateringSystem::loadLearningData() {
   unsigned long savedAtMillis = doc["savedAtMillis"] | 0;
   unsigned long savedAtRealTime = doc["savedAtRealTime"] | 0;
   unsigned long currentMillis = millis();
-  time_t currentRealTime = time(nullptr);
+  time_t currentRealTime = DS3231RTC::getTime();
 
-  // Calculate time offset using real time (if available) or millis()
+  // Calculate time offset using DS3231 RTC time (always available)
   unsigned long timeOffsetMs = 0;
 
   if (savedAtRealTime > 0 && currentRealTime > 1000000000) {
@@ -1281,10 +1282,10 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     return;
   }
 
-  // Get current time
+  // Get current time from DS3231 RTC
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    DebugHelper::debugImportant("❌ Cannot send schedule: Time not synced - "
+  if (!DS3231RTC::getLocalTime(&timeinfo)) {
+    DebugHelper::debugImportant("❌ Cannot send schedule: DS3231 RTC error - "
                                 "will retry on next watering");
     return;
   }
@@ -1293,7 +1294,7 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
   DebugHelper::flushBuffer();
 
   unsigned long currentTime = millis();
-  time_t now = time(nullptr);
+  time_t now = DS3231RTC::getTime();
 
   // Build schedule data for all valves (4 columns: tray, planned, duration,
   // cycle)

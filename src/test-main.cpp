@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <WebSocketsServer.h>
 #include <Update.h>
 #include <LittleFS.h>
 #include <secret.h>
@@ -10,6 +11,47 @@
 void printMenu();
 void setupOTA();
 void handleOTA();
+void webLog(const String& message);
+
+// WebSocket server on port 81
+WebSocketsServer webSocket = WebSocketsServer(81);
+
+// Command queue for WebSocket commands
+char pendingCommand = '\0';
+
+// Helper function to log to both Serial and WebSocket
+void webLog(const String& message) {
+  Serial.println(message);
+  String msg = message; // Create non-const copy
+  webSocket.broadcastTXT(msg);
+}
+
+// WebSocket event handler
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] WebSocket Disconnected\n", num);
+      break;
+    case WStype_CONNECTED:
+      {
+        IPAddress ip = webSocket.remoteIP(num);
+        Serial.printf("[%u] WebSocket Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
+        webSocket.sendTXT(num, "✓ Connected to ESP32 Hardware Test");
+      }
+      break;
+    case WStype_TEXT:
+      {
+        // Command received from web dashboard
+        String cmd = String((char*)payload);
+        cmd.trim();
+        if (cmd.length() == 1) {
+          pendingCommand = cmd.charAt(0);
+          Serial.printf("[WebSocket] Command queued: %c\n", pendingCommand);
+        }
+      }
+      break;
+  }
+}
 
 // Pin definitions for ESP32-S3-DevKitC-1
 #define LED_PIN 2  // Built-in LED
@@ -118,15 +160,23 @@ void setup() {
     Serial.println("\n✓ WiFi Connected!");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
-    Serial.print("OTA Web Interface: http://");
-    Serial.println(WiFi.localIP());
+    Serial.print("Web Dashboard: http://");
+    Serial.print(WiFi.localIP());
+    Serial.println("/dashboard");
+    Serial.print("OTA Interface: http://");
+    Serial.print(WiFi.localIP());
     Serial.println("/firmware");
 
-    // Setup OTA
+    // Setup OTA and WebSocket
     setupOTA();
+
+    // Start WebSocket server
+    webSocket.begin();
+    webSocket.onEvent(webSocketEvent);
+    Serial.println("✓ WebSocket server started on port 81");
   } else {
     Serial.println("\n✗ WiFi Connection Failed!");
-    Serial.println("OTA will not be available.");
+    Serial.println("OTA and WebSocket will not be available.");
     Serial.println("Test mode will work without WiFi.");
   }
   Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
@@ -534,8 +584,13 @@ void handleDeviceInfo() {
   otaServer.send(200, "application/json", json);
 }
 
+void handleDashboard() {
+  serveFile("/web/test/dashboard.html", "text/html");
+}
+
 void setupOTA() {
   otaServer.on("/", HTTP_GET, handleRoot);
+  otaServer.on("/dashboard", HTTP_GET, handleDashboard);
   otaServer.on("/firmware", HTTP_GET, handleOTAPage);
   otaServer.on("/api/info", HTTP_GET, handleDeviceInfo);
   otaServer.on("/update", HTTP_POST, handleOTAUpdateComplete, handleOTAUpdate);
@@ -544,9 +599,10 @@ void setupOTA() {
 }
 
 void loop() {
-  // Handle OTA requests (if WiFi connected)
+  // Handle OTA requests and WebSocket (if WiFi connected)
   if (WiFi.status() == WL_CONNECTED) {
     otaServer.handleClient();
+    webSocket.loop();
   }
 
   // Handle monitoring modes
@@ -557,18 +613,29 @@ void loop() {
     monitorWaterLevelSensor();
   }
 
-  // Check for serial input
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
-    
+  // Process command from WebSocket or Serial
+  char cmd = '\0';
+
+  // Check for WebSocket command first
+  if (pendingCommand != '\0') {
+    cmd = pendingCommand;
+    pendingCommand = '\0';
+  }
+  // Then check for serial input
+  else if (Serial.available() > 0) {
+    cmd = Serial.read();
+
     // Clear any remaining characters in buffer
     while (Serial.available() > 0) {
       Serial.read();
     }
-    
-    Serial.println("\nCommand: " + String(cmd));
-    Serial.println();
-    
+  }
+
+  // Process command if we have one
+  if (cmd != '\0') {
+    webLog("\nCommand: " + String(cmd));
+    webLog("");
+
     switch (cmd) {
       case 'L':
       case 'l':

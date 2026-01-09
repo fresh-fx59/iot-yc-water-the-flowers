@@ -11,7 +11,7 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.10.2 (defined in config.h:10)
+- Current Version: 1.10.3 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -38,12 +38,12 @@ platformio device monitor -b 115200 --raw
 ```
 
 **Test Firmware Features:**
+- **Web Dashboard** at `http://<device-ip>/dashboard` with real-time output & controls
 - Test all hardware components (pump, valves, rain sensors)
 - Test DS3231 RTC (I2C at GPIO 14/3)
 - Test water level sensor (GPIO 19)
 - Interactive serial menu (press 'H' for help)
-- **WiFi + OTA support** for remote firmware switching
-- Simple web interface at `http://<device-ip>/`
+- **WiFi + OTA + WebSocket support** for remote firmware switching
 - No MQTT/Telegram/production watering logic
 
 **Important:** Both production and test firmware share the same filesystem. Upload filesystem once, then switch modes without re-uploading to preserve learning data.

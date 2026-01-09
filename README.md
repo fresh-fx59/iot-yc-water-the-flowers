@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.10.2** - Shared filesystem structure preserves learning data when switching firmware modes!
+**Version 1.10.3** - Interactive web dashboard for test firmware with real-time output and command buttons!
 
 ## Core Watering Algorithm
 
@@ -200,13 +200,18 @@ platformio device monitor -b 115200 --raw
 **Note:** Both production and test firmware share the same filesystem. Upload filesystem once with production firmware, then switch modes without re-uploading filesystem to preserve learning data.
 
 **Features:**
+- **🌐 Web Dashboard** at `http://<device-ip>/dashboard`
+  - Real-time serial output via WebSocket
+  - Interactive test buttons for all commands
+  - Auto-scrolling console with color-coded output
+  - Connection status indicator
+  - No serial cable needed for testing!
 - Interactive serial menu (press `H` for help)
 - Test all hardware: LED, pump, 6 valves, 6 rain sensors
 - Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL)
 - Test water level sensor (GPIO 19)
 - I2C bus scanner
 - **WiFi & OTA support** - remotely switch back to production firmware
-- Web interface at `http://<device-ip>/` (no MQTT/Telegram)
 
 ### Test Menu Commands
 
@@ -796,6 +801,6 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.10.2
+**Version:** 1.10.3
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

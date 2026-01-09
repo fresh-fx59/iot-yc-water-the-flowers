@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hardware Test Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+      padding: 15px 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #95a5a6;
+      animation: pulse 2s infinite;
+    }
+    .status-indicator.connected {
+      background: #27ae60;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 300px;
+      background: #2c2c2c;
+      padding: 20px;
+      overflow-y: auto;
+      border-right: 1px solid #3a3a3a;
+    }
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+    }
+    .section {
+      margin-bottom: 25px;
+    }
+    .section h3 {
+      color: #e67e22;
+      margin-bottom: 12px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .btn-group {
+      display: grid;
+      gap: 8px;
+    }
+    .btn {
+      background: #34495e;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 6px;
+      color: #ecf0f1;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+      text-align: left;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .btn:hover {
+      background: #4a6278;
+      transform: translateY(-1px);
+    }
+    .btn:active {
+      transform: translateY(0);
+    }
+    .btn.primary {
+      background: #e67e22;
+    }
+    .btn.primary:hover {
+      background: #d35400;
+    }
+    .btn.danger {
+      background: #c0392b;
+    }
+    .btn.danger:hover {
+      background: #a93226;
+    }
+    .btn.success {
+      background: #27ae60;
+    }
+    .btn.success:hover {
+      background: #229954;
+    }
+    .btn-key {
+      background: #555;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: monospace;
+    }
+    .console-container {
+      flex: 1;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .console-header {
+      background: #1a1a1a;
+      padding: 12px 20px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .console-header h2 {
+      font-size: 16px;
+      color: #e67e22;
+    }
+    .console-output {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #0f0;
+    }
+    .console-output::-webkit-scrollbar {
+      width: 8px;
+    }
+    .console-output::-webkit-scrollbar-track {
+      background: #1a1a1a;
+    }
+    .console-output::-webkit-scrollbar-thumb {
+      background: #555;
+      border-radius: 4px;
+    }
+    .console-output::-webkit-scrollbar-thumb:hover {
+      background: #777;
+    }
+    .log-line {
+      margin-bottom: 4px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .log-error {
+      color: #e74c3c;
+    }
+    .log-success {
+      color: #2ecc71;
+    }
+    .log-warning {
+      color: #f39c12;
+    }
+    .log-info {
+      color: #3498db;
+    }
+    .clear-btn {
+      background: #555;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .clear-btn:hover {
+      background: #666;
+    }
+    .grid-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+    .grid-3 {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #3a3a3a;
+      }
+      .container {
+        flex-direction: column;
+      }
+      .grid-2, .grid-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🔧 Hardware Test Dashboard</h1>
+    <div class="status">
+      <div class="status-indicator" id="status"></div>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <div class="section">
+        <h3>LED & Pump</h3>
+        <div class="btn-group">
+          <button class="btn" onclick="sendCommand('L')">
+            <span>Toggle LED</span>
+            <span class="btn-key">L</span>
+          </button>
+          <button class="btn" onclick="sendCommand('P')">
+            <span>Toggle Pump</span>
+            <span class="btn-key">P</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Individual Valves</h3>
+        <div class="btn-group grid-3">
+          <button class="btn" onclick="sendCommand('1')">Valve 1</button>
+          <button class="btn" onclick="sendCommand('2')">Valve 2</button>
+          <button class="btn" onclick="sendCommand('3')">Valve 3</button>
+          <button class="btn" onclick="sendCommand('4')">Valve 4</button>
+          <button class="btn" onclick="sendCommand('5')">Valve 5</button>
+          <button class="btn" onclick="sendCommand('6')">Valve 6</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>All Valves</h3>
+        <div class="btn-group grid-2">
+          <button class="btn success" onclick="sendCommand('A')">All ON</button>
+          <button class="btn danger" onclick="sendCommand('Z')">All OFF</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Rain Sensors</h3>
+        <div class="btn-group">
+          <button class="btn" onclick="sendCommand('R')">
+            <span>Read Once</span>
+            <span class="btn-key">R</span>
+          </button>
+          <button class="btn" onclick="sendCommand('M')">
+            <span>Monitor Continuous</span>
+            <span class="btn-key">M</span>
+          </button>
+          <button class="btn" onclick="sendCommand('S')">
+            <span>Stop Monitoring</span>
+            <span class="btn-key">S</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Water Level Sensor</h3>
+        <div class="btn-group">
+          <button class="btn" onclick="sendCommand('W')">
+            <span>Read Once</span>
+            <span class="btn-key">W</span>
+          </button>
+          <button class="btn" onclick="sendCommand('N')">
+            <span>Monitor Continuous</span>
+            <span class="btn-key">N</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>DS3231 RTC</h3>
+        <div class="btn-group">
+          <button class="btn" onclick="sendCommand('T')">
+            <span>Read Time/Temp</span>
+            <span class="btn-key">T</span>
+          </button>
+          <button class="btn" onclick="sendCommand('I')">
+            <span>Scan I2C Bus</span>
+            <span class="btn-key">I</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>System</h3>
+        <div class="btn-group">
+          <button class="btn primary" onclick="sendCommand('F')">
+            <span>Full Test Sequence</span>
+            <span class="btn-key">F</span>
+          </button>
+          <button class="btn danger" onclick="sendCommand('X')">
+            <span>⚠️ Emergency Stop</span>
+            <span class="btn-key">X</span>
+          </button>
+          <button class="btn" onclick="sendCommand('H')">
+            <span>Show Menu</span>
+            <span class="btn-key">H</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-content">
+      <div class="console-container">
+        <div class="console-header">
+          <h2>Serial Console Output</h2>
+          <button class="clear-btn" onclick="clearConsole()">Clear</button>
+        </div>
+        <div class="console-output" id="console">
+          <div class="log-line log-info">Connecting to device...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let reconnectInterval = null;
+
+    function connect() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.hostname}:81/`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = function() {
+        console.log('WebSocket connected');
+        document.getElementById('status').classList.add('connected');
+        document.getElementById('statusText').textContent = 'Connected';
+        clearInterval(reconnectInterval);
+        addLog('✓ Connected to device', 'success');
+      };
+
+      ws.onmessage = function(event) {
+        addLog(event.data);
+      };
+
+      ws.onerror = function(error) {
+        console.error('WebSocket error:', error);
+        addLog('WebSocket error occurred', 'error');
+      };
+
+      ws.onclose = function() {
+        console.log('WebSocket disconnected');
+        document.getElementById('status').classList.remove('connected');
+        document.getElementById('statusText').textContent = 'Disconnected';
+        addLog('✗ Disconnected from device', 'error');
+
+        // Attempt to reconnect every 3 seconds
+        if (!reconnectInterval) {
+          reconnectInterval = setInterval(function() {
+            addLog('Attempting to reconnect...', 'warning');
+            connect();
+          }, 3000);
+        }
+      };
+    }
+
+    function sendCommand(cmd) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(cmd);
+        addLog(`> Command sent: ${cmd}`, 'info');
+      } else {
+        addLog('✗ Not connected to device', 'error');
+      }
+    }
+
+    function addLog(text, type = '') {
+      const console = document.getElementById('console');
+      const line = document.createElement('div');
+      line.className = 'log-line';
+      if (type) line.classList.add('log-' + type);
+
+      // Escape HTML
+      const div = document.createElement('div');
+      div.textContent = text;
+      line.innerHTML = div.innerHTML;
+
+      console.appendChild(line);
+
+      // Auto-scroll to bottom
+      console.scrollTop = console.scrollHeight;
+
+      // Limit console to 1000 lines
+      while (console.children.length > 1000) {
+        console.removeChild(console.firstChild);
+      }
+    }
+
+    function clearConsole() {
+      document.getElementById('console').innerHTML = '';
+      addLog('Console cleared', 'info');
+    }
+
+    // Connect on page load
+    connect();
+  </script>
+</body>
+</html>

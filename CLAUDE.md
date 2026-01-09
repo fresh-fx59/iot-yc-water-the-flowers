@@ -11,7 +11,7 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
 - Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.10.0 (defined in config.h:10)
+- Current Version: 1.10.1 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -30,6 +30,9 @@ platformio device monitor -b 115200 --raw
 
 ### Hardware Test Build/Upload
 ```bash
+# Upload filesystem first (contains OTA web UI)
+platformio run -t uploadfs -e esp32-s3-devkitc-1-test
+
 # Build and upload test firmware
 platformio run -t upload -e esp32-s3-devkitc-1-test
 
@@ -42,7 +45,9 @@ platformio device monitor -b 115200 --raw
 - Test DS3231 RTC (I2C at GPIO 14/3)
 - Test water level sensor (GPIO 19)
 - Interactive serial menu (press 'H' for help)
-- No WiFi/MQTT/production logic - pure hardware testing
+- **WiFi + OTA support** for remote firmware switching
+- Simple web interface at `http://<device-ip>/`
+- No MQTT/Telegram/production watering logic
 
 ### Filesystem Operations
 ```bash
@@ -91,10 +96,16 @@ include/
 
 src/
   ├── main.cpp                      # Production firmware entry point (~165 lines)
-  └── test-main.cpp                 # Hardware test firmware (~550 lines)
+  └── test-main.cpp                 # Hardware test firmware with OTA (~650 lines)
 
 data/
-  └── web/                          # Web UI files (served via LittleFS)
+  ├── web/                          # Production web UI (served via LittleFS)
+  │   ├── index.html
+  │   ├── css/style.css
+  │   └── js/app.js
+  └── test/                         # Test mode web UI
+      ├── index.html                # Test mode home page
+      └── firmware.html             # OTA upload page
 
 platformio.ini                      # Two build environments:
                                     # - esp32-s3-devkitc-1 (production)

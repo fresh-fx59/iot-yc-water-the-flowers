@@ -2,7 +2,7 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.10.0** - Two separate firmware builds: production and hardware testing (DS3231 RTC + water level sensor support)!
+**Version 1.10.1** - OTA support added to test firmware for remote hardware debugging!
 
 ## Core Watering Algorithm
 
@@ -168,7 +168,7 @@ This project uses **two separate firmware builds** for clean separation between 
 | Environment | Source File | Purpose | Flash Usage |
 |------------|-------------|---------|-------------|
 | `esp32-s3-devkitc-1` | `src/main.cpp` | Production watering system | ~80% (1055 KB) |
-| `esp32-s3-devkitc-1-test` | `src/test-main.cpp` | Hardware testing only | ~24% (308 KB) |
+| `esp32-s3-devkitc-1-test` | `src/test-main.cpp` | Hardware testing with OTA | ~63% (824 KB) |
 
 ## Production Firmware
 
@@ -190,7 +190,13 @@ platformio device monitor -b 115200 --raw
 
 **Build and upload:**
 ```bash
+# Upload filesystem first (for OTA web UI)
+platformio run -t uploadfs -e esp32-s3-devkitc-1-test
+
+# Upload firmware
 platformio run -t upload -e esp32-s3-devkitc-1-test
+
+# Monitor serial output
 platformio device monitor -b 115200 --raw
 ```
 
@@ -200,7 +206,8 @@ platformio device monitor -b 115200 --raw
 - Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL)
 - Test water level sensor (GPIO 19)
 - I2C bus scanner
-- No WiFi/MQTT/production logic
+- **WiFi & OTA support** - remotely switch back to production firmware
+- Web interface at `http://<device-ip>/` (no MQTT/Telegram)
 
 ### Test Menu Commands
 
@@ -233,18 +240,24 @@ platformio device monitor -b 115200 --raw
 ### Via USB Cable
 ```bash
 # Switch to test mode
-platformio run -t upload -e esp32-s3-devkitc-1-test
+platformio run -t uploadfs -e esp32-s3-devkitc-1-test  # Upload test web UI
+platformio run -t upload -e esp32-s3-devkitc-1-test    # Upload firmware
 
 # Switch back to production
 platformio run -t upload -e esp32-s3-devkitc-1
 ```
 
 ### Via OTA (Remote)
+**Both firmware modes support OTA!** You can switch remotely:
+
 1. Build firmware: `platformio run -e <environment>`
-2. Access: `http://<device-ip>/firmware` (login: admin/OTA_PASSWORD)
+2. Access OTA page:
+   - Production mode: `http://<device-ip>/firmware` (login required)
+   - Test mode: `http://<device-ip>/firmware` (login required)
 3. Upload firmware file:
-   - Production: `.pio/build/esp32-s3-devkitc-1/firmware.bin`
-   - Test: `.pio/build/esp32-s3-devkitc-1-test/firmware.bin`
+   - To switch to production: `.pio/build/esp32-s3-devkitc-1/firmware.bin`
+   - To switch to test: `.pio/build/esp32-s3-devkitc-1-test/firmware.bin`
+4. Device automatically reboots into new firmware
 
 ## Why Two Separate Builds?
 
@@ -752,6 +765,6 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.10.0
+**Version:** 1.10.1
 **Platform:** ESP32-S3-DevKitC-1
 **Framework:** Arduino + PlatformIO

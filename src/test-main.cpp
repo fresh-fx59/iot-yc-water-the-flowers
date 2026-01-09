@@ -1,8 +1,15 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Update.h>
+#include <LittleFS.h>
+#include <secret.h>
 
 // Forward declarations
 void printMenu();
+void setupOTA();
+void handleOTA();
 
 // Pin definitions for ESP32-S3-DevKitC-1
 #define LED_PIN 2  // Built-in LED
@@ -77,6 +84,53 @@ void setup() {
 
   Serial.println("Hardware initialized. All outputs set to LOW/OFF.");
   Serial.println();
+
+  // Initialize LittleFS for web UI
+  Serial.println("Initializing LittleFS...");
+  if (!LittleFS.begin(false)) {
+    Serial.println("⚠️ LittleFS mount failed, formatting...");
+    if (!LittleFS.begin(true)) {
+      Serial.println("❌ LittleFS format failed!");
+    } else {
+      Serial.println("✓ LittleFS formatted and mounted");
+    }
+  } else {
+    Serial.println("✓ LittleFS mounted successfully");
+  }
+
+  // Connect to WiFi for OTA support
+  Serial.println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  Serial.println("Connecting to WiFi for OTA support...");
+  Serial.print("SSID: ");
+  Serial.println(SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(SSID, SSID_PASSWORD);
+
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✓ WiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("OTA Web Interface: http://");
+    Serial.println(WiFi.localIP());
+    Serial.println("/firmware");
+
+    // Setup OTA
+    setupOTA();
+  } else {
+    Serial.println("\n✗ WiFi Connection Failed!");
+    Serial.println("OTA will not be available.");
+    Serial.println("Test mode will work without WiFi.");
+  }
+  Serial.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
   printMenu();
 }
 
@@ -419,7 +473,82 @@ void emergencyStop() {
   printSeparator();
 }
 
+// ============================================
+// OTA Web Server
+// ============================================
+WebServer otaServer(80);
+
+void serveFile(const char* path, const char* contentType) {
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    otaServer.send(404, "text/plain", "File not found");
+    return;
+  }
+  otaServer.streamFile(file, contentType);
+  file.close();
+}
+
+void handleOTAPage() {
+  if (!otaServer.authenticate(OTA_USER, OTA_PASSWORD)) {
+    return otaServer.requestAuthentication();
+  }
+  serveFile("/test/firmware.html", "text/html");
+}
+
+void handleOTAUpdate() {
+  HTTPUpload& upload = otaServer.upload();
+
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.printf("OTA Update: %s\n", upload.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Update.printError(Serial);
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.printf("OTA Update Success: %u bytes\n", upload.totalSize);
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+
+void handleOTAUpdateComplete() {
+  otaServer.send(200, "text/plain", "OK");
+  delay(1000);
+  ESP.restart();
+}
+
+void handleRoot() {
+  serveFile("/test/index.html", "text/html");
+}
+
+void handleDeviceInfo() {
+  String json = "{";
+  json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"heap\":" + String(ESP.getFreeHeap() / 1024);
+  json += "}";
+  otaServer.send(200, "application/json", json);
+}
+
+void setupOTA() {
+  otaServer.on("/", HTTP_GET, handleRoot);
+  otaServer.on("/firmware", HTTP_GET, handleOTAPage);
+  otaServer.on("/api/info", HTTP_GET, handleDeviceInfo);
+  otaServer.on("/update", HTTP_POST, handleOTAUpdateComplete, handleOTAUpdate);
+  otaServer.begin();
+  Serial.println("✓ OTA Web Server started");
+}
+
 void loop() {
+  // Handle OTA requests (if WiFi connected)
+  if (WiFi.status() == WL_CONNECTED) {
+    otaServer.handleClient();
+  }
+
   // Handle monitoring modes
   if (monitorMode) {
     monitorRainSensors();

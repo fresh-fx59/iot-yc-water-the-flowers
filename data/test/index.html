@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hardware Test Mode</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #e67e22;
+      margin-top: 0;
+    }
+    .warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    a {
+      display: inline-block;
+      background: #e67e22;
+      color: white;
+      padding: 12px 30px;
+      text-decoration: none;
+      border-radius: 5px;
+      margin: 10px 5px;
+    }
+    a:hover {
+      background: #d35400;
+    }
+    .info {
+      background: #d1ecf1;
+      border: 1px solid #17a2b8;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔧 Hardware Test Mode</h1>
+    <div class="warning">
+      <strong>⚠️ This device is in HARDWARE TEST MODE</strong><br>
+      Normal watering operations are disabled. Use serial console for hardware testing.
+    </div>
+    <div class="info">
+      <strong>📍 Device Info:</strong><br>
+      IP: <span id="ip">Loading...</span><br>
+      Free Heap: <span id="heap">Loading...</span> KB<br>
+      Serial: 115200 baud (press 'H' for test menu)
+    </div>
+    <a href="/firmware">📦 Upload Firmware (OTA)</a>
+  </div>
+  <script>
+    fetch('/api/info')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('ip').textContent = data.ip;
+        document.getElementById('heap').textContent = data.heap;
+      })
+      .catch(() => {
+        document.getElementById('ip').textContent = 'N/A';
+        document.getElementById('heap').textContent = 'N/A';
+      });
+  </script>
+</body>
+</html>

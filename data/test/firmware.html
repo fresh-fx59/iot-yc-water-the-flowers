@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OTA Update - Test Mode</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #e67e22;
+      margin-top: 0;
+    }
+    .warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    .info {
+      background: #d1ecf1;
+      border: 1px solid #17a2b8;
+      padding: 15px;
+      border-radius: 5px;
+      margin: 20px 0;
+    }
+    input[type="file"] {
+      margin: 20px 0;
+    }
+    button {
+      background: #e67e22;
+      color: white;
+      padding: 12px 30px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #d35400;
+    }
+    #progress {
+      display: none;
+      margin: 20px 0;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 30px;
+      background: #e0e0e0;
+      border-radius: 15px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #28a745;
+      width: 0%;
+      transition: width 0.3s;
+      line-height: 30px;
+      text-align: center;
+      color: white;
+    }
+    code {
+      background: #f4f4f4;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔧 OTA Firmware Update</h1>
+    <div class="warning">
+      <strong>⚠️ TEST MODE ACTIVE</strong><br>
+      This device is running hardware test firmware. Upload production firmware to restore normal watering operations.
+    </div>
+    <div class="info">
+      <strong>📍 Device Info:</strong><br>
+      Mode: Hardware Testing<br>
+      IP: <span id="ip">Loading...</span><br>
+      Free Heap: <span id="heap">Loading...</span> KB
+    </div>
+    <form method="POST" action="/update" enctype="multipart/form-data" id="uploadForm">
+      <label><strong>Select Firmware (.bin):</strong></label><br>
+      <input type="file" name="update" accept=".bin" required><br>
+      <button type="submit">Upload & Update</button>
+    </form>
+    <div id="progress">
+      <p><strong>Uploading...</strong></p>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressBar">0%</div>
+      </div>
+    </div>
+    <div class="info" style="margin-top: 30px; font-size: 14px;">
+      <strong>💡 Firmware Locations:</strong><br>
+      • Production: <code>.pio/build/esp32-s3-devkitc-1/firmware.bin</code><br>
+      • Test: <code>.pio/build/esp32-s3-devkitc-1-test/firmware.bin</code>
+    </div>
+  </div>
+  <script>
+    // Load device info
+    fetch('/api/info')
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('ip').textContent = data.ip;
+        document.getElementById('heap').textContent = data.heap;
+      })
+      .catch(() => {
+        document.getElementById('ip').textContent = 'N/A';
+        document.getElementById('heap').textContent = 'N/A';
+      });
+
+    // Handle firmware upload
+    document.getElementById('uploadForm').addEventListener('submit', function(e) {
+      document.getElementById('progress').style.display = 'block';
+      let progressBar = document.getElementById('progressBar');
+      let xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+          let pct = (e.loaded / e.total) * 100;
+          progressBar.style.width = pct + '%';
+          progressBar.textContent = Math.round(pct) + '%';
+        }
+      });
+
+      xhr.addEventListener('load', function() {
+        if (xhr.status === 200) {
+          progressBar.style.width = '100%';
+          progressBar.textContent = '✓ Complete! Rebooting...';
+          setTimeout(function() {
+            window.location.href = '/';
+          }, 3000);
+        } else {
+          alert('Upload failed: ' + xhr.statusText);
+          document.getElementById('progress').style.display = 'none';
+        }
+      });
+
+      xhr.open('POST', '/update');
+      xhr.send(new FormData(e.target));
+      e.preventDefault();
+    });
+  </script>
+</body>
+</html>

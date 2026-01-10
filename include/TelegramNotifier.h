@@ -179,8 +179,8 @@ public:
 
     // Check for Telegram commands using long polling.
     // Returns the command string or an empty string if no new command is found.
-    // Used during boot countdown for /halt command.
-    static String checkForCommands(int &lastUpdateId) {
+    // timeoutSeconds: How long Telegram server should wait for a new message (0 = immediate return)
+    static String checkForCommands(int &lastUpdateId, int timeoutSeconds = 10) {
         if (!WiFi.isConnected()) {
             return "";
         }
@@ -189,13 +189,15 @@ public:
         WiFiClientSecure client;
         client.setInsecure();
 
-        // Build getUpdates URL with a long polling timeout of 10 seconds
+        // Build getUpdates URL with specified long polling timeout
         String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
                      "/getUpdates?offset=" + String(lastUpdateId) +
-                     "&timeout=10&allowed_updates=[\"message\"]";
+                     "&timeout=" + String(timeoutSeconds) + 
+                     "&allowed_updates=[\"message\"]";
 
         http.begin(client, url);
-        http.setTimeout(12000);  // HTTP client timeout: 12 seconds (must be > long poll timeout)
+        // HTTP timeout must be slightly longer than the Telegram long poll timeout
+        http.setTimeout((timeoutSeconds + 2) * 1000); 
         int httpCode = http.GET();
 
         if (httpCode == 200) {

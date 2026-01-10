@@ -40,14 +40,14 @@ int lastUpdateId = 0; // Tracks the last processed Telegram update ID to avoid r
 // ============================================ 
 // Telegram Command Handler
 // Processes incoming Telegram commands like /halt and /resume.
-// Sends appropriate responses and updates the system's halt mode status.
+// timeout: Long polling timeout in seconds (0 for immediate check)
 // ============================================ 
-void checkTelegramCommands() {
+void checkTelegramCommands(int timeout = 10) {
     if (!NetworkManager::isWiFiConnected()) {
         return;
     }
 
-    String command = TelegramNotifier::checkForCommands(lastUpdateId);
+    String command = TelegramNotifier::checkForCommands(lastUpdateId, timeout);
 
     if (command == "/halt" || command == "halt") {
         if (!wateringSystem.isHaltMode()) {
@@ -163,7 +163,7 @@ void bootCountdown() {
     DebugHelper::debug("   Send /halt via Telegram to enter firmware update mode");
 
     while (millis() - countdownStart < COUNTDOWN_DURATION) {
-        checkTelegramCommands();
+        checkTelegramCommands(0); // Use 0s timeout during boot to avoid blocking the countdown
         if (wateringSystem.isHaltMode()) {
             return; // Exit countdown if halt mode is activated
         }
@@ -225,6 +225,12 @@ void setup() {
     // Initialize network manager
     NetworkManager::setWateringSystem(&wateringSystem);
     NetworkManager::init();
+
+    // IDEMPOTENT MIGRATION: Delete old learning data file (if exists)
+    if (LittleFS.exists(LEARNING_DATA_FILE_OLD)) {
+        DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILE_OLD));
+        LittleFS.remove(LEARNING_DATA_FILE_OLD);
+    }
 
     // Load learning data (DS3231 provides time, no WiFi dependency)
     // Note: First boot will show VFS error log when file doesn't exist (harmless)

@@ -125,9 +125,29 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     int pumpTime = (currentTime - valve->wateringStartTime) / 1000;
                     DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
 
-                    // SAFETY: Immediately close valve and stop pump
-                    closeValve(valveIndex);
-                    updatePumpState();
+                    // Count how many valves are watering
+                    int wateringCount = 0;
+                    for (int i = 0; i < NUM_VALVES; i++) {
+                        if (valves[i]->phase == PHASE_WATERING) {
+                            wateringCount++;
+                        }
+                    }
+
+                    // New logic for single valve watering
+                    if (wateringCount == 1) {
+                        DebugHelper::debugImportant("✓ Single valve watering complete. Stopping pump and closing valve.");
+                        // SAFETY: Stop pump immediately and close valve
+                        digitalWrite(PUMP_PIN, LOW);
+                        pumpState = PUMP_OFF;
+                        statusLED.clear();
+                        statusLED.show();
+                        publishStateChange("pump", "off");
+                        closeValve(valveIndex);
+                    } else { // Existing logic for sequential watering
+                        // SAFETY: Immediately close valve and let updatePumpState handle the pump
+                        closeValve(valveIndex);
+                        updatePumpState();
+                    }
 
                     publishStateChange("valve" + String(valveIndex), "watering_complete");
                     valve->phase = PHASE_CLOSING_VALVE;  // Go to cleanup phase for learning data

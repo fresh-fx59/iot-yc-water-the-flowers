@@ -29,17 +29,19 @@
 #include <api_handlers.h>
 #include <ota.h>
 
-// ============================================
+// ============================================ 
 // Global Objects
-// ============================================
+// ============================================ 
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
-int lastUpdateId = 0; // Telegram update ID
+int lastUpdateId = 0; // Tracks the last processed Telegram update ID to avoid reprocessing old messages.
 
-// ============================================
+// ============================================ 
 // Telegram Command Handler
-// ============================================
+// Processes incoming Telegram commands like /halt and /resume.
+// Sends appropriate responses and updates the system's halt mode status.
+// ============================================ 
 void checkTelegramCommands() {
     if (!NetworkManager::isWiFiConnected()) {
         return;
@@ -78,9 +80,10 @@ void checkTelegramCommands() {
     }
 }
 
-// ============================================
+// ============================================ 
 // DS3231 RTC Initialization
-// ============================================
+// Professional approach: Set system time once at boot
+// ============================================ 
 void initializeRTC() {
     DebugHelper::debug("Initializing DS3231 RTC...");
 
@@ -114,9 +117,9 @@ void initializeRTC() {
     }
 }
 
-// ============================================
+// ============================================ 
 // API Handler Registration
-// ============================================
+// ============================================ 
 void registerApiHandlers() {
     Serial.println("Registering API handlers...");
     httpServer.on("/api/water", HTTP_GET, handleWaterApi);
@@ -127,9 +130,10 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/status");
 }
 
-// ============================================
+// ============================================ 
 // Boot Countdown for Emergency Halt
-// ============================================
+// Allows entering halt mode during the initial boot sequence.
+// ============================================ 
 void bootCountdown() {
     if (!NetworkManager::isWiFiConnected()) {
         DebugHelper::debug("⚠️ WiFi not connected - skipping countdown");
@@ -170,9 +174,9 @@ void bootCountdown() {
     DebugHelper::debug("✓ Countdown complete - normal operation mode");
 }
 
-// ============================================
+// ============================================ 
 // Setup Function
-// ============================================
+// ============================================ 
 void setup() {
     // Initialize serial
     Serial.begin(DEBUG_SERIAL_BAUDRATE);
@@ -242,24 +246,27 @@ void setup() {
     // Initialize OTA updates
     setupOta();
 
-    // ============================================
+    // ============================================ 
     // BOOT COUNTDOWN: 10-second emergency halt window
-    // ============================================
+    // ============================================ 
     bootCountdown();
 
     DebugHelper::debug("Setup completed - starting main loop");
 }
 
-// ============================================
+// ============================================ 
 // Boot Flag for First Loop
-// ============================================
+// ============================================ 
 bool firstLoop = true;
 
-// ============================================
+// ============================================ 
 // Main Loop
-// ============================================
+// Continuously monitors the system, processes watering logic, and handles
+// Telegram commands, especially during halt mode.
+// ============================================ 
 void loop() {
-    // If in halt mode, only check for telegram commands
+    // If in halt mode, only check for telegram commands and skip all other processing.
+    // This ensures responsiveness to the /resume command.
     if (wateringSystem.isHaltMode()) {
         checkTelegramCommands();
         delay(1000); // Check for commands every second

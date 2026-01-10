@@ -9,10 +9,10 @@
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
 
-// ============================================
+// ============================================ 
 // Telegram Notifier Class
 // Sends watering notifications via Telegram Bot API
-// ============================================
+// ============================================ 
 class TelegramNotifier {
 private:
     static String urlEncode(const String& str) {
@@ -177,8 +177,9 @@ public:
         sendMessage(message);
     }
 
-    // Check for Telegram commands (returns command string or empty)
-    // Used during boot countdown for /halt command
+    // Check for Telegram commands using long polling.
+    // Returns the command string or an empty string if no new command is found.
+    // Used during boot countdown for /halt command.
     static String checkForCommands(int &lastUpdateId) {
         if (!WiFi.isConnected()) {
             return "";
@@ -188,13 +189,13 @@ public:
         WiFiClientSecure client;
         client.setInsecure();
 
-        // Build getUpdates URL with offset
+        // Build getUpdates URL with a long polling timeout of 10 seconds
         String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
                      "/getUpdates?offset=" + String(lastUpdateId) +
-                     "&timeout=1&allowed_updates=[\"message\"]";
+                     "&timeout=10&allowed_updates=[\"message\"]";
 
         http.begin(client, url);
-        http.setTimeout(2000);  // 2 second timeout
+        http.setTimeout(12000);  // HTTP client timeout: 12 seconds (must be > long poll timeout)
         int httpCode = http.GET();
 
         if (httpCode == 200) {
@@ -219,10 +220,9 @@ public:
                         int textEnd = payload.indexOf("\"", textStart);
                         if (textEnd > textStart) {
                             String command = payload.substring(textStart, textEnd);
-
+                            
                             // Update lastUpdateId to avoid processing same message again
                             lastUpdateId = newUpdateId + 1;
-
                             http.end();
                             return command;
                         }
@@ -236,9 +236,9 @@ public:
     }
 };
 
-// ============================================
+// ============================================ 
 // Global Function for DebugHelper
-// ============================================
+// ============================================ 
 inline bool sendTelegramDebug(const String& message) {
     if (!WiFi.isConnected()) {
         return false; // Fail if no WiFi
@@ -282,4 +282,3 @@ inline bool sendTelegramDebug(const String& message) {
 }
 
 #endif // TELEGRAM_NOTIFIER_H
-

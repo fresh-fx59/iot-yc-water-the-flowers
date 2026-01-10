@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.12.4";
+const char *VERSION = "watering_system_1.12.5";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -63,7 +63,7 @@ const unsigned long VALVE_STABILIZATION_DELAY =
     500; // Wait 500ms for valve to open
 const unsigned long STATE_PUBLISH_INTERVAL =
     2000;                                      // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 20000; // Maximum watering time (20s) - REDUCED FOR SAFETY
+const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - REDUCED FOR SAFETY
 const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 

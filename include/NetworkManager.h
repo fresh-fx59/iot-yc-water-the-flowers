@@ -38,7 +38,7 @@ public:
 
     // ========== WiFi Management ==========
     static void connectWiFi() {
-        DebugHelper::debug("Connecting to WiFi: " + String(SSID));
+        DebugHelper::debug("Connecting to WiFi: " + DebugHelper::maskCredential(String(SSID)));
         WiFi.mode(WIFI_STA);
         WiFi.begin(SSID, SSID_PASSWORD);
 
@@ -64,7 +64,7 @@ public:
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
-        DebugHelper::debug("Connecting to Yandex IoT Core as " + String(YC_DEVICE_ID));
+        DebugHelper::debug("Connecting to Yandex IoT Core as " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {
@@ -121,13 +121,39 @@ private:
             return;
         }
 
-        // Only supported command: start_all
+        // Start sequential watering
         if (command == "start_all") {
             DebugHelper::debugImportant("📡 MQTT Command: Start sequential watering (all valves)");
             wateringSystem->startSequentialWatering();
         }
+        // Halt mode - block all watering
+        else if (command == "halt" || command == "/halt") {
+            DebugHelper::debugImportant("📡 MQTT Command: HALT MODE activated");
+            wateringSystem->setHaltMode(true);
+        }
+        // Resume - exit halt mode
+        else if (command == "resume" || command == "/resume") {
+            DebugHelper::debugImportant("📡 MQTT Command: Resuming normal operations");
+            wateringSystem->setHaltMode(false);
+        }
+        // Test all sensors
+        else if (command == "test_sensors") {
+            DebugHelper::debugImportant("📡 MQTT Command: Testing all sensors");
+            wateringSystem->testAllSensors();
+        }
+        // Test specific sensor (format: test_sensor_N where N=0-5)
+        else if (command.startsWith("test_sensor_")) {
+            int valveIndex = command.substring(12).toInt(); // Extract number after "test_sensor_"
+            DebugHelper::debugImportant("📡 MQTT Command: Testing sensor " + String(valveIndex));
+            wateringSystem->testSensor(valveIndex);
+        }
+        // Reset overflow flag
+        else if (command == "reset_overflow" || command == "/reset_overflow") {
+            DebugHelper::debugImportant("📡 MQTT Command: Resetting overflow flag");
+            wateringSystem->resetOverflowFlag();
+        }
         else {
-            DebugHelper::debug("Unknown MQTT command: " + command + " (only 'start_all' is supported)");
+            DebugHelper::debug("Unknown MQTT command: " + command);
         }
     }
 

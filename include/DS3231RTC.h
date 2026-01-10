@@ -4,10 +4,15 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <time.h>
+#include <sys/time.h>
 #include "config.h"
 
 // ============================================
 // DS3231 RTC Helper Functions
+// Simple, clean, professional approach:
+// - Read RTC once at boot
+// - Set ESP32 system time
+// - Use standard C time() functions everywhere
 // ============================================
 
 namespace DS3231RTC {
@@ -25,9 +30,15 @@ inline uint8_t decToBcd(uint8_t val) {
 inline uint8_t readRegister(uint8_t reg) {
   Wire.beginTransmission(DS3231_I2C_ADDRESS);
   Wire.write(reg);
-  Wire.endTransmission();
-  Wire.requestFrom(DS3231_I2C_ADDRESS, 1);
-  return Wire.read();
+  if (Wire.endTransmission() != 0) {
+    return 0;  // I2C error
+  }
+
+  Wire.requestFrom((uint8_t)DS3231_I2C_ADDRESS, (uint8_t)1);
+  if (Wire.available()) {
+    return Wire.read();
+  }
+  return 0;
 }
 
 // Write single register to DS3231
@@ -40,8 +51,9 @@ inline void writeRegister(uint8_t reg, uint8_t val) {
 
 // Initialize DS3231 RTC and I2C
 inline bool init() {
-  // Initialize I2C
+  // Initialize I2C bus
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  delay(50);  // Short delay for bus stabilization
 
   // Check if DS3231 is responding
   Wire.beginTransmission(DS3231_I2C_ADDRESS);
@@ -56,7 +68,7 @@ inline bool init() {
   return true;
 }
 
-// Read current time from DS3231 and return as time_t (Unix timestamp)
+// Read time from DS3231 and return as Unix timestamp
 inline time_t getTime() {
   // Read time registers (0x00 to 0x06)
   uint8_t second = bcdToDec(readRegister(0x00) & 0x7F);
@@ -74,26 +86,14 @@ inline time_t getTime() {
   timeinfo.tm_hour = hour;
   timeinfo.tm_mday = day;
   timeinfo.tm_mon = month - 1;  // tm_mon is 0-11
-  timeinfo.tm_year = year + 100;  // tm_year is years since 1900, DS3231 year is since 2000
-  timeinfo.tm_wday = dayOfWeek - 1;  // tm_wday is 0-6 (Sunday=0), DS3231 is 1-7
+  timeinfo.tm_year = year + 100;  // tm_year is years since 1900
+  timeinfo.tm_wday = dayOfWeek - 1;  // tm_wday is 0-6 (Sunday=0)
   timeinfo.tm_isdst = 0;  // No DST
 
-  // Convert to Unix timestamp
   return mktime(&timeinfo);
 }
 
-// Get current time and fill tm structure
-inline bool getLocalTime(struct tm *timeinfo) {
-  time_t now = getTime();
-  if (now == -1) {
-    return false;
-  }
-
-  *timeinfo = *localtime(&now);
-  return true;
-}
-
-// Set DS3231 time
+// Set DS3231 time from components
 inline void setTime(uint8_t second, uint8_t minute, uint8_t hour,
                     uint8_t dayOfWeek, uint8_t day, uint8_t month, uint8_t year) {
   writeRegister(0x00, decToBcd(second));
@@ -124,11 +124,17 @@ inline void setTime(time_t timestamp) {
 inline float getTemperature() {
   Wire.beginTransmission(DS3231_I2C_ADDRESS);
   Wire.write(0x11);
-  Wire.endTransmission();
-  Wire.requestFrom(DS3231_I2C_ADDRESS, 2);
-  int8_t tempMSB = Wire.read();
-  uint8_t tempLSB = Wire.read();
-  return tempMSB + ((tempLSB >> 6) * 0.25);
+  if (Wire.endTransmission() != 0) {
+    return 0.0;  // I2C error
+  }
+
+  Wire.requestFrom((uint8_t)DS3231_I2C_ADDRESS, (uint8_t)2);
+  if (Wire.available() >= 2) {
+    int8_t tempMSB = Wire.read();
+    uint8_t tempLSB = Wire.read();
+    return tempMSB + ((tempLSB >> 6) * 0.25);
+  }
+  return 0.0;
 }
 
 // Read battery voltage
@@ -154,24 +160,60 @@ inline float getBatteryVoltage() {
   // Convert to voltage (ESP32-S3 ADC with 11db attenuation: 0-3.3V → 0-4095)
   float adcVoltage = (adcAverage / 4095.0) * 3.3;
 
-  // Battery voltage is 2x the ADC voltage (voltage divider with R1=R2=100kΩ)
+  // Battery voltage is 2x the ADC voltage (voltage divider)
   float batteryVoltageRaw = adcVoltage * 2.0;
 
   // Apply calibration factor
   return batteryVoltageRaw * BATTERY_VOLTAGE_CALIBRATION;
 }
 
-// Print current time to serial (for debugging)
-inline void printTime() {
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo)) {
-    char buffer[30];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-    Serial.print("DS3231 Time: ");
-    Serial.println(buffer);
-  } else {
-    Serial.println("Failed to read time from DS3231");
+// ============================================
+// PROFESSIONAL APPROACH: Set ESP32 System Time from RTC
+// Call this ONCE at boot, then use standard time() everywhere
+// ============================================
+inline bool setSystemTimeFromRTC() {
+  time_t rtcTime = getTime();
+
+  if (rtcTime == -1) {
+    Serial.println("❌ Failed to read time from DS3231");
+    return false;
   }
+
+  // Set ESP32 system time
+  struct timeval tv;
+  tv.tv_sec = rtcTime;
+  tv.tv_usec = 0;
+  settimeofday(&tv, NULL);
+
+  // Display the time we just set
+  struct tm *timeinfo = localtime(&rtcTime);
+  char buffer[30];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+  Serial.print("✓ System time set from RTC: ");
+  Serial.println(buffer);
+
+  return true;
+}
+
+// Optional: Sync system time back to RTC (call periodically if needed)
+inline void syncRTCFromSystemTime() {
+  time_t now;
+  time(&now);
+  setTime(now);
+  Serial.println("✓ RTC synced from system time");
+}
+
+// Print current system time (for debugging)
+inline void printSystemTime() {
+  time_t now;
+  time(&now);
+  struct tm *timeinfo = localtime(&now);
+
+  char buffer[30];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+  Serial.print("System Time: ");
+  Serial.println(buffer);
 }
 
 } // namespace DS3231RTC

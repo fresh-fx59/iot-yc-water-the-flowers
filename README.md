@@ -2,7 +2,122 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.10.3** - Interactive web dashboard for test firmware with real-time output and command buttons!
+**Version 1.12.1** - Master Overflow Sensor + Emergency Halt Mode + Multi-Layer Safety System!
+
+## 🛡️ Safety Improvements (v1.11.0 - v1.12.1)
+
+### Multi-Layer Timeout Protection
+
+The system now includes **6 independent safety layers** to prevent overwatering:
+
+**Layer 1: Master Overflow Sensor (v1.12.1)**
+- **Hardware**: Rain sensor on GPIO 42 (2N2222 transistor circuit)
+- **Detection**: LOW = overflow detected, HIGH = normal
+- **Response Time**: 100ms polling (fastest safety check)
+- **Emergency Actions**:
+  - Immediate shutdown of all valves via direct GPIO control
+  - Pump stopped immediately
+  - All watering operations blocked
+  - Telegram alert sent with emergency details
+- **Recovery**: Manual intervention required, send `/reset_overflow` command
+
+**Layer 2: Reduced Timeouts**
+- MAX_WATERING_TIME: **20 seconds** (reduced from 25s)
+- ABSOLUTE_SAFETY_TIMEOUT: **30 seconds** (emergency hard limit)
+
+**Layer 3: Two-Tier State Machine Timeouts**
+- Normal timeout (20s): Standard valve closure with learning data processing
+- Emergency cutoff (30s): Forces hardware shutdown via direct GPIO control
+
+**Layer 4: Global Safety Watchdog**
+- Runs independently every loop iteration
+- Bypasses state machine if timeout exceeded
+- Forces valves/pump OFF directly via GPIO
+- Cannot be blocked by state machine issues
+
+**Layer 5: Enhanced Sensor Logging**
+- Logs raw GPIO values every 5 seconds during watering
+- Tracks sensor readings for post-incident analysis
+- Helps diagnose hardware failures
+
+**Layer 6: Sensor Diagnostic Tools**
+- `test_sensors` - Test all 6 sensors and generate report
+- `test_sensor_N` (N=0-5) - Test individual sensor
+- Detects pullup resistor failures
+- Shows power-on/off readings to identify shorts
+
+### 🛑 Emergency Halt Mode (v1.12.0)
+
+**10-Second Boot Countdown for Emergency Updates:**
+
+Every boot provides a safety window for firmware updates:
+1. Device boots and connects to WiFi
+2. Sends Telegram notification: **"Starting in 10 seconds... Send /halt to prevent operations"**
+3. Polls for `/halt` command every 500ms
+4. If `/halt` received → enters halt mode (blocks all watering)
+5. If countdown expires → normal operation
+
+**Halt Mode Features:**
+- ✅ Blocks ALL watering operations (manual, sequential, auto-watering)
+- ✅ Stops any active watering immediately
+- ✅ Provides OTA firmware update URL
+- ✅ Can be activated anytime (not just during boot)
+- ✅ Exit with `/resume` command
+
+**Use Cases:**
+- Emergency firmware fix after discovering critical bug
+- Quick access to OTA without waiting for watering cycle
+- Block operations while testing/debugging remotely
+
+**Commands:**
+- `/halt` - Enter halt mode (via Telegram or MQTT)
+- `/resume` - Exit halt mode (via Telegram or MQTT)
+
+### 🚨 Master Overflow Sensor (v1.12.1)
+
+**Hardware Circuit:**
+- Rain sensor detects water overflow from trays
+- Connected via 2N2222 transistor circuit to GPIO 42
+- Pulls GPIO LOW when water detected (overflow condition)
+
+**Safety Features:**
+- ✅ **Highest priority check** - Runs first in every loop (100ms polling)
+- ✅ **Immediate emergency stop** - Direct GPIO control bypasses all state machines
+- ✅ **Comprehensive shutdown** - Closes all valves, stops pump, blocks all future watering
+- ✅ **Telegram emergency alert** - Sends detailed notification with actions taken
+- ✅ **Manual recovery required** - Prevents automatic restart after overflow
+
+**Emergency Response:**
+When overflow detected:
+1. All valves closed immediately via direct GPIO writes
+2. Pump stopped
+3. LED turned off
+4. Sequential mode terminated
+5. All future watering attempts blocked
+6. Telegram notification sent with timestamp and recovery instructions
+
+**Recovery Process:**
+1. Physically fix the overflow issue (empty trays, check for blockage)
+2. Send MQTT command: `reset_overflow` or `/reset_overflow`
+3. Or use Telegram: `/reset_overflow`
+4. System resumes normal operation
+
+**Example Telegram Alert:**
+```
+🚨🚨🚨 WATER OVERFLOW DETECTED 🚨🚨🚨
+
+⏰ 10-01-2026 14:23:45
+🔧 Master overflow sensor triggered
+💧 Water is overflowing from tray!
+
+✅ Emergency actions taken:
+  • All valves CLOSED
+  • Pump STOPPED
+  • System LOCKED
+
+⚠️ Manual intervention required!
+Send /reset_overflow to resume operations
+```
 
 ## Core Watering Algorithm
 
@@ -718,10 +833,9 @@ When **auto-watering triggers**:
 
 Replace `DEVICE_ID` with your actual device ID from `secret.h`.
 
-## Watering Command (v1.5.0)
+## Watering Commands
 
-**Note**: v1.5.0 simplified MQTT interface to single command. Auto-watering handles individual valves automatically.
-
+**Start Sequential Watering:**
 ```bash
 # Start all valves sequentially (5→0) with Telegram notifications
 mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'start_all'
@@ -739,6 +853,55 @@ mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'start_all'
 - Use the web interface at `http://DEVICE_IP/` for manual control
 - Auto-watering handles trays automatically when empty
 - Learning algorithm adapts to each tray independently
+
+## Safety & Control Commands (v1.11.0+)
+
+**Emergency Halt Mode:**
+```bash
+# Enter halt mode (blocks all watering operations)
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'halt'
+
+# Exit halt mode (resume normal operations)
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'resume'
+```
+
+**Master Overflow Sensor (v1.12.1):**
+```bash
+# Reset overflow flag after fixing overflow issue
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_overflow'
+
+# Or via Telegram: /reset_overflow
+```
+
+**Sensor Diagnostics:**
+```bash
+# Test all 6 sensors and generate diagnostic report
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'test_sensors'
+
+# Test individual sensor (N = 0-5)
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'test_sensor_0'
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'test_sensor_1'
+# ... etc
+```
+
+**Sensor Test Output Example:**
+```
+═══════════════════════════════════════
+🔍 TESTING ALL 6 SENSORS
+═══════════════════════════════════════
+
+📊 SENSOR TEST SUMMARY:
+Tray | GPIO | Power OFF | Power ON | Status
+-----|------|-----------|----------|-------
+   1 |    8 | HIGH(DRY) | HIGH(DRY) | ☀️ DRY
+   2 |    9 | HIGH(DRY) | HIGH(DRY) | ☀️ DRY
+   3 |   10 | HIGH(DRY) | LOW(WET)  | 💧 WET
+   4 |   11 | HIGH(DRY) | HIGH(DRY) | ☀️ DRY
+   5 |   12 | HIGH(DRY) | HIGH(DRY) | ☀️ DRY
+   6 |   13 | LOW(WET)  | LOW(WET)  | 💧 WET ⚠️  <-- HARDWARE FAULT!
+```
+
+**Note**: ⚠️ indicates sensor reads WET even when power is OFF (hardware failure)
 
 ## Monitoring
 
@@ -801,6 +964,7 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.10.3
-**Platform:** ESP32-S3-DevKitC-1
+**Version:** 1.12.1
+**Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
+**Features:** DS3231 RTC, Master Overflow Sensor, Emergency Halt Mode, 6-Layer Safety System, Time-Based Learning

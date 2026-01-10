@@ -7,11 +7,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water pump. The system waters plants based on rain sensor feedback, automatically waters when trays are empty using time-based learning, publishes state to Yandex IoT Core MQTT, sends Telegram notifications for watering sessions with queue-based debug system, and provides a web interface for control.
 
 **Key Technologies**:
-- Platform: ESP32-S3-DevKitC-1 (Espressif32, Arduino framework)
+- Platform: ESP32-S3-N8R2 / ESP32-S3-DevKitC-1 (Espressif32, Arduino framework)
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
-- Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS
-- Time Sync: NTP (pool.ntp.org, GMT+3 Moscow timezone)
-- Current Version: 1.10.3 (defined in config.h:10)
+- Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS, Adafruit NeoPixel 1.15.2
+- Time Source: DS3231 RTC (I2C at GPIO 14/3) with battery backup and temperature sensor
+- Current Version: 1.12.1 (defined in config.h:10)
 
 ## Build & Deploy Commands
 
@@ -83,19 +83,20 @@ The codebase follows standard C++ organization with inline implementations in he
 ```
 include/
   ├── config.h                      # All constants and pin definitions
+  ├── DS3231RTC.h                   # DS3231 Real-Time Clock helper library (v1.10.0+)
   ├── ValveController.h             # Valve state struct, enums, helper functions
-  ├── WateringSystem.h              # Main watering logic + time-based learning
-  ├── WateringSystemStateMachine.h  # State machine + MQTT state publishing
-  ├── NetworkManager.h              # WiFi + MQTT management
-  ├── TelegramNotifier.h            # Telegram Bot API integration
+  ├── WateringSystem.h              # Main watering logic + time-based learning + halt mode
+  ├── WateringSystemStateMachine.h  # State machine + MQTT state publishing + safety timeouts
+  ├── NetworkManager.h              # WiFi + MQTT management + halt/resume commands
+  ├── TelegramNotifier.h            # Telegram Bot API + command polling (v1.12.0)
   ├── DebugHelper.h                 # Queue-based debug system with retry & grouping (v1.6.1)
   ├── api_handlers.h                # Web API endpoints
   ├── ota.h                         # OTA updates and web server
   └── secret.h                      # WiFi/MQTT/Telegram credentials (not in git)
 
 src/
-  ├── main.cpp                      # Production firmware entry point (~165 lines)
-  └── test-main.cpp                 # Hardware test firmware with OTA (~650 lines)
+  ├── main.cpp                      # Production firmware + boot countdown (v1.12.0)
+  └── test-main.cpp                 # Hardware test firmware with OTA + DS3231 tests
 
 data/
   └── web/                          # Shared filesystem (served via LittleFS)
@@ -137,6 +138,102 @@ platformio.ini                      # Two build environments:
 - API handler registration
 
 ## Architecture
+
+### Safety Features (v1.11.0 - v1.12.1)
+
+The system includes **multi-layer safety protection** to prevent overwatering:
+
+**Layer 1: Master Overflow Sensor** (v1.12.1)
+- **Hardware**: Rain sensor connected via 2N2222 transistor circuit to GPIO 42
+- **Detection**: LOW = overflow detected (water present), HIGH = normal (dry)
+- **Polling**: 100ms (fastest response - runs FIRST in every loop)
+- **Function**: `checkMasterOverflowSensor(unsigned long currentTime)`
+- **Emergency Response**:
+  - Calls `emergencyStopAll("OVERFLOW DETECTED")`
+  - Direct GPIO writes to close all valves (bypasses state machine)
+  - Force pump OFF
+  - Turn off LED
+  - Stop sequential mode
+  - Set `overflowDetected` flag (blocks all future watering)
+  - Send Telegram emergency alert
+- **Recovery**: Manual intervention required, send `reset_overflow` or `/reset_overflow` command
+- **Location**: WateringSystem.h:530-595
+
+**Layer 2: Reduced Timeouts** (config.h:63-64)
+- `MAX_WATERING_TIME = 20000` (20s) - Reduced from 25s
+- `ABSOLUTE_SAFETY_TIMEOUT = 30000` (30s) - Emergency hard limit
+
+**Layer 3: Two-Tier State Machine Timeouts** (WateringSystemStateMachine.h:77-106)
+- Normal timeout (20s): Standard valve closure with learning data processing
+- Emergency cutoff (30s): Forces hardware shutdown via direct GPIO control
+- Both run in PHASE_WATERING state
+
+**Layer 4: Global Safety Watchdog** (WateringSystem.h:479-520)
+- Function: `globalSafetyWatchdog(unsigned long currentTime)`
+- Runs independently every loop iteration (called after master overflow check)
+- Bypasses state machine if ABSOLUTE_SAFETY_TIMEOUT exceeded
+- Forces valves and pump OFF via direct GPIO writes
+- Cannot be blocked by state machine issues
+
+**Layer 5: Enhanced Sensor Logging** (WateringSystem.h:832-838)
+- Logs raw GPIO values every 5 seconds during watering
+- Format: `Sensor N GPIO X: raw=Y (WET/DRY)`
+- Helps diagnose hardware failures post-incident
+
+**Layer 6: Sensor Diagnostic Tools** (WateringSystem.h:1530-1627)
+- `testSensor(valveIndex)`: Test individual sensor with detailed report
+- `testAllSensors()`: Test all 6 sensors and create summary table
+- Checks: power pin config, sensor pin config, power-off reading, power-on reading
+- Detects: pullup resistor failures, shorts, hardware faults
+- Accessible via MQTT commands: `test_sensors`, `test_sensor_N`
+
+### Emergency Halt Mode (v1.12.0)
+
+**Boot Countdown System** (main.cpp:92-180)
+
+Every boot provides a 10-second safety window for emergency firmware updates:
+
+1. Device boots and connects to WiFi
+2. Sends Telegram notification with countdown
+3. Calls `bootCountdown()` function
+4. Polls Telegram Bot API every 500ms for `/halt` command
+5. If `/halt` received → enters halt mode
+6. If 10 seconds expire → normal operation
+
+**Halt Mode Implementation** (WateringSystem.h:133-206)
+
+State management:
+- `bool haltMode` - Blocks all watering when true
+- `setHaltMode(bool enabled)` - Activate/deactivate
+- `isHaltMode()` - Check status
+
+When halt mode activated:
+- Stops any ongoing sequential watering
+- Stops all active valves immediately
+- Turns off LED indicator
+- Blocks future watering attempts:
+  - `startWatering()` - Returns immediately
+  - `startSequentialWatering()` - Returns immediately
+  - `startSequentialWateringCustom()` - Returns immediately
+  - `checkAutoWatering()` - Returns immediately without checking
+
+Commands (Telegram + MQTT):
+- `/halt` or `halt` - Enter halt mode
+- `/resume` or `resume` - Exit halt mode
+
+**Use Cases**:
+- Emergency firmware fix after discovering critical bug
+- Quick OTA access without waiting for watering cycle
+- Block operations while remote testing/debugging
+
+**Telegram Command Polling** (TelegramNotifier.h:182-232)
+
+Function: `checkForCommands(int &lastUpdateId)`
+- Uses Telegram Bot API `getUpdates` method
+- Offset parameter prevents duplicate processing
+- 1-second timeout, 2-second HTTP timeout
+- Parses JSON manually (simple extraction)
+- Returns command string or empty
 
 ### Watering Algorithm Flow
 
@@ -218,14 +315,17 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 - **api_handlers.h**: Web API endpoint implementations
 - **secret.h**: WiFi/MQTT credentials (never commit)
 
-### Hardware Configuration (ESP32-S3-DevKitC-1)
+### Hardware Configuration (ESP32-S3-N8R2)
 
 **Pin Assignments**:
 - Pump: GPIO 4
 - Valves: GPIO 5, 6, 7, 15, 16, 17
 - Rain Sensors: GPIO 8, 9, 10, 11, 12, 13 (INPUT_PULLUP, LOW=wet, HIGH=dry)
-- Sensor Power (Optocouple): GPIO 18 (powers sensors only when needed)
-- LED: GPIO 2
+- Sensor Power (Optocoupler): GPIO 18 (powers sensors only when needed)
+- Master Overflow Sensor: GPIO 42 (INPUT_PULLUP, LOW=overflow, HIGH=normal) - v1.12.1
+- NeoPixel RGB LED: GPIO 48 (built-in on ESP32-S3-N8R2)
+- DS3231 RTC I2C: SDA=GPIO 14, SCL=GPIO 3, Address=0x68
+- DS3231 Battery Monitor: ADC=GPIO 1, Control=GPIO 2
 
 **Rain Sensor Reading Logic**:
 - Sensors powered via GPIO 18 optocoupler (on-demand to save power)
@@ -233,6 +333,29 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 - HIGH (1) = DRY (internal pull-up resistor keeps line high when dry)
 - Power-on sequence: Set GPIO 18 HIGH, delay 100ms, read sensor, set LOW
 - Sensors configured with INPUT_PULLUP mode in setup
+
+**Master Overflow Sensor (v1.12.1)**:
+- Rain sensor detects water overflow from trays
+- Connected via 2N2222 transistor circuit to GPIO 42
+- Circuit: Rain sensor → resistors → transistor base → collector pulls GPIO 42 LOW when wet
+- LOW (0) = OVERFLOW (water detected - emergency condition)
+- HIGH (1) = NORMAL (dry - no overflow)
+- Configured with INPUT_PULLUP mode
+- Polled every 100ms (highest priority check in main loop)
+
+**DS3231 RTC (v1.10.0+)**:
+- Provides all time functions (replaces NTP dependency)
+- Battery-backed real-time clock (CR2032)
+- Temperature sensor (-40°C to +85°C, ±3°C accuracy)
+- Battery voltage monitoring with calibration support
+- I2C communication at 100kHz
+- Helper library: `DS3231RTC.h`
+
+**NeoPixel LED (v1.10.0+)**:
+- Single RGB LED on GPIO 48
+- Adafruit NeoPixel library
+- Status indication during watering
+- OFF when in halt mode
 
 ### Adaptive Interval Learning Algorithm (v1.8.0+)
 
@@ -311,14 +434,25 @@ Boot Decision Tree:
 
 Format: Plain text commands sent to `$devices/{DEVICE_ID}/commands`
 
-**Supported Command**:
+**Watering Commands**:
 - `start_all`: Start sequential watering of all valves (5→0 order)
 
+**Safety & Control Commands (v1.11.0+)**:
+- `halt` or `/halt`: Enter halt mode (blocks all watering operations)
+- `resume` or `/resume`: Exit halt mode (resume normal operations)
+
+**Sensor Diagnostic Commands (v1.11.0+)**:
+- `test_sensors`: Test all 6 sensors and generate diagnostic report
+- `test_sensor_N` (N=0-5): Test individual sensor (e.g., `test_sensor_0`, `test_sensor_1`)
+
+**Master Overflow Sensor Commands (v1.12.1)**:
+- `reset_overflow` or `/reset_overflow`: Reset overflow flag after fixing overflow issue (manual intervention required)
+
 **Notes**:
-- All other commands have been removed for simplicity
 - System automatically publishes state every 2 seconds
 - Auto-watering and learning features work automatically in background
-- No manual control of individual valves via MQTT
+- Individual valve control via web interface only
+- Telegram Bot also accepts `/halt`, `/resume`, and `/reset_overflow` commands
 
 ### MQTT State Publishing
 
@@ -602,27 +736,37 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 **setup() sequence** (main.cpp):
 1. Initialize serial at 115200 baud
 2. Print banner with version and device info
-3. **Initialize LittleFS** for learning data persistence
-4. `wateringSystem.init()` - Initialize pins and hardware, **loads learning data from flash**
-5. `NetworkManager::setWateringSystem()` - Link network manager to watering system
-6. `NetworkManager::init()` - Configure MQTT client
-7. `NetworkManager::connectWiFi()` - Connect to WiFi (30 retries)
-8. **`syncTime()`** - Synchronize time with NTP servers (GMT+3, pool.ntp.org)
-9. `NetworkManager::connectMQTT()` - Connect to MQTT broker
-10. `setWateringSystemRef()` - **CRITICAL**: Set global pointer for web API
-11. `setupOta()` - Initialize web server and OTA
-12. API handlers registered via `registerApiHandlers()` (called from setupOta)
+3. Configure battery measurement pins (GPIO 1, 2)
+4. **`initializeRTC()`** - Initialize DS3231 RTC (I2C GPIO 14/3), read time/temp/battery (v1.10.0+)
+5. **Initialize LittleFS** for learning data persistence
+6. `wateringSystem.init()` - Initialize pins and hardware, **loads learning data from flash**
+7. `NetworkManager::setWateringSystem()` - Link network manager to watering system
+8. `NetworkManager::init()` - Configure MQTT client
+9. Idempotent migration: Delete old learning data file if exists (v1.8.5+)
+10. Load learning data from LittleFS
+11. `NetworkManager::connectWiFi()` - Connect to WiFi (30 retries)
+12. `NetworkManager::connectMQTT()` - Connect to MQTT broker (if WiFi available)
+13. `setWateringSystemRef()` - **CRITICAL**: Set global pointer for web API
+14. `setupOta()` - Initialize web server and OTA
+15. **`bootCountdown()`** - 10-second countdown with `/halt` polling (v1.12.0)
+16. API handlers registered via `registerApiHandlers()` (called from setupOta)
 
 **loop() sequence** (main.cpp):
-1. Check WiFi connection with `NetworkManager::isWiFiConnected()`, reconnect if needed
-2. `NetworkManager::loopMQTT()` - Process MQTT messages and handle reconnection
-3. `wateringSystem.processWateringLoop()` - Execute valve state machines + **check auto-watering**
-4. `loopOta()` - Handle web server requests
-5. 10ms delay to prevent watchdog reset
+1. **First loop only** (if WiFi connected and not halt mode):
+   - Send watering schedule to Telegram
+   - Smart boot watering: water if first boot OR overdue valves detected
+   - Skip if halt mode active (v1.12.0)
+2. Check WiFi connection with `NetworkManager::isWiFiConnected()`, reconnect if needed
+3. `NetworkManager::loopMQTT()` - Process MQTT messages (includes halt/resume commands)
+4. `wateringSystem.processWateringLoop()` - Execute valve state machines + **check auto-watering** (blocked if halt mode)
+5. `loopOta()` - Handle web server requests
+6. `DebugHelper::loop()` - Flush buffered debug messages to Telegram
+7. 10ms delay to prevent watchdog reset
 
 **processWateringLoop() sequence** (WateringSystem.h):
-1. **Check auto-watering** (if not in sequential mode): For each idle valve with auto-watering enabled, check if tray is empty based on time
-2. Process each valve's state machine
+1. **Global Safety Watchdog** - Check all valves for ABSOLUTE_SAFETY_TIMEOUT (v1.11.0)
+2. **Check auto-watering** (if not in sequential mode AND not halt mode): For each idle valve with auto-watering enabled, check if tray is empty based on time
+3. Process each valve's state machine
 3. Handle sequential watering transitions
 4. Publish state every 2 seconds
 
@@ -640,3 +784,10 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 10. **Baseline Auto-Update**: Baseline updates automatically when longer fill observed (tray was emptier)
 11. **First Watering Assumption**: First watering may not be from empty; system learns true capacity over time
 12. **Consumption Smoothing**: Uses weighted average to prevent wild swings from single measurements
+13. **Boot Countdown Delay** (v1.12.0): Every boot has 10-second countdown before operations start - allows time for emergency `/halt` command
+14. **Halt Mode Persistence**: Halt mode is NOT persistent across reboots - must send `/halt` during countdown window or after boot
+15. **Safety Timeout Hierarchy** (v1.11.0): MAX_WATERING_TIME (20s) < ABSOLUTE_SAFETY_TIMEOUT (30s) < Global Watchdog (runs every loop)
+16. **DS3231 RTC Dependency** (v1.10.0+): System uses DS3231 as sole time source - no NTP dependency, works without WiFi for timing
+17. **NeoPixel LED** (v1.10.0+): GPIO 48 used for RGB status LED on ESP32-S3-N8R2 (not GPIO 2)
+18. **Master Overflow Sensor** (v1.12.1): Overflow detection is NOT persistent across reboots - `overflowDetected` flag resets to false on boot, must send `/reset_overflow` if overflow persists after reboot
+19. **Overflow Recovery** (v1.12.1): After overflow detected, ALL watering blocked until manual intervention - send `reset_overflow` command ONLY after physically fixing overflow issue

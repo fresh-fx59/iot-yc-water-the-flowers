@@ -5,6 +5,7 @@
 #include <time.h>
 #include "config.h"
 #include "secret.h"
+#include "DS3231RTC.h"
 
 // Forward declaration
 extern bool sendTelegramDebug(const String& msg);
@@ -46,35 +47,35 @@ private:
     static String cachedMaskedDeviceId;
 
 public:
-    // Get current timestamp with milliseconds
+    // Get current timestamp with milliseconds (using system time)
     static String getCurrentTimestamp() {
-        struct tm timeinfo;
-        if (!getLocalTime(&timeinfo)) {
-            // Time not synced - use millis() as fallback
-            unsigned long ms = millis();
-            unsigned long seconds = ms / 1000;
-            unsigned long minutes = seconds / 60;
-            unsigned long hours = minutes / 60;
-            int milliseconds = ms % 1000;
-
-            char buffer[30];
-            sprintf(buffer, "UPTIME %02lu:%02lu:%02lu.%03d",
-                    hours % 24, minutes % 60, seconds % 60, milliseconds);
-            return String(buffer);
-        }
+        time_t now;
+        time(&now);
+        struct tm *timeinfo = localtime(&now);
 
         // Format: DD-MM-YYYY HH:MM:SS.mmm
         char buffer[30];
         int milliseconds = millis() % 1000;
         sprintf(buffer, "%02d-%02d-%04d %02d:%02d:%02d.%03d",
-                timeinfo.tm_mday,
-                timeinfo.tm_mon + 1,
-                timeinfo.tm_year + 1900,
-                timeinfo.tm_hour,
-                timeinfo.tm_min,
-                timeinfo.tm_sec,
+                timeinfo->tm_mday,
+                timeinfo->tm_mon + 1,
+                timeinfo->tm_year + 1900,
+                timeinfo->tm_hour,
+                timeinfo->tm_min,
+                timeinfo->tm_sec,
                 milliseconds);
         return String(buffer);
+    }
+
+    // Mask credential: show only first and last character, rest as ****
+    // Example: "MyPassword123" -> "M****3"
+    static String maskCredential(const String& credential) {
+        if (credential.length() <= 2) {
+            return "****";  // Too short, mask completely
+        }
+        String first = credential.substring(0, 1);
+        String last = credential.substring(credential.length() - 1);
+        return first + "****" + last;
     }
 
     // Mask device ID in message: are3tumc1rl90r7kflvl -> are3****flvl (cached for performance)

@@ -74,7 +74,24 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             break;
 
         case PHASE_WATERING:
-            // SAFETY CHECK 1: Check timeout first - ALWAYS RESPECT MAX WATERING TIME
+            // SAFETY CHECK 1: ABSOLUTE EMERGENCY TIMEOUT - HARD CUTOFF
+            if (currentTime - valve->wateringStartTime >= ABSOLUTE_SAFETY_TIMEOUT) {
+                DebugHelper::debugImportant("🚨 EMERGENCY CUTOFF: Valve " + String(valveIndex) + " exceeded ABSOLUTE limit " + String(ABSOLUTE_SAFETY_TIMEOUT / 1000) + "s!");
+                DebugHelper::debugImportant("🚨 This indicates a CRITICAL SAFETY FAILURE!");
+                DebugHelper::debugImportant("🚨 Check sensor hardware immediately!");
+
+                // EMERGENCY: Force everything OFF
+                valve->timeoutOccurred = true;
+                digitalWrite(VALVE_PINS[valveIndex], LOW);  // Force close
+                digitalWrite(PUMP_PIN, LOW);  // Force pump off
+                updatePumpState();
+
+                publishStateChange("valve" + String(valveIndex), "emergency_cutoff");
+                valve->phase = PHASE_CLOSING_VALVE;
+                break;
+            }
+
+            // SAFETY CHECK 2: Normal timeout - MAX WATERING TIME
             if (currentTime - valve->wateringStartTime >= MAX_WATERING_TIME) {
                 DebugHelper::debugImportant("⚠️ TIMEOUT: Valve " + String(valveIndex) + " exceeded " + String(MAX_WATERING_TIME / 1000) + "s - IMMEDIATE SAFETY STOP");
 

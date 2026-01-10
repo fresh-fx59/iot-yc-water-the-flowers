@@ -129,6 +129,9 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 // Water level sensor pin
 #define WATER_LEVEL_SENSOR_PIN 19
 
+// Master Overflow Sensor pin (2N2222 transistor circuit)
+#define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
+
 // DS3231 RTC I2C pins
 #define I2C_SDA_PIN 14
 #define I2C_SCL_PIN 3
@@ -184,6 +187,9 @@ void setup() {
   // Initialize water level sensor pin with internal pull-up
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
 
+  // Initialize master overflow sensor pin with internal pull-up
+  pinMode(MASTER_OVERFLOW_SENSOR_PIN, INPUT_PULLUP);
+
   // Initialize I2C for DS3231 RTC
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   Serial.println("I2C initialized (SDA: GPIO 14, SCL: GPIO 3)");
@@ -218,7 +224,15 @@ void setup() {
   Serial.println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
   Serial.println("Connecting to WiFi for OTA support...");
   Serial.print("SSID: ");
-  Serial.println(SSID);
+
+  // Mask SSID: show only first and last character
+  String maskedSSID = String(SSID);
+  if (maskedSSID.length() > 2) {
+    maskedSSID = maskedSSID.substring(0, 1) + "****" + maskedSSID.substring(maskedSSID.length() - 1);
+  } else {
+    maskedSSID = "****";
+  }
+  Serial.println(maskedSSID);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(SSID, SSID_PASSWORD);
@@ -288,6 +302,10 @@ void printMenu() {
   Serial.println("WATER LEVEL SENSOR TEST:");
   Serial.println("  W - Read water level sensor (GPIO 19)");
   Serial.println("  N - Monitor water level sensor (continuous)");
+  Serial.println();
+  Serial.println("MASTER OVERFLOW SENSOR TEST:");
+  Serial.println("  O - Read master overflow sensor (GPIO 42)");
+  Serial.println("  V - Monitor master overflow sensor (continuous)");
   Serial.println();
   Serial.println("DS3231 RTC TESTS:");
   Serial.println("  T - Read RTC time and temperature");
@@ -402,6 +420,7 @@ void readRainSensors() {
 
 bool monitorMode = false;
 bool waterLevelMonitorMode = false;
+bool overflowMonitorMode = false;
 unsigned long lastMonitorTime = 0;
 
 void monitorRainSensors() {
@@ -446,6 +465,55 @@ void monitorWaterLevelSensor() {
     String status = (sensorValue == LOW) ? "WATER 💧" : "EMPTY ⚠️ ";
     webLog("Water Level (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): [" +
            bar + "] " + status);
+    webLog("╚════════════════════════════════════════════════╝");
+    lastMonitorTime = currentTime;
+  }
+}
+
+void readMasterOverflowSensor() {
+  webLog("MASTER OVERFLOW SENSOR READING:");
+  webLog("(LOW = Overflow detected / Water present)");
+  webLog("(HIGH = Normal / Dry)");
+  webLog("");
+  webLog("Circuit: Rain sensor → 2N2222 transistor → GPIO 42");
+  webLog("");
+
+  int sensorValue = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+  String status = (sensorValue == LOW) ? "⚠️ OVERFLOW DETECTED! ⚠️" : "✓ NORMAL (Dry)";
+  String emoji = (sensorValue == LOW) ? "💧🚨" : "✓";
+
+  webLog("  Master Overflow Sensor (GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) + "): " +
+         String(sensorValue) + " = " + status);
+  webLog("");
+
+  if (sensorValue == LOW) {
+    webLog("⚠️ WARNING: Water overflow detected!");
+    webLog("   Check trays for overflow condition");
+    webLog("   In production, this triggers emergency stop");
+  } else {
+    webLog("✓ No overflow - system is safe to operate");
+  }
+
+  webLog("");
+  webLog("→ Test by wetting the rain sensor to simulate overflow");
+  printSeparator();
+}
+
+void monitorMasterOverflowSensor() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastMonitorTime >= 500) {
+    webLog("");
+    webLog("╔═ OVERFLOW SENSOR MONITOR (Press 'S' to stop) ═╗");
+    int sensorValue = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+    String bar = (sensorValue == LOW) ? "████████████████" : "░░░░░░░░░░░░░░░░";
+    String status = (sensorValue == LOW) ? "OVERFLOW 🚨" : "NORMAL ✓";
+    webLog("Overflow (GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) + "): [" +
+           bar + "] " + status);
+
+    if (sensorValue == LOW) {
+      webLog("⚠️ EMERGENCY: Water overflow detected!");
+    }
+
     webLog("╚════════════════════════════════════════════════╝");
     lastMonitorTime = currentTime;
   }
@@ -813,17 +881,22 @@ void fullSequenceTest() {
 
   // Test water level sensor
   webLog("");
-  webLog("5/7 Testing Water Level Sensor...");
+  webLog("5/8 Testing Water Level Sensor...");
   readWaterLevelSensor();
+
+  // Test master overflow sensor
+  webLog("");
+  webLog("6/8 Testing Master Overflow Sensor...");
+  readMasterOverflowSensor();
 
   // Test DS3231 RTC
   webLog("");
-  webLog("6/7 Testing DS3231 RTC...");
+  webLog("7/8 Testing DS3231 RTC...");
   readDS3231Time();
 
   // Test Battery Voltage
   webLog("");
-  webLog("7/7 Testing DS3231 Battery Voltage...");
+  webLog("8/8 Testing DS3231 Battery Voltage...");
   readBatteryVoltage();
 
   webLog("");
@@ -936,6 +1009,9 @@ void loop() {
   if (waterLevelMonitorMode) {
     monitorWaterLevelSensor();
   }
+  if (overflowMonitorMode) {
+    monitorMasterOverflowSensor();
+  }
 
   // Process command from WebSocket or Serial
   char cmd = '\0';
@@ -1017,6 +1093,7 @@ void loop() {
       case 's':
         monitorMode = false;
         waterLevelMonitorMode = false;
+        overflowMonitorMode = false;
         webLog("→ All monitoring STOPPED");
         printSeparator();
         break;
@@ -1030,6 +1107,19 @@ void loop() {
       case 'n':
         waterLevelMonitorMode = true;
         webLog("→ Water level sensor monitoring ENABLED");
+        webLog("  (Press 'S' to stop)");
+        printSeparator();
+        break;
+
+      case 'O':
+      case 'o':
+        readMasterOverflowSensor();
+        break;
+
+      case 'V':
+      case 'v':
+        overflowMonitorMode = true;
+        webLog("→ Master overflow sensor monitoring ENABLED");
         webLog("  (Press 'S' to stop)");
         printSeparator();
         break;

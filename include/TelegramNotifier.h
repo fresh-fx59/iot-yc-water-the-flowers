@@ -7,6 +7,7 @@
 #include "config.h"
 #include "secret.h"
 #include "DebugHelper.h"
+#include "DS3231RTC.h"
 
 // ============================================
 // Telegram Notifier Class
@@ -68,15 +69,14 @@ private:
     }
 
 public:
-    // Format current time as "DD-MM-YYYY HH:MM:SS"
+    // Format current time as "DD-MM-YYYY HH:MM:SS" (using system time)
     static String getCurrentDateTime() {
-        struct tm timeinfo;
-        if (!getLocalTime(&timeinfo)) {
-            return "Time not synced";
-        }
+        time_t now;
+        time(&now);
+        struct tm *timeinfo = localtime(&now);
 
         char buffer[20];
-        strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &timeinfo);
+        strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", timeinfo);
         return String(buffer);
     }
 
@@ -175,6 +175,64 @@ public:
 
         DebugHelper::debug("\n📱 Sending Telegram schedule notification...");
         sendMessage(message);
+    }
+
+    // Check for Telegram commands (returns command string or empty)
+    // Used during boot countdown for /halt command
+    static String checkForCommands(int &lastUpdateId) {
+        if (!WiFi.isConnected()) {
+            return "";
+        }
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        // Build getUpdates URL with offset
+        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                     "/getUpdates?offset=" + String(lastUpdateId) +
+                     "&timeout=1&allowed_updates=[\"message\"]";
+
+        http.begin(client, url);
+        http.setTimeout(2000);  // 2 second timeout
+        int httpCode = http.GET();
+
+        if (httpCode == 200) {
+            String payload = http.getString();
+
+            // Parse JSON response manually (simple parsing for commands only)
+            // Expected format: {"ok":true,"result":[{"update_id":123,"message":{"text":"/halt",...}},...]}
+
+            int updateIdPos = payload.indexOf("\"update_id\":");
+            if (updateIdPos > 0) {
+                // Extract update_id
+                int updateIdStart = updateIdPos + 12;
+                int updateIdEnd = payload.indexOf(",", updateIdStart);
+                if (updateIdEnd > updateIdStart) {
+                    String updateIdStr = payload.substring(updateIdStart, updateIdEnd);
+                    int newUpdateId = updateIdStr.toInt();
+
+                    // Extract command text
+                    int textPos = payload.indexOf("\"text\":\"", updateIdPos);
+                    if (textPos > 0) {
+                        int textStart = textPos + 8;
+                        int textEnd = payload.indexOf("\"", textStart);
+                        if (textEnd > textStart) {
+                            String command = payload.substring(textStart, textEnd);
+
+                            // Update lastUpdateId to avoid processing same message again
+                            lastUpdateId = newUpdateId + 1;
+
+                            http.end();
+                            return command;
+                        }
+                    }
+                }
+            }
+        }
+
+        http.end();
+        return "";
     }
 };
 

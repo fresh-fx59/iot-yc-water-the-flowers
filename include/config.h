@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.11.0";
+const char *VERSION = "watering_system_1.12.1";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -42,6 +42,9 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 #define BATTERY_ADC_PIN 1        // ADC pin (reads voltage divider)
 #define BATTERY_CONTROL_PIN 2    // Controls transistor (HIGH = measure, LOW = off)
 
+// Master Overflow Sensor pin (2N2222 transistor circuit)
+#define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
+
 // ============================================
 // System Constants
 // ============================================
@@ -60,7 +63,8 @@ const unsigned long VALVE_STABILIZATION_DELAY =
     500; // Wait 500ms for valve to open
 const unsigned long STATE_PUBLISH_INTERVAL =
     2000;                                      // Publish state every 2 seconds
-const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s)
+const unsigned long MAX_WATERING_TIME = 20000; // Maximum watering time (20s) - REDUCED FOR SAFETY
+const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 
 // ============================================

@@ -132,13 +132,21 @@ private:
   // Auto-watering tracking
   int autoWateringValveIndex; // Currently auto-watering valve (-1 if none)
 
+  // Halt mode (for emergency firmware updates)
+  bool haltMode; // If true, block all watering operations
+
+  // Master overflow sensor tracking
+  bool overflowDetected; // If true, water overflow detected - block all watering
+  unsigned long lastOverflowCheck; // Last time overflow sensor was checked
+
 public:
   // ========== Constructor ==========
   WateringSystem()
       : pumpState(PUMP_OFF), activeValveCount(0), lastStatePublish(0),
         lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
         sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
-        autoWateringValveIndex(-1) {
+        autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
+        lastOverflowCheck(0) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -195,12 +203,27 @@ public:
   bool
   hasOverdueValves(); // Check if any valve's next watering time is in the past
 
+  // Sensor diagnostics
+  void testSensor(int valveIndex);  // Test a specific sensor and log results
+  void testAllSensors();  // Test all sensors and report
+
+  // Halt mode control (for emergency firmware updates)
+  void setHaltMode(bool enabled);
+  bool isHaltMode() { return haltMode; }
+
+  // Master overflow sensor control
+  bool isOverflowDetected() { return overflowDetected; }
+  void resetOverflowFlag(); // Reset overflow flag after fixing issue
+
 private:
   // ========== Core Logic ==========
   void processValve(int valveIndex, unsigned long currentTime);
   bool isValveComplete(int valveIndex);
   void startNextInSequence();
   void checkAutoWatering(unsigned long currentTime);
+  void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
+  void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
+  void emergencyStopAll(const String &reason);  // Emergency stop all watering
 
   // ========== Hardware Control ==========
   bool readRainSensor(int valveIndex);
@@ -253,6 +276,10 @@ inline void WateringSystem::init() {
     pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
   }
 
+  // Initialize master overflow sensor pin
+  pinMode(MASTER_OVERFLOW_SENSOR_PIN, INPUT_PULLUP);
+  DebugHelper::debugImportant("Master overflow sensor: GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
+
   DebugHelper::debugImportant("✓ WateringSystem initialized");
   publishStateChange("system", "initialized");
 
@@ -292,7 +319,9 @@ inline bool WateringSystem::saveLearningData() {
 
   // Save current millis() and DS3231 RTC time as reference points
   doc["savedAtMillis"] = millis();
-  doc["savedAtRealTime"] = (unsigned long)DS3231RTC::getTime();
+  time_t now;
+  time(&now);
+  doc["savedAtRealTime"] = (unsigned long)now;
 
   // Open file for writing
   File file = LittleFS.open(LEARNING_DATA_FILE, "w");
@@ -344,7 +373,8 @@ inline bool WateringSystem::loadLearningData() {
   unsigned long savedAtMillis = doc["savedAtMillis"] | 0;
   unsigned long savedAtRealTime = doc["savedAtRealTime"] | 0;
   unsigned long currentMillis = millis();
-  time_t currentRealTime = DS3231RTC::getTime();
+  time_t currentRealTime;
+  time(&currentRealTime);
 
   // Calculate time offset using DS3231 RTC time (always available)
   unsigned long timeOffsetMs = 0;
@@ -440,6 +470,12 @@ inline bool WateringSystem::loadLearningData() {
 inline void WateringSystem::processWateringLoop() {
   unsigned long currentTime = millis();
 
+  // 🚨 MASTER OVERFLOW SENSOR - HIGHEST PRIORITY CHECK
+  checkMasterOverflowSensor(currentTime);
+
+  // 🚨 GLOBAL SAFETY WATCHDOG - ALWAYS RUN FIRST
+  globalSafetyWatchdog(currentTime);
+
   // Check for automatic watering (time-based)
   if (!sequentialMode) {
     checkAutoWatering(currentTime);
@@ -466,8 +502,171 @@ inline void WateringSystem::processWateringLoop() {
   }
 }
 
+// ========== GLOBAL SAFETY WATCHDOG ==========
+// This runs INDEPENDENTLY of the state machine to catch any failures
+inline void WateringSystem::globalSafetyWatchdog(unsigned long currentTime) {
+  for (int i = 0; i < NUM_VALVES; i++) {
+    ValveController* valve = valves[i];
+
+    // Check if any valve has been watering too long
+    if (valve->phase == PHASE_WATERING && valve->wateringStartTime > 0) {
+      unsigned long wateringDuration = currentTime - valve->wateringStartTime;
+
+      // CRITICAL: If exceeded absolute timeout, FORCE STOP EVERYTHING
+      if (wateringDuration >= ABSOLUTE_SAFETY_TIMEOUT) {
+        DebugHelper::debugImportant("🚨🚨🚨 GLOBAL SAFETY WATCHDOG TRIGGERED! 🚨🚨🚨");
+        DebugHelper::debugImportant("Valve " + String(i) + " exceeded " + String(ABSOLUTE_SAFETY_TIMEOUT / 1000) + "s!");
+        DebugHelper::debugImportant("Duration: " + String(wateringDuration / 1000) + "s");
+        DebugHelper::debugImportant("FORCING EMERGENCY SHUTDOWN!");
+
+        // FORCE DIRECT GPIO CONTROL - BYPASS ALL STATE MACHINES
+        digitalWrite(VALVE_PINS[i], LOW);
+        valve->state = VALVE_CLOSED;
+
+        // Force pump off if no other valves active
+        bool anyWatering = false;
+        for (int j = 0; j < NUM_VALVES; j++) {
+          if (j != i && valves[j]->phase == PHASE_WATERING) {
+            anyWatering = true;
+          }
+        }
+        if (!anyWatering) {
+          digitalWrite(PUMP_PIN, LOW);
+          pumpState = PUMP_OFF;
+          statusLED.clear();
+          statusLED.show();
+        }
+
+        // Mark as timeout and move to cleanup
+        valve->timeoutOccurred = true;
+        valve->phase = PHASE_CLOSING_VALVE;
+
+        DebugHelper::debugImportant("Emergency shutdown complete for valve " + String(i));
+      }
+    }
+  }
+}
+
+// ========== MASTER OVERFLOW SENSOR WATCHDOG ==========
+// Monitors master overflow sensor and triggers emergency stop if water overflow detected
+inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime) {
+  // Check sensor every 100ms to ensure fast response
+  if (currentTime - lastOverflowCheck < 100) {
+    return;
+  }
+  lastOverflowCheck = currentTime;
+
+  // Read master overflow sensor (LOW = overflow detected)
+  int sensorValue = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+
+  // If overflow detected (sensor reads LOW)
+  if (sensorValue == LOW) {
+    if (!overflowDetected) {
+      // First detection - trigger emergency stop
+      DebugHelper::debugImportant("🚨🚨🚨 MASTER OVERFLOW SENSOR TRIGGERED! 🚨🚨🚨");
+      DebugHelper::debugImportant("Water overflow detected on GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
+      overflowDetected = true;
+
+      // Emergency stop everything
+      emergencyStopAll("OVERFLOW DETECTED");
+
+      // Flush debug buffer before sending Telegram notification
+      DebugHelper::flushBuffer();
+
+      // Send Telegram notification
+      if (WiFi.isConnected()) {
+        String message = "🚨🚨🚨 <b>WATER OVERFLOW DETECTED</b> 🚨🚨🚨\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "🔧 Master overflow sensor triggered\n";
+        message += "💧 Water is overflowing from tray!\n\n";
+        message += "✅ Emergency actions taken:\n";
+        message += "  • All valves CLOSED\n";
+        message += "  • Pump STOPPED\n";
+        message += "  • System LOCKED\n\n";
+        message += "⚠️  Manual intervention required!\n";
+        message += "Send /reset_overflow to resume operations";
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                     "&text=";
+
+        // URL encode the message
+        String encoded = "";
+        for (size_t i = 0; i < message.length(); i++) {
+          char c = message.charAt(i);
+          if (c == ' ') {
+            encoded += "+";
+          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += c;
+          } else {
+            encoded += '%';
+            char hex[3];
+            sprintf(hex, "%02X", c);
+            encoded += hex;
+          }
+        }
+
+        url += encoded + "&parse_mode=HTML";
+
+        http.begin(client, url);
+        http.setTimeout(10000);
+        http.GET();
+        http.end();
+
+        DebugHelper::debugImportant("📱 Overflow notification sent to Telegram");
+      }
+    }
+  }
+}
+
+// ========== EMERGENCY STOP ALL ==========
+// Force stop all watering operations immediately
+inline void WateringSystem::emergencyStopAll(const String &reason) {
+  DebugHelper::debugImportant("🚨 EMERGENCY STOP: " + reason);
+
+  // Force close all valves via direct GPIO control
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], LOW);
+    valves[i]->state = VALVE_CLOSED;
+    valves[i]->phase = PHASE_IDLE;
+  }
+
+  // Force pump off via direct GPIO control
+  digitalWrite(PUMP_PIN, LOW);
+  pumpState = PUMP_OFF;
+
+  // Turn off LED
+  statusLED.clear();
+  statusLED.show();
+
+  // Stop sequential mode if active
+  sequentialMode = false;
+
+  DebugHelper::debugImportant("✓ All valves closed, pump stopped, system halted");
+}
+
+// ========== RESET OVERFLOW FLAG ==========
+inline void WateringSystem::resetOverflowFlag() {
+  overflowDetected = false;
+  DebugHelper::debugImportant("✓ Overflow flag reset - system ready to resume");
+}
+
 // ========== Automatic Watering Check ==========
 inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
+  // OVERFLOW CHECK: Block all watering if overflow detected
+  if (overflowDetected) {
+    return;
+  }
+
+  // HALT MODE CHECK: Block auto-watering
+  if (haltMode) {
+    return;
+  }
+
   // Check each valve to see if it's time to water automatically
   for (int i = 0; i < NUM_VALVES; i++) {
     ValveController *valve = valves[i];
@@ -501,6 +700,18 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
 
 // ========== Watering Control ==========
 inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
+  // OVERFLOW CHECK: Block all watering if overflow detected
+  if (overflowDetected) {
+    DebugHelper::debug("🚨 Watering blocked - OVERFLOW DETECTED");
+    return;
+  }
+
+  // HALT MODE CHECK: Block all watering operations
+  if (haltMode) {
+    DebugHelper::debug("🛑 Watering blocked - system in HALT MODE");
+    return;
+  }
+
   if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
     DebugHelper::debugImportant("Invalid valve index: " + String(valveIndex));
     publishStateChange("error", "invalid_valve_index");
@@ -617,6 +828,18 @@ inline void WateringSystem::stopWatering(int valveIndex) {
 }
 
 inline void WateringSystem::startSequentialWatering() {
+  // OVERFLOW CHECK: Block all watering if overflow detected
+  if (overflowDetected) {
+    DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
+    return;
+  }
+
+  // HALT MODE CHECK: Block all watering operations
+  if (haltMode) {
+    DebugHelper::debug("🛑 Sequential watering blocked - system in HALT MODE");
+    return;
+  }
+
   if (sequentialMode) {
     DebugHelper::debug("Sequential watering already in progress");
     return;
@@ -662,6 +885,18 @@ inline void WateringSystem::startSequentialWatering() {
 
 inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
                                                           int count) {
+  // OVERFLOW CHECK: Block all watering if overflow detected
+  if (overflowDetected) {
+    DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
+    return;
+  }
+
+  // HALT MODE CHECK: Block all watering operations
+  if (haltMode) {
+    DebugHelper::debug("🛑 Sequential watering blocked - system in HALT MODE");
+    return;
+  }
+
   if (sequentialMode) {
     DebugHelper::debug("Sequential watering already in progress");
     return;
@@ -763,17 +998,28 @@ inline void WateringSystem::startNextInSequence() {
 
 // ========== Hardware Control ==========
 inline bool WateringSystem::readRainSensor(int valveIndex) {
+  // SAFETY: Verify power pin is configured correctly
+  pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+
   // Power on sensor
   digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
   delay(SENSOR_POWER_STABILIZATION);
 
   // Read sensor: LOW = wet, HIGH = dry (with pull-up)
-  bool sensorValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
+  int rawValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
 
   // Power off immediately
   digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
 
-  return (sensorValue == LOW); // LOW = wet/rain detected
+  // ENHANCED LOGGING: Log actual GPIO values for debugging
+  static unsigned long lastDetailedLog = 0;
+  if (millis() - lastDetailedLog > 5000) {  // Detailed log every 5s
+    DebugHelper::debug("Sensor " + String(valveIndex) + " GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) +
+                      ": raw=" + String(rawValue) + " (" + String(rawValue == LOW ? "WET" : "DRY") + ")");
+    lastDetailedLog = millis();
+  }
+
+  return (rawValue == LOW); // LOW = wet/rain detected
 }
 
 inline void WateringSystem::openValve(int valveIndex) {
@@ -1282,19 +1528,15 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     return;
   }
 
-  // Get current time from DS3231 RTC
-  struct tm timeinfo;
-  if (!DS3231RTC::getLocalTime(&timeinfo)) {
-    DebugHelper::debugImportant("❌ Cannot send schedule: DS3231 RTC error - "
-                                "will retry on next watering");
-    return;
-  }
+  // Get current time from system time (already set from RTC at boot)
+  time_t now;
+  time(&now);
+  struct tm *timeinfo = localtime(&now);
 
   // Flush debug buffer before sending schedule notification
   DebugHelper::flushBuffer();
 
   unsigned long currentTime = millis();
-  time_t now = DS3231RTC::getTime();
 
   // Build schedule data for all valves (4 columns: tray, planned, duration,
   // cycle)
@@ -1456,6 +1698,136 @@ inline bool WateringSystem::hasOverdueValves() {
   }
 
   return false; // No overdue valves
+}
+
+// ========== Halt Mode Control ==========
+inline void WateringSystem::setHaltMode(bool enabled) {
+  haltMode = enabled;
+
+  if (enabled) {
+    DebugHelper::debugImportant("🛑 HALT MODE ACTIVATED");
+    DebugHelper::debugImportant("  All watering operations BLOCKED");
+    DebugHelper::debugImportant("  System ready for firmware update");
+    DebugHelper::debugImportant("  Send /resume to exit halt mode");
+
+    // Stop any ongoing watering
+    if (sequentialMode) {
+      stopSequentialWatering();
+    }
+    for (int i = 0; i < NUM_VALVES; i++) {
+      if (valves[i]->phase != PHASE_IDLE) {
+        stopWatering(i);
+      }
+    }
+
+    // Turn off LED
+    statusLED.clear();
+    statusLED.show();
+  } else {
+    DebugHelper::debugImportant("▶️ HALT MODE DEACTIVATED");
+    DebugHelper::debugImportant("  Normal operations resumed");
+  }
+}
+
+// ========== Sensor Diagnostic Functions ==========
+inline void WateringSystem::testSensor(int valveIndex) {
+  if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+    DebugHelper::debugImportant("❌ Invalid valve index: " + String(valveIndex));
+    return;
+  }
+
+  DebugHelper::debugImportant("🔍 TESTING SENSOR " + String(valveIndex) + ":");
+
+  // Test 1: Check power pin configuration
+  DebugHelper::debug("  1️⃣ Checking power pin (GPIO " + String(RAIN_SENSOR_POWER_PIN) + ")");
+  pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+  DebugHelper::debug("     ✓ Power pin configured as OUTPUT");
+
+  // Test 2: Check sensor pin configuration
+  DebugHelper::debug("  2️⃣ Checking sensor pin (GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) + ")");
+  pinMode(RAIN_SENSOR_PINS[valveIndex], INPUT_PULLUP);
+  DebugHelper::debug("     ✓ Sensor pin configured as INPUT_PULLUP");
+
+  // Test 3: Read sensor with power OFF (should be HIGH due to pullup)
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  delay(100);
+  int valueOff = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
+  DebugHelper::debug("  3️⃣ Sensor reading (power OFF): " + String(valueOff) +
+                     " (" + String(valueOff == HIGH ? "HIGH - DRY ✓" : "LOW - UNEXPECTED ⚠️") + ")");
+
+  // Test 4: Read sensor with power ON (actual reading)
+  digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+  delay(SENSOR_POWER_STABILIZATION);
+  int valueOn = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+
+  DebugHelper::debug("  4️⃣ Sensor reading (power ON): " + String(valueOn) +
+                     " (" + String(valueOn == LOW ? "LOW - WET 💧" : "HIGH - DRY ☀️") + ")");
+
+  // Test 5: Voltage check (if available)
+  DebugHelper::debug("  5️⃣ Final result: Sensor is " +
+                     String(valueOn == LOW ? "WET (tray is FULL)" : "DRY (tray is EMPTY)"));
+
+  // Summary
+  if (valueOff != HIGH) {
+    DebugHelper::debugImportant("  ⚠️ WARNING: Sensor reads LOW when power is OFF - check pullup resistor!");
+  }
+
+  DebugHelper::debug("  ✓ Test complete for sensor " + String(valveIndex));
+}
+
+inline void WateringSystem::testAllSensors() {
+  DebugHelper::debugImportant("═══════════════════════════════════════");
+  DebugHelper::debugImportant("🔍 TESTING ALL " + String(NUM_VALVES) + " SENSORS");
+  DebugHelper::debugImportant("═══════════════════════════════════════");
+
+  // Test power pin first
+  DebugHelper::debug("Power pin: GPIO " + String(RAIN_SENSOR_POWER_PIN));
+  pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+
+  // Create summary table
+  String summary = "\n📊 SENSOR TEST SUMMARY:\n";
+  summary += "Tray | GPIO | Power OFF | Power ON | Status\n";
+  summary += "-----|------|-----------|----------|-------\n";
+
+  for (int i = 0; i < NUM_VALVES; i++) {
+    // Configure sensor pin
+    pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
+
+    // Read with power OFF
+    digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+    delay(50);
+    int valueOff = digitalRead(RAIN_SENSOR_PINS[i]);
+
+    // Read with power ON
+    digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+    delay(SENSOR_POWER_STABILIZATION);
+    int valueOn = digitalRead(RAIN_SENSOR_PINS[i]);
+    digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+
+    // Add to summary
+    String tray = String(i + 1);
+    while (tray.length() < 4) tray = " " + tray;
+
+    String gpio = String(RAIN_SENSOR_PINS[i]);
+    while (gpio.length() < 4) gpio = " " + gpio;
+
+    String off = valueOff == HIGH ? "HIGH(DRY)" : "LOW(WET) ";
+    String on = valueOn == LOW ? "LOW(WET)" : "HIGH(DRY)";
+    String status = valueOn == LOW ? "💧 WET" : "☀️ DRY";
+
+    // Add warning if power-off reading is wrong
+    if (valueOff != HIGH) {
+      status += " ⚠️";
+    }
+
+    summary += tray + " | " + gpio + " | " + off + " | " + on + "  | " + status + "\n";
+  }
+
+  DebugHelper::debug(summary);
+  DebugHelper::debugImportant("═══════════════════════════════════════");
+  DebugHelper::debugImportant("✓ ALL SENSORS TESTED");
+  DebugHelper::debugImportant("═══════════════════════════════════════");
 }
 
 // ============================================

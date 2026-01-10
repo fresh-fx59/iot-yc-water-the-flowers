@@ -1,12 +1,14 @@
 /**
  * Smart Watering System - Main Entry Point
  * ESP32-S3-N8R2
- * Version: 1.10.4 - DS3231 RTC Integration
+ * Version: 1.12.1 - Master Overflow Sensor + Emergency Halt Mode
  *
- * Controls 6 valves, 6 rain sensors, and 1 water pump
+ * Controls 6 valves, 6 rain sensors, 1 water pump, and master overflow sensor
  * Features time-based learning algorithm with automatic watering
  * Persists learning data to flash storage
  * Uses DS3231 RTC as source of truth for time
+ * Master overflow sensor (GPIO 42) provides emergency water overflow detection
+ * 10-second boot countdown for emergency firmware updates
  */
 
 #include <WiFi.h>
@@ -36,6 +38,7 @@ WateringSystem wateringSystem;
 
 // ============================================
 // DS3231 RTC Initialization
+// Professional approach: Set system time once at boot
 // ============================================
 void initializeRTC() {
     DebugHelper::debug("Initializing DS3231 RTC...");
@@ -47,31 +50,26 @@ void initializeRTC() {
         return;
     }
 
-    // Read and display current time
-    struct tm timeinfo;
-    if (DS3231RTC::getLocalTime(&timeinfo)) {
-        char buffer[30];
-        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-        DebugHelper::debug("✓ DS3231 Time: " + String(buffer));
+    // Set ESP32 system time from RTC (ONCE!)
+    if (!DS3231RTC::setSystemTimeFromRTC()) {
+        DebugHelper::debugImportant("⚠️ Failed to set system time from RTC");
+        return;
+    }
 
-        // Read and display temperature
-        float temp = DS3231RTC::getTemperature();
-        char tempBuffer[20];
-        snprintf(tempBuffer, sizeof(tempBuffer), "%.2f °C", temp);
-        DebugHelper::debug("✓ DS3231 Temperature: " + String(tempBuffer));
+    // Read additional RTC info
+    float temp = DS3231RTC::getTemperature();
+    char tempBuffer[20];
+    snprintf(tempBuffer, sizeof(tempBuffer), "%.2f °C", temp);
+    DebugHelper::debug("✓ DS3231 Temperature: " + String(tempBuffer));
 
-        // Read and display battery voltage
-        float battery = DS3231RTC::getBatteryVoltage();
-        char batteryBuffer[30];
-        snprintf(batteryBuffer, sizeof(batteryBuffer), "%.3f V", battery);
-        DebugHelper::debug("✓ DS3231 Battery: " + String(batteryBuffer));
+    float battery = DS3231RTC::getBatteryVoltage();
+    char batteryBuffer[30];
+    snprintf(batteryBuffer, sizeof(batteryBuffer), "%.3f V", battery);
+    DebugHelper::debug("✓ DS3231 Battery: " + String(batteryBuffer));
 
-        // Warn if battery is low
-        if (battery < 2.5) {
-            DebugHelper::debugImportant("⚠️ DS3231 battery low (" + String(batteryBuffer) + ") - replace soon!");
-        }
-    } else {
-        DebugHelper::debugImportant("⚠️ Failed to read time from DS3231");
+    // Warn if battery is low
+    if (battery < 2.5) {
+        DebugHelper::debugImportant("⚠️ DS3231 battery low (" + String(batteryBuffer) + ") - replace soon!");
     }
 }
 
@@ -86,6 +84,120 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/stop");
     httpServer.on("/api/status", HTTP_GET, handleStatusApi);
     Serial.println("  ✓ Registered /api/status");
+}
+
+// ============================================
+// Boot Countdown for Emergency Halt
+// ============================================
+void bootCountdown() {
+    if (!NetworkManager::isWiFiConnected()) {
+        DebugHelper::debug("⚠️ WiFi not connected - skipping countdown");
+        return;
+    }
+
+    // Flush buffered debug messages before sending notification
+    DebugHelper::flushBuffer();
+
+    // Send countdown notification
+    String message = "🟢 <b>Device Online</b>\n";
+    message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+    message += "📍 IP: " + WiFi.localIP().toString() + "\n";
+    message += "📶 WiFi: " + String(WiFi.RSSI()) + " dBm\n";
+    message += "🔧 Version: " + String(VERSION) + "\n\n";
+    message += "⏱️ <b>Starting in 10 seconds...</b>\n";
+    message += "Send /halt to prevent operations and enter firmware update mode";
+
+    DebugHelper::debug("📱 Sending countdown notification...");
+    HTTPClient http;
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                 "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID + "&text=";
+
+    // URL encode the message (simple encoding)
+    String encoded = "";
+    for (size_t i = 0; i < message.length(); i++) {
+        char c = message.charAt(i);
+        if (c == ' ') {
+            encoded += "+";
+        } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += c;
+        } else {
+            encoded += '%';
+            char hex[3];
+            sprintf(hex, "%02X", c);
+            encoded += hex;
+        }
+    }
+
+    url += encoded + "&parse_mode=HTML";
+    http.begin(client, url);
+    http.setTimeout(10000);
+    int httpCode = http.GET();
+    http.end();
+
+    if (httpCode == 200) {
+        DebugHelper::debug("✓ Countdown notification sent");
+    } else {
+        DebugHelper::debug("⚠️ Failed to send countdown notification (HTTP " + String(httpCode) + ")");
+    }
+
+    // 10-second countdown loop
+    int lastUpdateId = 0;
+    unsigned long countdownStart = millis();
+    const unsigned long COUNTDOWN_DURATION = 10000; // 10 seconds
+
+    DebugHelper::debug("⏱️ Starting 10-second countdown...");
+    DebugHelper::debug("   Send /halt via Telegram to enter firmware update mode");
+
+    while (millis() - countdownStart < COUNTDOWN_DURATION) {
+        // Check for Telegram commands
+        String command = TelegramNotifier::checkForCommands(lastUpdateId);
+
+        if (command == "/halt" || command == "halt") {
+            DebugHelper::debugImportant("🛑 HALT command received!");
+            wateringSystem.setHaltMode(true);
+
+            // Send confirmation
+            String haltMessage = "🛑 <b>HALT MODE ACTIVATED</b>\n\n";
+            haltMessage += "• All watering operations BLOCKED\n";
+            haltMessage += "• System ready for firmware update\n";
+            haltMessage += "• OTA: http://" + WiFi.localIP().toString() + "/firmware\n";
+            haltMessage += "• Send /resume to exit halt mode";
+
+            DebugHelper::flushBuffer();
+
+            // URL encode halt message
+            String encodedHalt = "";
+            for (size_t i = 0; i < haltMessage.length(); i++) {
+                char c = haltMessage.charAt(i);
+                if (c == ' ') {
+                    encodedHalt += "+";
+                } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                    encodedHalt += c;
+                } else {
+                    encodedHalt += '%';
+                    char hex[3];
+                    sprintf(hex, "%02X", c);
+                    encodedHalt += hex;
+                }
+            }
+
+            http.begin(client, String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                       "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID + "&text=" +
+                       encodedHalt + "&parse_mode=HTML");
+            http.GET();
+            http.end();
+
+            return; // Exit countdown - halt mode active
+        }
+
+        delay(500); // Check every 500ms
+        yield(); // Feed watchdog
+    }
+
+    DebugHelper::debug("✓ Countdown complete - normal operation mode");
 }
 
 // ============================================
@@ -104,7 +216,7 @@ void setup() {
     DebugHelper::debug("Smart Watering System");
     DebugHelper::debug("Platform: ESP32-S3-N8R2");
     DebugHelper::debug("Version: " + String(VERSION));
-    DebugHelper::debug("Device ID: " + String(YC_DEVICE_ID));
+    DebugHelper::debug("Device ID: " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
 
@@ -140,13 +252,8 @@ void setup() {
     NetworkManager::setWateringSystem(&wateringSystem);
     NetworkManager::init();
 
-    // IDEMPOTENT MIGRATION: Delete old learning data file (if exists)
-    if (LittleFS.exists(LEARNING_DATA_FILE_OLD)) {
-        DebugHelper::debugImportant("🔄 MIGRATION: Deleting old learning data: " + String(LEARNING_DATA_FILE_OLD));
-        LittleFS.remove(LEARNING_DATA_FILE_OLD);
-    }
-
     // Load learning data (DS3231 provides time, no WiFi dependency)
+    // Note: First boot will show VFS error log when file doesn't exist (harmless)
     if (!wateringSystem.loadLearningData()) {
         DebugHelper::debugImportant("⚠️  No saved learning data found - will calibrate on first watering");
     }
@@ -165,6 +272,11 @@ void setup() {
     // Initialize OTA updates
     setupOta();
 
+    // ============================================
+    // BOOT COUNTDOWN: 10-second emergency halt window
+    // ============================================
+    bootCountdown();
+
     DebugHelper::debug("Setup completed - starting main loop");
 }
 
@@ -177,24 +289,30 @@ bool firstLoop = true;
 // Main Loop
 // ============================================
 void loop() {
-    // First loop: Send notifications and smart boot watering
+    // First loop: Send schedule and smart boot watering (if not in halt mode)
     if (firstLoop && NetworkManager::isWiFiConnected()) {
         firstLoop = false;
-        TelegramNotifier::sendDeviceOnline(VERSION, DEVICE_TYPE);
-        wateringSystem.sendWateringSchedule("Startup Schedule");
 
-        // Smart boot watering: only water if needed
-        // 1. Fresh device (no calibration data) - water to establish baseline
-        // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
-        // This prevents over-watering during frequent power cycles
-        if (wateringSystem.isFirstBoot()) {
-            DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
-            wateringSystem.startSequentialWatering();
-        } else if (wateringSystem.hasOverdueValves()) {
-            DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
-            wateringSystem.startSequentialWatering();
+        // Skip boot watering if in halt mode
+        if (wateringSystem.isHaltMode()) {
+            DebugHelper::debug("🛑 Halt mode active - skipping boot watering");
         } else {
-            DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
+            // Send watering schedule
+            wateringSystem.sendWateringSchedule("Startup Schedule");
+
+            // Smart boot watering: only water if needed
+            // 1. Fresh device (no calibration data) - water to establish baseline
+            // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
+            // This prevents over-watering during frequent power cycles
+            if (wateringSystem.isFirstBoot()) {
+                DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
+                wateringSystem.startSequentialWatering();
+            } else if (wateringSystem.hasOverdueValves()) {
+                DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
+                wateringSystem.startSequentialWatering();
+            } else {
+                DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
+            }
         }
     }
 

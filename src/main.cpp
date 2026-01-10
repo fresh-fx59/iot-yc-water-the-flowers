@@ -35,10 +35,51 @@
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
+int lastUpdateId = 0; // Telegram update ID
+
+// ============================================
+// Telegram Command Handler
+// ============================================
+void checkTelegramCommands() {
+    if (!NetworkManager::isWiFiConnected()) {
+        return;
+    }
+
+    String command = TelegramNotifier::checkForCommands(lastUpdateId);
+
+    if (command == "/halt" || command == "halt") {
+        if (!wateringSystem.isHaltMode()) {
+            DebugHelper::debugImportant("🛑 HALT command received!");
+            wateringSystem.setHaltMode(true);
+
+            // Send confirmation
+            String haltMessage = "🛑 <b>HALT MODE ACTIVATED</b>\n\n";
+            haltMessage += "• All watering operations BLOCKED\n";
+            haltMessage += "• System ready for firmware update\n";
+            haltMessage += "• OTA: http://" + WiFi.localIP().toString() + "/firmware\n";
+            haltMessage += "• Send /resume to exit halt mode";
+
+            DebugHelper::flushBuffer();
+            sendTelegramDebug(haltMessage);
+        }
+    } else if (command == "/resume" || command == "resume") {
+        if (wateringSystem.isHaltMode()) {
+            DebugHelper::debugImportant("▶️ RESUME command received!");
+            wateringSystem.setHaltMode(false);
+
+            // Send confirmation
+            String resumeMessage = "▶️ <b>SYSTEM RESUMED</b>\n\n";
+            resumeMessage += "• Normal operations restored.\n";
+            resumeMessage += "• Send /halt to re-enter halt mode.";
+
+            DebugHelper::flushBuffer();
+            sendTelegramDebug(resumeMessage);
+        }
+    }
+}
 
 // ============================================
 // DS3231 RTC Initialization
-// Professional approach: Set system time once at boot
 // ============================================
 void initializeRTC() {
     DebugHelper::debug("Initializing DS3231 RTC...");
@@ -108,43 +149,9 @@ void bootCountdown() {
     message += "Send /halt to prevent operations and enter firmware update mode";
 
     DebugHelper::debug("📱 Sending countdown notification...");
-    HTTPClient http;
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                 "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID + "&text=";
-
-    // URL encode the message (simple encoding)
-    String encoded = "";
-    for (size_t i = 0; i < message.length(); i++) {
-        char c = message.charAt(i);
-        if (c == ' ') {
-            encoded += "+";
-        } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded += c;
-        } else {
-            encoded += '%';
-            char hex[3];
-            sprintf(hex, "%02X", c);
-            encoded += hex;
-        }
-    }
-
-    url += encoded + "&parse_mode=HTML";
-    http.begin(client, url);
-    http.setTimeout(10000);
-    int httpCode = http.GET();
-    http.end();
-
-    if (httpCode == 200) {
-        DebugHelper::debug("✓ Countdown notification sent");
-    } else {
-        DebugHelper::debug("⚠️ Failed to send countdown notification (HTTP " + String(httpCode) + ")");
-    }
+    sendTelegramDebug(message);
 
     // 10-second countdown loop
-    int lastUpdateId = 0;
     unsigned long countdownStart = millis();
     const unsigned long COUNTDOWN_DURATION = 10000; // 10 seconds
 
@@ -152,47 +159,10 @@ void bootCountdown() {
     DebugHelper::debug("   Send /halt via Telegram to enter firmware update mode");
 
     while (millis() - countdownStart < COUNTDOWN_DURATION) {
-        // Check for Telegram commands
-        String command = TelegramNotifier::checkForCommands(lastUpdateId);
-
-        if (command == "/halt" || command == "halt") {
-            DebugHelper::debugImportant("🛑 HALT command received!");
-            wateringSystem.setHaltMode(true);
-
-            // Send confirmation
-            String haltMessage = "🛑 <b>HALT MODE ACTIVATED</b>\n\n";
-            haltMessage += "• All watering operations BLOCKED\n";
-            haltMessage += "• System ready for firmware update\n";
-            haltMessage += "• OTA: http://" + WiFi.localIP().toString() + "/firmware\n";
-            haltMessage += "• Send /resume to exit halt mode";
-
-            DebugHelper::flushBuffer();
-
-            // URL encode halt message
-            String encodedHalt = "";
-            for (size_t i = 0; i < haltMessage.length(); i++) {
-                char c = haltMessage.charAt(i);
-                if (c == ' ') {
-                    encodedHalt += "+";
-                } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-                    encodedHalt += c;
-                } else {
-                    encodedHalt += '%';
-                    char hex[3];
-                    sprintf(hex, "%02X", c);
-                    encodedHalt += hex;
-                }
-            }
-
-            http.begin(client, String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                       "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID + "&text=" +
-                       encodedHalt + "&parse_mode=HTML");
-            http.GET();
-            http.end();
-
-            return; // Exit countdown - halt mode active
+        checkTelegramCommands();
+        if (wateringSystem.isHaltMode()) {
+            return; // Exit countdown if halt mode is activated
         }
-
         delay(500); // Check every 500ms
         yield(); // Feed watchdog
     }
@@ -289,32 +259,37 @@ bool firstLoop = true;
 // Main Loop
 // ============================================
 void loop() {
+    // If in halt mode, only check for telegram commands
+    if (wateringSystem.isHaltMode()) {
+        checkTelegramCommands();
+        delay(1000); // Check for commands every second
+        return;
+    }
+
     // First loop: Send schedule and smart boot watering (if not in halt mode)
     if (firstLoop && NetworkManager::isWiFiConnected()) {
         firstLoop = false;
 
-        // Skip boot watering if in halt mode
-        if (wateringSystem.isHaltMode()) {
-            DebugHelper::debug("🛑 Halt mode active - skipping boot watering");
-        } else {
-            // Send watering schedule
-            wateringSystem.sendWateringSchedule("Startup Schedule");
+        // Send watering schedule
+        wateringSystem.sendWateringSchedule("Startup Schedule");
 
-            // Smart boot watering: only water if needed
-            // 1. Fresh device (no calibration data) - water to establish baseline
-            // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
-            // This prevents over-watering during frequent power cycles
-            if (wateringSystem.isFirstBoot()) {
-                DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
-                wateringSystem.startSequentialWatering();
-            } else if (wateringSystem.hasOverdueValves()) {
-                DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
-                wateringSystem.startSequentialWatering();
-            } else {
-                DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
-            }
+        // Smart boot watering: only water if needed
+        // 1. Fresh device (no calibration data) - water to establish baseline
+        // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
+        // This prevents over-watering during frequent power cycles
+        if (wateringSystem.isFirstBoot()) {
+            DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
+            wateringSystem.startSequentialWatering();
+        } else if (wateringSystem.hasOverdueValves()) {
+            DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
+            wateringSystem.startSequentialWatering();
+        } else {
+            DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
         }
     }
+
+    // Handle other tasks
+    checkTelegramCommands();
 
     // Check WiFi connection
     if (!NetworkManager::isWiFiConnected()) {

@@ -4,6 +4,8 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 **Version 1.12.1** - Master Overflow Sensor + Emergency Halt Mode + Multi-Layer Safety System!
 
+[Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
+
 ## 🛡️ Safety Improvements (v1.11.0 - v1.12.1)
 
 ### Multi-Layer Timeout Protection

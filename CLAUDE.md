@@ -40,9 +40,12 @@ platformio device monitor -b 115200 --raw
 
 **Test Firmware Features:**
 - **Web Dashboard** at `http://<device-ip>/dashboard` with real-time output & controls
-- Test all hardware components (pump, valves, rain sensors)
-- Test DS3231 RTC (I2C at GPIO 14/3)
-- Test water level sensor (GPIO 19)
+  - Test all hardware components (pump, valves, rain sensors)
+  - Individual sensor testing (R1-R6 for single read, M1-M6 for continuous monitor)
+  - Test DS3231 RTC (I2C at GPIO 14/3) with current time sync
+  - Test water level sensor (GPIO 19)
+  - WebSocket-based real-time console output
+  - All serial commands available as clickable buttons
 - Interactive serial menu (press 'H' for help)
 - **WiFi + OTA + WebSocket support** for remote firmware switching
 - No MQTT/Telegram/production watering logic
@@ -450,11 +453,14 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
 - DS3231 Battery Monitor: ADC=GPIO 1, Control=GPIO 2
 
 **Rain Sensor Reading Logic**:
-- Sensors powered via GPIO 18 optocoupler (on-demand to save power)
+- **CRITICAL**: Sensors require TWO power signals to function:
+  1. **Valve pin HIGH** (GPIO 5/6/7/15/16/17) - Powers the specific sensor circuit
+  2. **GPIO 18 HIGH** - Enables the common sensor power rail via optocoupler
+- Reading sequence: Set valve pin HIGH → Set GPIO 18 HIGH → delay 100ms → read sensor → power off
 - LOW (0) = WET (sensor pulls to ground when water detected)
 - HIGH (1) = DRY (internal pull-up resistor keeps line high when dry)
-- Power-on sequence: Set GPIO 18 HIGH, delay 100ms, read sensor, set LOW
 - Sensors configured with INPUT_PULLUP mode in setup
+- Production firmware reads sensors during watering (valve already open), test firmware powers both explicitly
 
 **Master Overflow Sensor (v1.12.1)**:
 - Rain sensor detects water overflow from trays
@@ -807,10 +813,23 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 - **LED**: `L` - Toggle LED
 - **Pump**: `P` - Toggle pump
 - **Valves**: `1-6` - Toggle individual valves, `A` - All on, `Z` - All off
-- **Rain Sensors**: `R` - Read once, `M` - Monitor continuous, `S` - Stop monitoring
+- **Rain Sensors (All)**: `R` - Read all once, `M` - Monitor all continuous, `S` - Stop monitoring
+- **Rain Sensors (Individual)**: `R1-R6` - Read specific sensor once, `M1-M6` - Monitor specific sensor continuous
 - **Water Level**: `W` - Read once, `N` - Monitor continuous
 - **DS3231 RTC**: `T` - Read time/temperature, `I` - Scan I2C bus
 - **System**: `F` - Full sequence test, `X` - Emergency stop, `H` - Show menu
+
+**Individual Sensor Commands Details**:
+- `R1` - Read sensor 1 (Valve GPIO 5, Sensor GPIO 8)
+- `R2` - Read sensor 2 (Valve GPIO 6, Sensor GPIO 9)
+- `R3` - Read sensor 3 (Valve GPIO 7, Sensor GPIO 10)
+- `R4` - Read sensor 4 (Valve GPIO 15, Sensor GPIO 11)
+- `R5` - Read sensor 5 (Valve GPIO 16, Sensor GPIO 12)
+- `R6` - Read sensor 6 (Valve GPIO 17, Sensor GPIO 13)
+- `M1-M6` - Same as above, but continuous monitoring (updates every 500ms)
+- `S` - Stops all monitoring and powers off all sensors
+
+**Important**: Individual sensor commands power only the specific valve pin + GPIO 18, minimizing power consumption during testing.
 
 **Switching between Production/Test firmware:**
 1. **To Test Mode**: `platformio run -t upload -e esp32-s3-devkitc-1-test`
@@ -938,7 +957,7 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 1. **Baud Rate**: MUST be 115200. Use `--raw` flag if output is gibberish
 2. **Filesystem Upload**: Always use `buildfs` before `uploadfs`. Files go to `/web/` not `/data/web/`
 3. **API vs Internal Indexing**: Web API uses 1-6, code uses 0-5 internally
-4. **Sensor Power**: GPIO 18 must go HIGH before reading sensors (100ms stabilization required)
+4. **Sensor Power - CRITICAL**: Rain sensors require TWO power signals: (1) Valve pin HIGH (specific sensor), (2) GPIO 18 HIGH (common rail). Reading sensors without powering the valve pin will always show WET (LOW). Production firmware reads during watering (valve already open), test firmware must explicitly power both.
 5. **Global Pointer**: `setWateringSystemRef()` MUST be called before `setupOta()` in setup(), otherwise web API will fail
 6. **Network Independence**: Watering algorithm continues even if WiFi/MQTT disconnects (by design)
 7. **LittleFS Initialization Order**: LittleFS MUST be initialized before `wateringSystem.init()` because init() loads learning data
@@ -955,3 +974,4 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 18. **Master Overflow Sensor** (v1.12.1): Overflow detection is NOT persistent across reboots - `overflowDetected` flag resets to false on boot, must send `/reset_overflow` if overflow persists after reboot
 19. **Overflow Recovery** (v1.12.1): After overflow detected, ALL watering blocked until manual intervention - send `reset_overflow` command ONLY after physically fixing overflow issue
 20. **Native Testing** (v1.13.0): Run `pio test -e native` to execute 20 unit tests on your desktop - no ESP32 hardware required, tests validate state machine and learning algorithm logic
+21. **Test Firmware Individual Sensors** (v1.13.1): Commands R1-R6 and M1-M6 power only the specific valve pin + GPIO 18, not all valves. This minimizes power consumption and allows precise per-sensor testing. Monitor commands (M1-M6) keep power on until stopped with 'S'.

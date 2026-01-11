@@ -267,20 +267,44 @@
       </div>
 
       <div class="section">
-        <h3>Rain Sensors</h3>
+        <h3>Rain Sensors - All</h3>
         <div class="btn-group">
           <button class="btn" onclick="sendCommand('R')">
-            <span>Read Once</span>
+            <span>Read All</span>
             <span class="btn-key">R</span>
           </button>
           <button class="btn" onclick="sendCommand('M')">
-            <span>Monitor Continuous</span>
+            <span>Monitor All</span>
             <span class="btn-key">M</span>
           </button>
           <button class="btn" onclick="sendCommand('S')">
             <span>Stop Monitoring</span>
             <span class="btn-key">S</span>
           </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Rain Sensors - Individual Read</h3>
+        <div class="btn-group grid-3">
+          <button class="btn" onclick="sendCommand('R1')">Sensor 1</button>
+          <button class="btn" onclick="sendCommand('R2')">Sensor 2</button>
+          <button class="btn" onclick="sendCommand('R3')">Sensor 3</button>
+          <button class="btn" onclick="sendCommand('R4')">Sensor 4</button>
+          <button class="btn" onclick="sendCommand('R5')">Sensor 5</button>
+          <button class="btn" onclick="sendCommand('R6')">Sensor 6</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Rain Sensors - Individual Monitor</h3>
+        <div class="btn-group grid-3">
+          <button class="btn" onclick="sendCommand('M1')">Sensor 1</button>
+          <button class="btn" onclick="sendCommand('M2')">Sensor 2</button>
+          <button class="btn" onclick="sendCommand('M3')">Sensor 3</button>
+          <button class="btn" onclick="sendCommand('M4')">Sensor 4</button>
+          <button class="btn" onclick="sendCommand('M5')">Sensor 5</button>
+          <button class="btn" onclick="sendCommand('M6')">Sensor 6</button>
         </div>
       </div>
 

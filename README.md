@@ -381,13 +381,15 @@ platformio device monitor -b 115200 --raw
 - **🌐 Web Dashboard** at `http://<device-ip>/dashboard`
   - Real-time serial output via WebSocket
   - Interactive test buttons for all commands
+  - **Individual sensor testing** (R1-R6 for single read, M1-M6 for continuous monitor)
   - Auto-scrolling console with color-coded output
   - Connection status indicator
   - No serial cable needed for testing!
 - Interactive serial menu (press `H` for help)
-- Test all hardware: LED, pump, 6 valves, 6 rain sensors
-- Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL)
+- Test all hardware: LED, pump, 6 valves, 6 rain sensors (individually or all at once)
+- Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL) with current time sync
 - Test water level sensor (GPIO 19)
+- Test master overflow sensor (GPIO 42)
 - I2C bus scanner
 - **WiFi & OTA support** - remotely switch back to production firmware
 
@@ -400,10 +402,23 @@ platformio device monitor -b 115200 --raw
 - `A` / `Z` - All valves on/off
 - `X` - Emergency stop (turn everything off)
 
-**Rain Sensors:**
+**Rain Sensors (All):**
 - `R` - Read all sensors once
-- `M` - Monitor continuously
+- `M` - Monitor all sensors continuously
 - `S` - Stop monitoring
+
+**Rain Sensors (Individual):**
+- `R1-R6` - Read specific sensor once (e.g., `R1` = Sensor 1: Valve GPIO 5, Sensor GPIO 8)
+- `M1-M6` - Monitor specific sensor continuously (e.g., `M6` = Sensor 6: Valve GPIO 17, Sensor GPIO 13)
+- `S` - Stop monitoring and power off
+
+**Individual Sensor GPIO Mapping:**
+- Sensor 1: Valve GPIO 5, Sensor GPIO 8
+- Sensor 2: Valve GPIO 6, Sensor GPIO 9
+- Sensor 3: Valve GPIO 7, Sensor GPIO 10
+- Sensor 4: Valve GPIO 15, Sensor GPIO 11
+- Sensor 5: Valve GPIO 16, Sensor GPIO 12
+- Sensor 6: Valve GPIO 17, Sensor GPIO 13
 
 **Water Level Sensor (GPIO 19):**
 - `W` - Read once

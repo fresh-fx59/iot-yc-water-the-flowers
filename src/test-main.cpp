@@ -19,7 +19,7 @@ void readDS3231Time();
 WebSocketsServer webSocket = WebSocketsServer(81);
 
 // Command queue for WebSocket commands
-char pendingCommand = '\0';
+String pendingCommand = "";
 
 // Global variable to store time data from WebSocket
 struct TimeData {
@@ -88,12 +88,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
                          pendingTimeData.dayOfWeek);
 
             // Trigger the set RTC command
-            pendingCommand = 'U';
+            pendingCommand = "U";
           }
         }
-        else if (cmd.length() == 1) {
-          pendingCommand = cmd.charAt(0);
-          Serial.printf("[WebSocket] Command queued: %c\n", pendingCommand);
+        else if (cmd.length() >= 1) {
+          pendingCommand = cmd;
+          Serial.printf("[WebSocket] Command queued: %s\n", cmd.c_str());
         }
       }
       break;
@@ -125,6 +125,7 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define RAIN_SENSOR4_PIN 11
 #define RAIN_SENSOR5_PIN 12
 #define RAIN_SENSOR6_PIN 13
+#define RAIN_SENSOR_POWER_PIN 18  // Optocoupler control for sensor power
 
 // Water level sensor pin
 #define WATER_LEVEL_SENSOR_PIN 19
@@ -178,7 +179,11 @@ void setup() {
     pinMode(VALVE_PINS[i], OUTPUT);
     digitalWrite(VALVE_PINS[i], LOW);
   }
-  
+
+  // Initialize rain sensor power pin
+  pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);  // Sensors off by default
+
   // Initialize rain sensor pins with internal pull-up
   for (int i = 0; i < NUM_VALVES; i++) {
     pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
@@ -296,7 +301,9 @@ void printMenu() {
   Serial.println();
   Serial.println("RAIN SENSOR TESTS:");
   Serial.println("  R - Read ALL rain sensors (once)");
+  Serial.println("  R1-R6 - Read specific sensor (e.g., R1, R6)");
   Serial.println("  M - Monitor ALL rain sensors (continuous)");
+  Serial.println("  M1-M6 - Monitor specific sensor (e.g., M1, M6)");
   Serial.println("  S - Stop monitoring");
   Serial.println();
   Serial.println("WATER LEVEL SENSOR TEST:");
@@ -407,18 +414,62 @@ void readRainSensors() {
   webLog("(HIGH = Dry / No rain)");
   webLog("");
 
+  // Power on sensors (requires both valve pins + GPIO 18)
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], HIGH);
+  }
+  digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+  delay(100);  // Wait for stabilization
+
+  // Read and display sensor values
   for (int i = 0; i < NUM_VALVES; i++) {
     int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
     String status = (sensorValue == LOW) ? "WET/RAIN ☔" : "DRY ☀";
     webLog("  Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): " +
            String(sensorValue) + " = " + status);
   }
+
+  // Power off everything
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  for (int i = 0; i < NUM_VALVES; i++) {
+    digitalWrite(VALVE_PINS[i], LOW);
+  }
+
+  webLog("");
+  webLog("→ Test by touching sensor with wet finger");
+  printSeparator();
+}
+
+void readSpecificRainSensor(int sensorIndex) {
+  webLog("RAIN SENSOR " + String(sensorIndex + 1) + " READING:");
+  webLog("(LOW = Rain detected / Sensor wet)");
+  webLog("(HIGH = Dry / No rain)");
+  webLog("");
+
+  // Power on specific sensor (valve pin + GPIO 18)
+  digitalWrite(VALVE_PINS[sensorIndex], HIGH);
+  digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+  delay(100);  // Wait for stabilization
+
+  // Read and display sensor value
+  int sensorValue = digitalRead(RAIN_SENSOR_PINS[sensorIndex]);
+  String status = (sensorValue == LOW) ? "WET/RAIN ☔" : "DRY ☀";
+  webLog("  Sensor " + String(sensorIndex + 1) +
+         " (Valve GPIO " + String(VALVE_PINS[sensorIndex]) +
+         ", Sensor GPIO " + String(RAIN_SENSOR_PINS[sensorIndex]) + "): " +
+         String(sensorValue) + " = " + status);
+
+  // Power off
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  digitalWrite(VALVE_PINS[sensorIndex], LOW);
+
   webLog("");
   webLog("→ Test by touching sensor with wet finger");
   printSeparator();
 }
 
 bool monitorMode = false;
+int monitorSensorIndex = -1;  // -1 = all sensors, 0-5 = specific sensor
 bool waterLevelMonitorMode = false;
 bool overflowMonitorMode = false;
 unsigned long lastMonitorTime = 0;
@@ -427,15 +478,30 @@ void monitorRainSensors() {
   unsigned long currentTime = millis();
   if (currentTime - lastMonitorTime >= 500) {
     webLog("");
-    webLog("╔══ RAIN SENSOR MONITOR (Press 'S' to stop) ══╗");
-    for (int i = 0; i < NUM_VALVES; i++) {
+    if (monitorSensorIndex == -1) {
+      // Monitor all sensors
+      webLog("╔══ RAIN SENSOR MONITOR (Press 'S' to stop) ══╗");
+      for (int i = 0; i < NUM_VALVES; i++) {
+        int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
+        String bar = (sensorValue == LOW) ? "████████" : "░░░░░░░░";
+        String status = (sensorValue == LOW) ? "WET" : "DRY";
+        webLog("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
+               bar + "] " + status);
+      }
+      webLog("╚════════════════════════════════════════════════╝");
+    } else {
+      // Monitor specific sensor
+      int i = monitorSensorIndex;
       int sensorValue = digitalRead(RAIN_SENSOR_PINS[i]);
       String bar = (sensorValue == LOW) ? "████████" : "░░░░░░░░";
       String status = (sensorValue == LOW) ? "WET" : "DRY";
-      webLog("Sensor " + String(i + 1) + " (GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
+      webLog("╔══ SENSOR " + String(i + 1) + " MONITOR (Press 'S' to stop) ══╗");
+      webLog("Sensor " + String(i + 1) +
+             " (Valve GPIO " + String(VALVE_PINS[i]) +
+             ", Sensor GPIO " + String(RAIN_SENSOR_PINS[i]) + "): [" +
              bar + "] " + status);
+      webLog("╚════════════════════════════════════════════════╝");
     }
-    webLog("╚════════════════════════════════════════════════╝");
     lastMonitorTime = currentTime;
   }
 }
@@ -1015,15 +1081,27 @@ void loop() {
 
   // Process command from WebSocket or Serial
   char cmd = '\0';
+  String fullCommand = "";
 
   // Check for WebSocket command first
-  if (pendingCommand != '\0') {
-    cmd = pendingCommand;
-    pendingCommand = '\0';
+  if (pendingCommand.length() > 0) {
+    fullCommand = pendingCommand;
+    cmd = pendingCommand.charAt(0);
+    pendingCommand = "";
   }
   // Then check for serial input
   else if (Serial.available() > 0) {
     cmd = Serial.read();
+    fullCommand = String(cmd);
+
+    // Check if there's a number following (for R1-R6, M1-M6 commands)
+    delay(10);  // Small delay to let full command arrive
+    if (Serial.available() > 0) {
+      char next = Serial.peek();
+      if (next >= '1' && next <= '6') {
+        fullCommand += String((char)Serial.read());
+      }
+    }
 
     // Clear any remaining characters in buffer
     while (Serial.available() > 0) {
@@ -1032,9 +1110,38 @@ void loop() {
   }
 
   // Process command if we have one
-  if (cmd != '\0') {
-    webLog("\nCommand: " + String(cmd));
+  if (fullCommand.length() > 0) {
+    webLog("\nCommand: " + fullCommand);
     webLog("");
+
+    // Handle multi-character commands (R1-R6, M1-M6)
+    if (fullCommand.length() == 2) {
+      char firstChar = fullCommand.charAt(0);
+      char secondChar = fullCommand.charAt(1);
+
+      // Check for R1-R6 (read specific sensor)
+      if ((firstChar == 'R' || firstChar == 'r') && secondChar >= '1' && secondChar <= '6') {
+        int sensorIndex = secondChar - '1';  // Convert '1'-'6' to 0-5
+        readSpecificRainSensor(sensorIndex);
+        return;  // Skip the switch statement
+      }
+
+      // Check for M1-M6 (monitor specific sensor)
+      if ((firstChar == 'M' || firstChar == 'm') && secondChar >= '1' && secondChar <= '6') {
+        int sensorIndex = secondChar - '1';  // Convert '1'-'6' to 0-5
+        monitorMode = true;
+        monitorSensorIndex = sensorIndex;
+        // Power on specific sensor
+        digitalWrite(VALVE_PINS[sensorIndex], HIGH);
+        digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+        delay(100);  // Wait for stabilization
+        webLog("→ Sensor " + String(sensorIndex + 1) + " monitoring ENABLED");
+        webLog("  (Valve GPIO " + String(VALVE_PINS[sensorIndex]) + " + GPIO 18 powered ON)");
+        webLog("  (Press 'S' to stop)");
+        printSeparator();
+        return;  // Skip the switch statement
+      }
+    }
 
     switch (cmd) {
       case 'L':
@@ -1084,7 +1191,15 @@ void loop() {
       case 'M':
       case 'm':
         monitorMode = true;
-        webLog("→ Rain sensor monitoring ENABLED");
+        monitorSensorIndex = -1;  // All sensors
+        // Power on all sensors (keep them on during monitoring)
+        for (int i = 0; i < NUM_VALVES; i++) {
+          digitalWrite(VALVE_PINS[i], HIGH);
+        }
+        digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
+        delay(100);  // Wait for stabilization
+        webLog("→ ALL rain sensors monitoring ENABLED");
+        webLog("  (All valve pins + GPIO 18 powered ON)");
         webLog("  (Press 'S' to stop)");
         printSeparator();
         break;
@@ -1092,9 +1207,16 @@ void loop() {
       case 'S':
       case 's':
         monitorMode = false;
+        monitorSensorIndex = -1;
         waterLevelMonitorMode = false;
         overflowMonitorMode = false;
+        // Power off all sensors
+        digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+        for (int i = 0; i < NUM_VALVES; i++) {
+          digitalWrite(VALVE_PINS[i], LOW);
+        }
         webLog("→ All monitoring STOPPED");
+        webLog("  (All power turned OFF)");
         printSeparator();
         break;
 

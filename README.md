@@ -2,11 +2,72 @@
 
 This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
 
-**Version 1.12.1** - Master Overflow Sensor + Emergency Halt Mode + Multi-Layer Safety System!
-
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-## 🛡️ Safety Improvements (v1.11.0 - v1.12.1)
+**Version 1.13.0** - Extracted State Machine Architecture + Comprehensive Testing + Learning Algorithm!
+
+## 🏗️ Architectural Improvements (v1.13.0)
+
+### Extracted State Machine Logic
+
+The state machine logic has been extracted into a separate, hardware-independent module for better testability and maintainability:
+
+**StateMachineLogic.h** - Pure state machine logic:
+- **Phase transitions**: Idle → Opening → Stabilization → Rain Check → Watering → Closing
+- **Built-in safety**: Timeout handling (normal 25s, emergency 30s)
+- **Hardware-independent**: No direct GPIO operations, returns actions to execute
+- **Pure functions**: Easily testable without ESP32 hardware
+
+**Benefits**:
+- ✅ Unit testable on desktop (no ESP32 required)
+- ✅ Clear separation of logic and hardware
+- ✅ Easier to reason about state transitions
+- ✅ Better reliability through comprehensive testing
+
+### Extracted Learning Algorithm
+
+The learning algorithm has been separated into reusable helper functions:
+
+**LearningAlgorithm.h** - Time-based learning helpers:
+- `calculateWaterLevelBefore()` - Calculate water level from fill duration ratio
+- `calculateEmptyDuration()` - Estimate time until tray is empty based on consumption
+- `formatDuration()` - Human-readable duration formatting (e.g., "2d 4h")
+
+**Benefits**:
+- ✅ Reusable across different components
+- ✅ Independently testable
+- ✅ No hardware dependencies
+- ✅ Clear, documented algorithms
+
+### Comprehensive Testing Infrastructure
+
+New native testing framework allows testing logic without hardware:
+
+**Test Files**:
+- `test/test_native_all.cpp` - Combined test suite (20 tests)
+- `test/test_state_machine.cpp` - State machine specific tests (17 tests)
+- `test/test_learning_algorithm.cpp` - Learning algorithm tests (3 tests)
+- `test/test_overwatering_scenarios.cpp` - Safety scenario tests
+
+**Test Coverage**:
+- ✅ All state machine phase transitions
+- ✅ Timeout handling (normal & emergency)
+- ✅ Full watering cycles from start to finish
+- ✅ Learning algorithm calculations
+- ✅ Overwatering scenarios and safety measures
+
+**Run Tests**:
+```bash
+# Run all native tests on your computer (no ESP32 required)
+pio test -e native
+```
+
+**Documentation**:
+- `NATIVE_TESTING_PLAN.md` - Testing strategy and framework
+- `OVERWATERING_RISK_ANALYSIS.md` - Safety analysis and mitigation
+- `OVERWATERING_TEST_SUMMARY.md` - Test results and validation
+
+## 🛡️ Safety Improvements (v1.11.0 - v1.12.5)
 
 ### Multi-Layer Timeout Protection
 
@@ -23,12 +84,12 @@ The system now includes **6 independent safety layers** to prevent overwatering:
   - Telegram alert sent with emergency details
 - **Recovery**: Manual intervention required, send `/reset_overflow` command
 
-**Layer 2: Reduced Timeouts**
-- MAX_WATERING_TIME: **20 seconds** (reduced from 25s)
+**Layer 2: Safety Timeouts** (v1.12.5)
+- MAX_WATERING_TIME: **25 seconds** (normal watering timeout)
 - ABSOLUTE_SAFETY_TIMEOUT: **30 seconds** (emergency hard limit)
 
 **Layer 3: Two-Tier State Machine Timeouts**
-- Normal timeout (20s): Standard valve closure with learning data processing
+- Normal timeout (25s): Standard valve closure with learning data processing
 - Emergency cutoff (30s): Forces hardware shutdown via direct GPIO control
 
 **Layer 4: Global Safety Watchdog**
@@ -217,7 +278,7 @@ tray | duration(sec) | status
 **Status Types** (v1.6.1 updated):
 - `✓ OK` - Watering completed successfully (sensor became wet after pump started)
 - `✓ FULL` - Tray was already full (sensor already wet before pump started)
-- `⚠️ TIMEOUT` - Exceeded 20s maximum watering time
+- `⚠️ TIMEOUT` - Exceeded 25s maximum watering time
 - `⚠️ STOPPED` - Watering stopped manually or other interruption
 
 **Configuration** (in `include/secret.h`):
@@ -966,7 +1027,8 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.12.1
+**Version:** 1.13.0
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** DS3231 RTC, Master Overflow Sensor, Emergency Halt Mode, 6-Layer Safety System, Time-Based Learning
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Master Overflow Sensor, Emergency Halt Mode, 6-Layer Safety System, Time-Based Learning
+**Testing:** 20 native tests (no hardware required)

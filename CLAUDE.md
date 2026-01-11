@@ -11,7 +11,8 @@ ESP32-S3 smart watering system controlling 6 valves, 6 rain sensors, and 1 water
 - Filesystem: LittleFS (1MB partition for web UI and learning data persistence)
 - Libraries: PubSubClient 2.8 (MQTT), ArduinoJson 6.21.0 (persistence), WiFiClientSecure (TLS), HTTPClient (Telegram), WebServer, mDNS, Adafruit NeoPixel 1.15.2
 - Time Source: DS3231 RTC (I2C at GPIO 14/3) with battery backup and temperature sensor
-- Current Version: 1.12.1 (defined in config.h:10)
+- Current Version: 1.13.0 (defined in config.h:10)
+- Testing: Native testing framework with 20 unit tests (no hardware required)
 
 ## Build & Deploy Commands
 
@@ -74,9 +75,9 @@ platformio run -t upload -e esp32-s3-devkitc-1 && \
 platformio device monitor -b 115200 --raw
 ```
 
-## Code Organization (v1.6.1 - Enhanced Telegram Debug)
+## Code Organization (v1.13.0 - Extracted State Machine Architecture)
 
-The codebase follows standard C++ organization with inline implementations in headers:
+The codebase follows standard C++ organization with inline implementations in headers. Version 1.13.0 introduces a major architectural improvement by extracting hardware-independent logic for better testability.
 
 ### File Structure
 
@@ -84,6 +85,8 @@ The codebase follows standard C++ organization with inline implementations in he
 include/
   ├── config.h                      # All constants and pin definitions
   ├── DS3231RTC.h                   # DS3231 Real-Time Clock helper library (v1.10.0+)
+  ├── StateMachineLogic.h           # Pure state machine logic (hardware-independent, v1.13.0)
+  ├── LearningAlgorithm.h           # Time-based learning helpers (pure functions, v1.13.0)
   ├── ValveController.h             # Valve state struct, enums, helper functions
   ├── WateringSystem.h              # Main watering logic + time-based learning + halt mode
   ├── WateringSystemStateMachine.h  # State machine + MQTT state publishing + safety timeouts
@@ -92,11 +95,18 @@ include/
   ├── DebugHelper.h                 # Queue-based debug system with retry & grouping (v1.6.1)
   ├── api_handlers.h                # Web API endpoints
   ├── ota.h                         # OTA updates and web server
+  ├── TestConfig.h                  # Configuration for native testing (v1.13.0)
   └── secret.h                      # WiFi/MQTT/Telegram credentials (not in git)
 
 src/
   ├── main.cpp                      # Production firmware + boot countdown (v1.12.0)
   └── test-main.cpp                 # Hardware test firmware with OTA + DS3231 tests
+
+test/
+  ├── test_native_all.cpp           # Combined test suite (20 tests, v1.13.0)
+  ├── test_state_machine.cpp        # State machine tests (17 tests, v1.13.0)
+  ├── test_learning_algorithm.cpp   # Learning algorithm tests (3 tests, v1.13.0)
+  └── test_overwatering_scenarios.cpp  # Safety scenario tests (v1.13.0)
 
 data/
   └── web/                          # Shared filesystem (served via LittleFS)
@@ -108,27 +118,44 @@ data/
           ├── index.html            # Test mode home page
           └── firmware.html         # OTA upload page
 
-platformio.ini                      # Two build environments:
+platformio.ini                      # Three build environments:
                                     # - esp32-s3-devkitc-1 (production)
                                     # - esp32-s3-devkitc-1-test (testing)
+                                    # - native (desktop unit tests, v1.13.0)
+
+NATIVE_TESTING_PLAN.md              # Testing strategy and framework (v1.13.0)
+OVERWATERING_RISK_ANALYSIS.md       # Safety analysis and mitigation (v1.13.0)
+OVERWATERING_TEST_SUMMARY.md        # Test results and validation (v1.13.0)
 ```
 
 ### Key Design Principles
 
 1. **Separation of Concerns**: Each header file has a single, well-defined responsibility
-2. **Helper Functions**: Complex logic extracted into namespaces (e.g., `LearningAlgorithm`)
-3. **Clear Documentation**: Each section is clearly marked with comments
-4. **Standard Patterns**: Uses inline functions in headers (common for embedded C++)
-5. **Persistence**: Learning data saved to LittleFS, survives reboots
+2. **Hardware Independence** (v1.13.0): Pure logic extracted for testability (StateMachineLogic.h, LearningAlgorithm.h)
+3. **Helper Functions**: Complex logic extracted into namespaces
+4. **Clear Documentation**: Each section is clearly marked with comments
+5. **Standard Patterns**: Uses inline functions in headers (common for embedded C++)
+6. **Persistence**: Learning data saved to LittleFS, survives reboots
+7. **Comprehensive Testing** (v1.13.0): 20 native unit tests run on desktop without hardware
 
 ### Working with the Refactored Code
 
 **Adding new features**:
 - Hardware config → `config.h`
+- State machine logic → `StateMachineLogic.h` (hardware-independent, v1.13.0)
+- Learning algorithm → `LearningAlgorithm.h` (pure functions, v1.13.0)
 - Valve logic → `WateringSystem.h` or `WateringSystemStateMachine.h`
 - Network features → `NetworkManager.h`
 - Web API → `api_handlers.h`
-- Learning algorithm → `WateringSystem.h` (LearningAlgorithm namespace)
+- Unit tests → `test/` directory (v1.13.0)
+
+**Running Tests** (v1.13.0):
+```bash
+# Run all native tests on your computer (no ESP32 required)
+pio test -e native
+
+# Expected output: 20 test cases: 20 succeeded
+```
 
 **The main.cpp file** is clean and minimal (~110 lines):
 - Global object declarations
@@ -139,7 +166,95 @@ platformio.ini                      # Two build environments:
 
 ## Architecture
 
-### Safety Features (v1.11.0 - v1.12.1)
+### Extracted State Machine (v1.13.0)
+
+**StateMachineLogic.h** - Hardware-independent state machine:
+
+The state machine logic has been extracted into a pure, testable module that returns actions instead of executing hardware operations directly.
+
+**Key Components**:
+- `ProcessResult` struct: Contains new phase, action to execute, and updated timestamps
+- `Action` enum: ACTION_OPEN_VALVE, ACTION_CLOSE_VALVE, ACTION_TURN_PUMP_ON, ACTION_TURN_PUMP_OFF, ACTION_READ_SENSOR, ACTION_EMERGENCY_STOP
+- `processValveLogic()`: Pure function that processes state transitions
+
+**Benefits**:
+- ✅ **Testable**: Can test state machine logic without ESP32 hardware
+- ✅ **Predictable**: Pure function with no side effects
+- ✅ **Clear**: Separates logic from hardware operations
+- ✅ **Reliable**: Comprehensive unit test coverage (17 tests)
+
+**Example Usage**:
+```cpp
+// Call pure logic function
+ProcessResult result = StateMachineLogic::processValveLogic(
+    currentPhase, currentTime, valveOpenTime, wateringStartTime,
+    lastRainCheck, isRaining, wateringRequested,
+    VALVE_STABILIZATION_DELAY, RAIN_CHECK_INTERVAL,
+    MAX_WATERING_TIME, ABSOLUTE_SAFETY_TIMEOUT
+);
+
+// Execute returned action
+switch (result.action) {
+    case ACTION_OPEN_VALVE: digitalWrite(valvePin, HIGH); break;
+    case ACTION_CLOSE_VALVE: digitalWrite(valvePin, LOW); break;
+    // ... etc
+}
+
+// Update state
+valve.phase = result.newPhase;
+valve.valveOpenTime = result.newValveOpenTime;
+```
+
+### Extracted Learning Algorithm (v1.13.0)
+
+**LearningAlgorithm.h** - Pure learning algorithm helpers:
+
+Time-based learning functions extracted into reusable, testable helpers:
+
+- `calculateWaterLevelBefore(fillDuration, baselineFillDuration)`: Calculate water level percentage before watering based on how long it took to fill
+- `calculateEmptyDuration(fillDuration, baselineFillDuration, timeSinceLastWatering)`: Estimate how long water lasts based on consumption rate
+- `formatDuration(milliseconds)`: Convert milliseconds to human-readable format (e.g., "2d 4h", "3h 15m")
+
+**Benefits**:
+- ✅ **Reusable**: Can be used across different components
+- ✅ **Testable**: Unit tests verify calculations (3 tests)
+- ✅ **Documented**: Clear algorithm documentation
+- ✅ **Reliable**: No hardware dependencies
+
+### Testing Infrastructure (v1.13.0)
+
+**Native Testing Framework**:
+
+The project includes comprehensive unit tests that run on your desktop without requiring ESP32 hardware:
+
+**Test Files**:
+- `test/test_native_all.cpp` - Combined test suite (20 tests)
+- `test/test_state_machine.cpp` - State machine specific tests (17 tests)
+- `test/test_learning_algorithm.cpp` - Learning algorithm tests (3 tests)
+- `test/test_overwatering_scenarios.cpp` - Safety scenario tests
+
+**Test Coverage**:
+- ✅ All state machine phase transitions (idle → opening → stabilization → checking → watering → closing)
+- ✅ Timeout handling (normal 25s timeout, emergency 30s cutoff)
+- ✅ Full watering cycles from start to completion
+- ✅ Learning algorithm calculations (water level, empty duration, formatting)
+- ✅ Overwatering scenarios and safety measures
+
+**Run Tests**:
+```bash
+# Run all native tests
+pio test -e native
+
+# Expected output:
+# ================= 20 test cases: 20 succeeded in 00:00:01.876 =================
+```
+
+**Documentation**:
+- `NATIVE_TESTING_PLAN.md` - Testing strategy and framework details
+- `OVERWATERING_RISK_ANALYSIS.md` - Safety analysis and mitigation strategies
+- `OVERWATERING_TEST_SUMMARY.md` - Test results and validation
+
+### Safety Features (v1.11.0 - v1.12.5)
 
 The system includes **multi-layer safety protection** to prevent overwatering:
 
@@ -159,12 +274,12 @@ The system includes **multi-layer safety protection** to prevent overwatering:
 - **Recovery**: Manual intervention required, send `reset_overflow` or `/reset_overflow` command
 - **Location**: WateringSystem.h:530-595
 
-**Layer 2: Reduced Timeouts** (config.h:63-64)
-- `MAX_WATERING_TIME = 20000` (20s) - Reduced from 25s
+**Layer 2: Safety Timeouts** (config.h:66-67, v1.12.5)
+- `MAX_WATERING_TIME = 25000` (25s) - Normal watering timeout
 - `ABSOLUTE_SAFETY_TIMEOUT = 30000` (30s) - Emergency hard limit
 
 **Layer 3: Two-Tier State Machine Timeouts** (WateringSystemStateMachine.h:77-106)
-- Normal timeout (20s): Standard valve closure with learning data processing
+- Normal timeout (25s): Standard valve closure with learning data processing
 - Emergency cutoff (30s): Forces hardware shutdown via direct GPIO control
 - Both run in PHASE_WATERING state
 
@@ -304,16 +419,23 @@ The system implements a 5-phase watering cycle per valve to ensure accurate rain
   - Command parser in `processCommand()` handles all MQTT commands
   - Command helper: `handleSequenceCommand()`
 
-- **LearningAlgorithm** namespace (WateringSystem.h): Time-based learning helpers
+- **LearningAlgorithm** namespace (LearningAlgorithm.h, v1.13.0): Time-based learning helpers
   - `calculateWaterLevelBefore()`: Calculate water level from fill duration ratio
   - `calculateEmptyDuration()`: Estimate time until tray is empty
   - `formatDuration()`: Format milliseconds to human-readable (e.g., "2d 4h")
+  - **Pure functions**: No hardware dependencies, fully unit tested
+
+- **StateMachineLogic** namespace (StateMachineLogic.h, v1.13.0): Hardware-independent state machine
+  - `processValveLogic()`: Pure state machine function that returns actions to execute
+  - `ProcessResult` struct: Contains new phase, action, and updated state
+  - **Testable**: 17 unit tests cover all phase transitions and timeout scenarios
 
 **Supporting files**:
 - **config.h**: All constants, pin definitions, and configuration
 - **ota.h**: OTA updates, web server setup, LittleFS file serving
 - **api_handlers.h**: Web API endpoint implementations
 - **secret.h**: WiFi/MQTT credentials (never commit)
+- **TestConfig.h** (v1.13.0): Configuration for native testing environment
 
 ### Hardware Configuration (ESP32-S3-N8R2)
 
@@ -522,7 +644,7 @@ tray | duration(sec) | status
 **Status Meanings** (v1.6.1 updated):
 - `✓ OK`: Watering completed successfully (sensor became wet after pump started)
 - `✓ FULL`: Tray was already full (sensor already wet before pump started)
-- `⚠️ TIMEOUT`: Exceeded maximum watering time (20s)
+- `⚠️ TIMEOUT`: Exceeded maximum watering time (25s, v1.12.5)
 - `⚠️ STOPPED`: Watering was stopped manually or other interruption
 
 **Duration Calculation**: Time from valve open to final state (includes full watering cycle)
@@ -617,6 +739,34 @@ DebugHelper::loop();
 
 **Important**: API uses 1-indexed valves (1-6), internal code uses 0-indexed (0-5)
 
+### Testing & Development
+
+**Native Testing** (v1.13.0):
+
+The project includes comprehensive unit tests that run on your desktop:
+
+```bash
+# Run all native tests (no ESP32 required)
+pio test -e native
+```
+
+**Test Coverage**:
+- State machine phase transitions (17 tests)
+- Learning algorithm calculations (3 tests)
+- Overwatering scenarios and safety measures
+- Timeout handling (normal & emergency)
+
+**Test Files**:
+- `test/test_native_all.cpp` - Combined test suite
+- `test/test_state_machine.cpp` - State machine tests
+- `test/test_learning_algorithm.cpp` - Learning algorithm tests
+- `test/test_overwatering_scenarios.cpp` - Safety tests
+
+**Documentation**:
+- `NATIVE_TESTING_PLAN.md` - Testing strategy
+- `OVERWATERING_RISK_ANALYSIS.md` - Safety analysis
+- `OVERWATERING_TEST_SUMMARY.md` - Test results
+
 ### Configuration Files
 
 **include/secret.h** (never commit, must exist):
@@ -631,16 +781,24 @@ DebugHelper::loop();
 #define TELEGRAM_CHAT_ID "your_chat_id"
 ```
 
-### Safety Features
+### Safety Features Summary
 
-- **Timeout Protection**: Max watering time 15 seconds per valve (MAX_WATERING_TIME)
+- **Timeout Protection**: Max watering time 25 seconds per valve (MAX_WATERING_TIME, v1.12.5)
+- **Emergency Cutoff**: Absolute 30-second hard limit (ABSOLUTE_SAFETY_TIMEOUT)
 - **Timeout Flags**: Persist until cleared via `clear_timeout_N` command
 - **Pump Coordination**: Pump only runs when valves are in PHASE_WATERING and sensor is dry
 - **MQTT Failure Isolation**: Network issues never block watering algorithm
 - **Auto-Watering Safety**: Only triggers when calibrated AND enabled AND tray is calculated empty
 - **Data Persistence**: Learning data survives reboots, preventing re-calibration
+- **Comprehensive Testing** (v1.13.0): 20 unit tests validate safety logic
 
 ### Testing & Debugging
+
+**Native Tests** (v1.13.0):
+Run on your desktop (no hardware required):
+```bash
+pio test -e native
+```
 
 **Hardware test firmware**: `src/test-main.cpp`
 Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
@@ -679,12 +837,14 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 ## Making Code Changes
 
 ### Modifying Watering Logic
-- **State machine**: `WateringSystemStateMachine.h` - `processValve()` method
-- **Learning algorithm**: `WateringSystem.h` - `processLearningData()`, helper functions in `LearningAlgorithm` namespace
+- **State machine logic** (v1.13.0): `StateMachineLogic.h` - `processValveLogic()` pure function
+- **State machine execution**: `WateringSystemStateMachine.h` - `processValve()` method (calls StateMachineLogic)
+- **Learning algorithm** (v1.13.0): `LearningAlgorithm.h` - Pure helper functions
+- **Learning data processing**: `WateringSystem.h` - `processLearningData()` method
 - **Time-based skip check**: `WateringSystem.h` - `startWatering()` method (checks time instead of cycles)
 - **Auto-watering check**: `WateringSystem.h` - `checkAutoWatering()` method
 - **Constants**: `config.h` - `LEARNING_*` constants
-- Always test with hardware test program first before deploying full system
+- **Testing**: Run native tests first (`pio test -e native`), then hardware test program before deploying
 
 ### Adding New MQTT Commands
 1. Add command parsing in `NetworkManager.h` - `processCommand()` method (currently only supports `start_all`)
@@ -716,11 +876,14 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 - **Credentials**: `include/secret.h` (never commit this file)
 
 ### Modifying Learning Algorithm
-- **Baseline update logic**: `WateringSystem.h` - `processLearningData()` (lines ~602-608)
-- **Consumption calculation**: `LearningAlgorithm::calculateEmptyDuration()` helper
-- **Smoothing factor**: Line 641 (currently 70% old, 30% new)
+- **Core algorithm logic** (v1.13.0): `LearningAlgorithm.h` - Pure functions, fully tested
 - **Water level calculation**: `LearningAlgorithm::calculateWaterLevelBefore()` helper
+- **Consumption calculation**: `LearningAlgorithm::calculateEmptyDuration()` helper
+- **Duration formatting**: `LearningAlgorithm::formatDuration()` helper
+- **Baseline update logic**: `WateringSystem.h` - `processLearningData()` method
+- **Smoothing factor**: Currently 70% old, 30% new
 - **Auto-watering decision**: `shouldWaterNow()` helper in `ValveController.h`
+- **Testing**: Add tests to `test/test_learning_algorithm.cpp`
 
 ### Working with Persistence
 - **Save location**: `/learning_data.json` on LittleFS (current active file)
@@ -786,8 +949,9 @@ Build and upload: `platformio run -t upload -e esp32-s3-devkitc-1-test`
 12. **Consumption Smoothing**: Uses weighted average to prevent wild swings from single measurements
 13. **Boot Countdown Delay** (v1.12.0): Every boot has 10-second countdown before operations start - allows time for emergency `/halt` command
 14. **Halt Mode Persistence**: Halt mode is NOT persistent across reboots - must send `/halt` during countdown window or after boot
-15. **Safety Timeout Hierarchy** (v1.11.0): MAX_WATERING_TIME (20s) < ABSOLUTE_SAFETY_TIMEOUT (30s) < Global Watchdog (runs every loop)
+15. **Safety Timeout Hierarchy** (v1.12.5): MAX_WATERING_TIME (25s) < ABSOLUTE_SAFETY_TIMEOUT (30s) < Global Watchdog (runs every loop)
 16. **DS3231 RTC Dependency** (v1.10.0+): System uses DS3231 as sole time source - no NTP dependency, works without WiFi for timing
 17. **NeoPixel LED** (v1.10.0+): GPIO 48 used for RGB status LED on ESP32-S3-N8R2 (not GPIO 2)
 18. **Master Overflow Sensor** (v1.12.1): Overflow detection is NOT persistent across reboots - `overflowDetected` flag resets to false on boot, must send `/reset_overflow` if overflow persists after reboot
 19. **Overflow Recovery** (v1.12.1): After overflow detected, ALL watering blocked until manual intervention - send `reset_overflow` command ONLY after physically fixing overflow issue
+20. **Native Testing** (v1.13.0): Run `pio test -e native` to execute 20 unit tests on your desktop - no ESP32 hardware required, tests validate state machine and learning algorithm logic

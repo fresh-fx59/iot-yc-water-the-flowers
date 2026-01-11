@@ -1,7 +1,11 @@
 #ifndef VALVE_CONTROLLER_H
 #define VALVE_CONTROLLER_H
 
+#ifdef NATIVE_TEST
+#include "TestConfig.h"
+#else
 #include "config.h"
+#endif
 #include <Arduino.h>
 
 // ============================================

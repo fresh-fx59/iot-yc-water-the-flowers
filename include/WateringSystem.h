@@ -6,6 +6,7 @@
 #include "ValveController.h"
 #include "config.h"
 #include "DS3231RTC.h"
+#include "LearningAlgorithm.h"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -26,69 +27,6 @@ const char *LEARNING_DATA_FILE =
     "/learning_data_v1.8.7.json"; // ACTIVE: Current learning data
 const char *LEARNING_DATA_FILE_OLD =
     "/learning_data_v1.8.5.json"; // OLD: Will be deleted on boot
-
-// ============================================
-// Time-Based Learning Algorithm Helper Functions
-// ============================================
-namespace LearningAlgorithm {
-
-// Calculate water level before watering based on fill duration
-inline float calculateWaterLevelBefore(unsigned long fillDuration,
-                                       unsigned long baselineFillDuration) {
-  if (baselineFillDuration == 0)
-    return 0.0;
-
-  float fillRatio = (float)fillDuration / (float)baselineFillDuration;
-
-  // Water level before = 100% - (fill ratio * 100%)
-  // If fillRatio = 1.0 (full fill) → was 0% (empty)
-  // If fillRatio = 0.5 (half fill) → was 50% (half full)
-  float waterLevelBefore = 100.0f - (fillRatio * 100.0f);
-  return (waterLevelBefore < 0.0f) ? 0.0f : waterLevelBefore;
-}
-
-// Calculate estimated time to empty based on fill ratio and time since last
-// watering
-inline unsigned long
-calculateEmptyDuration(unsigned long fillDuration,
-                       unsigned long baselineFillDuration,
-                       unsigned long timeSinceLastWatering) {
-  if (fillDuration == 0 || baselineFillDuration == 0)
-    return 0;
-
-  float fillRatio = (float)fillDuration / (float)baselineFillDuration;
-
-  // If tray was empty (fillRatio ≈ 1.0)
-  if (fillRatio >= LEARNING_EMPTY_THRESHOLD) {
-    return timeSinceLastWatering;
-  }
-
-  // If tray had water remaining, calculate consumption rate
-  // emptyToFullDuration = timeSinceLastWatering / fillRatio
-  unsigned long emptyDuration =
-      (unsigned long)((float)timeSinceLastWatering / fillRatio);
-
-  return emptyDuration;
-}
-
-// Format time duration for display (ms to human-readable)
-inline String formatDuration(unsigned long milliseconds) {
-  unsigned long seconds = milliseconds / 1000;
-  unsigned long minutes = seconds / 60;
-  unsigned long hours = minutes / 60;
-  unsigned long days = hours / 24;
-
-  if (days > 0) {
-    return String(days) + "d " + String(hours % 24) + "h";
-  } else if (hours > 0) {
-    return String(hours) + "h " + String(minutes % 60) + "m";
-  } else if (minutes > 0) {
-    return String(minutes) + "m " + String(seconds % 60) + "s";
-  } else {
-    return String(seconds) + "." + String((milliseconds % 1000) / 100) + "s";
-  }
-}
-} // namespace LearningAlgorithm
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)

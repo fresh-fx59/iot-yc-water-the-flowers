@@ -442,16 +442,16 @@ void monitorRainSensors() {
 
 void readWaterLevelSensor() {
   webLog("WATER LEVEL SENSOR READING:");
-  webLog("(LOW = Water detected / Tank has water)");
-  webLog("(HIGH = No water / Tank empty)");
+  webLog("(HIGH = Water detected / Tank has water)");
+  webLog("(LOW = No water / Tank empty)");
   webLog("");
 
   int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
-  String status = (sensorValue == LOW) ? "WATER DETECTED 💧" : "NO WATER/EMPTY ⚠️";
+  String status = (sensorValue == HIGH) ? "WATER DETECTED 💧" : "NO WATER/EMPTY ⚠️";
   webLog("  Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " +
          String(sensorValue) + " = " + status);
   webLog("");
-  webLog("→ Sensor should show LOW when submerged in water");
+  webLog("→ Sensor should show HIGH when submerged in water");
   printSeparator();
 }
 
@@ -461,8 +461,8 @@ void monitorWaterLevelSensor() {
     webLog("");
     webLog("╔═══ WATER LEVEL MONITOR (Press 'S' to stop) ═══╗");
     int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
-    String bar = (sensorValue == LOW) ? "████████████████" : "░░░░░░░░░░░░░░░░";
-    String status = (sensorValue == LOW) ? "WATER 💧" : "EMPTY ⚠️ ";
+    String bar = (sensorValue == HIGH) ? "████████████████" : "░░░░░░░░░░░░░░░░";
+    String status = (sensorValue == HIGH) ? "WATER 💧" : "EMPTY ⚠️ ";
     webLog("Water Level (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): [" +
            bar + "] " + status);
     webLog("╚════════════════════════════════════════════════╝");

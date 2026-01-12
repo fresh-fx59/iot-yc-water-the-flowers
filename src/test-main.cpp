@@ -133,6 +133,11 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 // Master Overflow Sensor pin (2N2222 transistor circuit)
 #define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
 
+// Overflow Sensor Debouncing Constants (same as production)
+const int OVERFLOW_DEBOUNCE_SAMPLES = 7;        // Number of readings to take
+const int OVERFLOW_DEBOUNCE_THRESHOLD = 5;      // Minimum LOW readings to declare overflow (5 out of 7)
+const unsigned long OVERFLOW_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5ms)
+
 // DS3231 RTC I2C pins
 #define I2C_SDA_PIN 14
 #define I2C_SCL_PIN 3
@@ -311,7 +316,8 @@ void printMenu() {
   Serial.println("  N - Monitor water level sensor (continuous)");
   Serial.println();
   Serial.println("MASTER OVERFLOW SENSOR TEST:");
-  Serial.println("  O - Read master overflow sensor (GPIO 42)");
+  Serial.println("  O - Read master overflow sensor (GPIO 42) - RAW single reading");
+  Serial.println("  D - Read master overflow sensor (GPIO 42) - DEBOUNCED production logic");
   Serial.println("  V - Monitor master overflow sensor (continuous)");
   Serial.println();
   Serial.println("DS3231 RTC TESTS:");
@@ -542,6 +548,8 @@ void readMasterOverflowSensor() {
   webLog("(HIGH = Normal / Dry)");
   webLog("");
   webLog("Circuit: Rain sensor → 2N2222 transistor → GPIO 42");
+  webLog("NOTE: Test mode shows RAW single readings for diagnostics");
+  webLog("      Production uses debounced multi-sample reading (5/7 threshold)");
   webLog("");
 
   int sensorValue = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
@@ -562,6 +570,83 @@ void readMasterOverflowSensor() {
 
   webLog("");
   webLog("→ Test by wetting the rain sensor to simulate overflow");
+  printSeparator();
+}
+
+void readMasterOverflowSensorDebounced() {
+  webLog("MASTER OVERFLOW SENSOR READING (DEBOUNCED):");
+  webLog("(Production-grade multi-sample reading with noise filtering)");
+  webLog("");
+  webLog("Circuit: Rain sensor → 2N2222 transistor → GPIO 42");
+  webLog("Algorithm: " + String(OVERFLOW_DEBOUNCE_SAMPLES) + " samples, " +
+         String(OVERFLOW_DEBOUNCE_DELAY_MS) + "ms delay, " +
+         String(OVERFLOW_DEBOUNCE_THRESHOLD) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES) + " threshold");
+  webLog("");
+
+  // Software debouncing: Take multiple readings (same as production)
+  int lowReadings = 0;
+  String readingSequence = "";
+
+  webLog("Taking " + String(OVERFLOW_DEBOUNCE_SAMPLES) + " readings with " +
+         String(OVERFLOW_DEBOUNCE_DELAY_MS) + "ms delays...");
+  webLog("");
+
+  for (int i = 0; i < OVERFLOW_DEBOUNCE_SAMPLES; i++) {
+    int reading = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+    if (reading == LOW) {
+      lowReadings++;
+      readingSequence += "L";
+    } else {
+      readingSequence += "H";
+    }
+
+    // Add space between readings for readability
+    if (i < OVERFLOW_DEBOUNCE_SAMPLES - 1) {
+      readingSequence += " ";
+      delay(OVERFLOW_DEBOUNCE_DELAY_MS);
+    }
+  }
+
+  webLog("Reading sequence: [" + readingSequence + "]");
+  webLog("  (L=LOW/wet, H=HIGH/dry)");
+  webLog("");
+  webLog("Results:");
+  webLog("  LOW readings:  " + String(lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES));
+  webLog("  HIGH readings: " + String(OVERFLOW_DEBOUNCE_SAMPLES - lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES));
+  webLog("  Threshold:     " + String(OVERFLOW_DEBOUNCE_THRESHOLD) + " LOW readings required");
+  webLog("");
+
+  // Determine final state (same logic as production)
+  bool overflowDetected = (lowReadings >= OVERFLOW_DEBOUNCE_THRESHOLD);
+
+  if (overflowDetected) {
+    webLog("╔════════════════════════════════════════════════╗");
+    webLog("║  ⚠️  OVERFLOW DETECTED! ⚠️                      ║");
+    webLog("╚════════════════════════════════════════════════╝");
+    webLog("");
+    webLog("✓ Detection confirmed: " + String(lowReadings) + " out of " +
+           String(OVERFLOW_DEBOUNCE_SAMPLES) + " readings were LOW");
+    webLog("⚠️  In production, this triggers emergency stop:");
+    webLog("   • All valves CLOSED");
+    webLog("   • Pump STOPPED");
+    webLog("   • System LOCKED until /reset_overflow");
+  } else {
+    webLog("╔════════════════════════════════════════════════╗");
+    webLog("║  ✓ NORMAL (No overflow)                       ║");
+    webLog("╚════════════════════════════════════════════════╝");
+    webLog("");
+    webLog("✓ System safe: Only " + String(lowReadings) + " out of " +
+           String(OVERFLOW_DEBOUNCE_SAMPLES) + " readings were LOW");
+    webLog("✓ Threshold not met (" + String(OVERFLOW_DEBOUNCE_THRESHOLD) + " required)");
+    if (lowReadings > 0) {
+      webLog("ℹ️  Note: Some noise detected (" + String(lowReadings) +
+             " spikes), but filtered by debouncing");
+    }
+  }
+
+  webLog("");
+  webLog("→ This is the SAME logic used in production firmware");
+  webLog("→ Filters electrical noise from pump/valve switching");
   printSeparator();
 }
 
@@ -1236,6 +1321,11 @@ void loop() {
       case 'O':
       case 'o':
         readMasterOverflowSensor();
+        break;
+
+      case 'D':
+      case 'd':
+        readMasterOverflowSensorDebounced();
         break;
 
       case 'V':

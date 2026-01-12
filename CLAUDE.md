@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.14.2 (config.h:10)
+**Version**: 1.15.2 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -72,7 +72,7 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 ### Safety Features (v1.11.0-v1.14.0)
 
-**L1: Master Overflow Sensor** (GPIO 42, 100ms poll, WateringSystem.h:530-595): LOW=overflow → `emergencyStopAll()`, blocks all watering. Recovery: `reset_overflow`
+**L1: Master Overflow Sensor** (v1.15.1, GPIO 42, 100ms poll, software debounced 5/7 threshold, WateringSystem.h:510-595): LOW=overflow → `emergencyStopAll()`, blocks all watering. Debouncing prevents false triggers from electrical noise. Recovery: `reset_overflow`
 
 **L2: Water Level Sensor** (v1.14.0, GPIO 19, 100ms poll): HIGH=water OK, LOW=empty → blocks all watering, auto-resume when refilled. Telegram notifications on low/restored
 
@@ -148,6 +148,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Boot Logic** (v1.8.1+, fixed v1.8.4/v1.8.5): First boot→water all | Overdue→water | Schedule→skip. v1.8.4: safe default no-water. v1.8.5: detect calibrated+zero timestamps as overdue
 
+**Restart Detection** (v1.15.2): Prevents interval explosion after power outages/restarts. If tray is found wet within 2 hours (RECENT_WATERING_THRESHOLD_MS) of last watering, skip cycle without punishing (no interval doubling). Only doubles interval if tray genuinely stayed wet for >2 hours (slow consumption). Critical for stability with frequent power cycles.
+
 ### MQTT
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow`
@@ -176,7 +178,7 @@ Usage: `DebugHelper::debug()`, `debugImportant()`, `flushBuffer()`, `loop()`
 ### Web Interface
 
 **Files** (/data/web/): index.html, css/style.css, js/app.js
-**API**: /api/water?valve=N (N=1-6), /api/stop?valve=N|all, /api/status, /firmware (auth: admin/OTA_PASSWORD)
+**API**: /api/water?valve=N (N=1-6), /api/stop?valve=N|all, /api/status, /api/reset_calibration?valve=N|all (v1.15.2), /firmware (auth: admin/OTA_PASSWORD)
 **Note**: API 1-indexed (1-6), internal 0-indexed (0-5)
 
 ### Config (secret.h, never commit)
@@ -214,7 +216,7 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 
 **Learning**: LearningAlgorithm.h (pure funcs), WateringSystem.h (processLearningData, smoothing 70/30), ValveController.h (shouldWaterNow), test_learning_algorithm.cpp
 
-**Persistence**: /learning_data.json (active), /learning_data_v5.json (auto-deleted), save after watering/reset, load on init(), swap filenames to reset
+**Persistence**: /learning_data_v1.15.2.json (active), /learning_data_v1.8.7.json (auto-deleted on boot), save after watering/reset, load on init(), swap filenames in WateringSystem.h:28-31 to reset all calibrations
 
 ## Program Flow
 
@@ -247,3 +249,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 19. Overflow blocks all watering until reset_overflow
 20. Native tests: `pio test -e native` (20 tests, no hw)
 21. Test R1-R6/M1-M6 power specific valve+GPIO18 only, M*=continuous until 'S'
+22. **v1.15.1**: Overflow sensor uses software debouncing (5/7 readings must be LOW). Test mode shows raw single readings for diagnostics. Production requires 5 out of 7 consecutive LOW readings to trigger overflow, filtering electrical noise from pump/valve switching

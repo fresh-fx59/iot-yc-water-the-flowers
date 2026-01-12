@@ -78,4 +78,32 @@ inline void handleStatusApi() {
     httpServer.send(200, "application/json", stateJson);
 }
 
+inline void handleResetCalibrationApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+
+    String valveStr = httpServer.arg("valve");
+
+    // Handle "all" parameter
+    if (valveStr == "all") {
+        Serial.println("✓ API: Resetting calibration for all valves");
+        g_wateringSystem_ptr->resetAllCalibrations();
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"All calibrations reset\"}");
+        return;
+    }
+
+    // Handle specific valve
+    int valve = valveStr.toInt();
+    if (valve < 1 || valve > 6) {
+        httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid valve number (use 1-6 or 'all')\"}");
+        return;
+    }
+
+    Serial.printf("✓ API: Resetting calibration for valve %d\n", valve);
+    g_wateringSystem_ptr->resetCalibration(valve - 1); // Convert 1-indexed to 0-indexed
+    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Calibration reset for valve " + String(valve) + "\"}");
+}
+
 #endif // API_HANDLERS_H

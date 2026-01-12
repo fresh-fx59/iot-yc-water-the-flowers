@@ -1,7 +1,7 @@
 /**
  * Smart Watering System - Main Entry Point
  * ESP32-S3-N8R2
- * Version: 1.12.1 - Master Overflow Sensor + Emergency Halt Mode
+ * Version: 1.15.0 - Multi-threaded Safety Architecture
  *
  * Controls 6 valves, 6 rain sensors, 1 water pump, and master overflow sensor
  * Features time-based learning algorithm with automatic watering
@@ -9,6 +9,11 @@
  * Uses DS3231 RTC as source of truth for time
  * Master overflow sensor (GPIO 42) provides emergency water overflow detection
  * 10-second boot countdown for emergency firmware updates
+ *
+ * ARCHITECTURE:
+ * - Core 1 (main loop): Watering control @ 100Hz (time-critical, never blocks)
+ * - Core 0 (network task): WiFi/MQTT/Telegram/OTA @ 2Hz (can timeout without affecting watering)
+ * - Network issues cannot cause sensor monitoring failures or overflow
  */
 
 #include <WiFi.h>
@@ -29,13 +34,62 @@
 #include <api_handlers.h>
 #include <ota.h>
 
-// ============================================ 
+// ============================================
 // Global Objects
-// ============================================ 
+// ============================================
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
 int lastUpdateId = 0; // Tracks the last processed Telegram update ID to avoid reprocessing old messages.
+
+// ============================================
+// Multi-threading for Safety-Critical Operations
+// Core 0: Network operations (can block/timeout without affecting watering)
+// Core 1: Watering control (time-critical, never blocks)
+// ============================================
+TaskHandle_t networkTaskHandle = NULL;
+
+// Forward declarations
+void checkTelegramCommands(int timeout = 10);
+void loopOta();
+
+// Network operations task - runs independently on Core 0
+void networkTask(void* parameter) {
+    DebugHelper::debug("🧵 Network task started on Core " + String(xPortGetCoreID()));
+
+    while (true) {
+        // CRITICAL: Only run network operations if NOT in halt mode
+        // In halt mode, main loop handles Telegram commands to ensure /resume works
+        if (!wateringSystem.isHaltMode()) {
+            // Check WiFi connection (can block, but won't affect watering)
+            if (!NetworkManager::isWiFiConnected()) {
+                DebugHelper::debugImportant("⚠️ WiFi disconnected, attempting reconnect...");
+                NetworkManager::connectWiFi();
+                // If reconnect fails, wait and try again
+                if (!NetworkManager::isWiFiConnected()) {
+                    vTaskDelay(5000 / portTICK_PERIOD_MS);
+                    continue;
+                }
+            }
+
+            // Handle MQTT (can block)
+            NetworkManager::loopMQTT();
+
+            // Check Telegram commands (non-blocking)
+            checkTelegramCommands(0);
+
+            // Flush debug messages to Telegram (can block)
+            DebugHelper::loop();
+
+            // Handle OTA updates (can block)
+            loopOta();
+        }
+
+        // Run every 500ms to avoid overwhelming network
+        // Watering runs every 10ms on Core 1, so this is plenty fast for commands
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+}
 
 // ============================================
 // NTP Time Sync Helper
@@ -85,7 +139,7 @@ bool syncTimeFromNTP() {
 // Processes incoming Telegram commands like /halt and /resume.
 // timeout: Long polling timeout in seconds (0 for immediate check)
 // ============================================
-void checkTelegramCommands(int timeout = 10) {
+void checkTelegramCommands(int timeout) {
     if (!NetworkManager::isWiFiConnected()) {
         return;
     }
@@ -285,6 +339,8 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/stop");
     httpServer.on("/api/status", HTTP_GET, handleStatusApi);
     Serial.println("  ✓ Registered /api/status");
+    httpServer.on("/api/reset_calibration", HTTP_GET, handleResetCalibrationApi);
+    Serial.println("  ✓ Registered /api/reset_calibration");
 }
 
 // ============================================ 
@@ -409,10 +465,36 @@ void setup() {
     // Initialize OTA updates
     setupOta();
 
-    // ============================================ 
+    // ============================================
     // BOOT COUNTDOWN: 10-second emergency halt window
-    // ============================================ 
+    // ============================================
     bootCountdown();
+
+    // ============================================
+    // Create Network Task on Core 0
+    // ============================================
+    // This separates time-critical watering operations (Core 1) from
+    // network I/O (Core 0) to prevent WiFi/Telegram/MQTT issues from
+    // blocking sensor monitoring and causing overflows.
+    DebugHelper::debug("Creating network task on Core 0...");
+
+    xTaskCreatePinnedToCore(
+        networkTask,           // Task function
+        "NetworkTask",         // Task name for debugging
+        8192,                  // Stack size (8KB) - sufficient for network operations
+        NULL,                  // Task parameters
+        1,                     // Priority (1 = low, watering on Core 1 is default priority)
+        &networkTaskHandle,    // Task handle for management
+        0                      // Core 0 (Core 1 reserved for main loop/watering)
+    );
+
+    if (networkTaskHandle == NULL) {
+        DebugHelper::debugImportant("❌ Failed to create network task!");
+        DebugHelper::debugImportant("   System will run in single-threaded mode (less safe)");
+    } else {
+        DebugHelper::debug("✓ Network task created on Core 0");
+        DebugHelper::debug("✓ Watering control runs on Core " + String(xPortGetCoreID()) + " (main loop)");
+    }
 
     DebugHelper::debug("Setup completed - starting main loop");
 }
@@ -428,10 +510,10 @@ bool firstLoop = true;
 // Telegram commands, especially during halt mode.
 // ============================================ 
 void loop() {
-    // If in halt mode, only check for telegram commands and skip all other processing.
-    // This ensures responsiveness to the /resume command.
+    // If in halt mode, check for telegram commands (to allow /resume)
+    // Network task is paused during halt mode, so we check here
     if (wateringSystem.isHaltMode()) {
-        checkTelegramCommands();
+        checkTelegramCommands(0);  // Non-blocking check
         delay(1000); // Check for commands every second
         return;
     }
@@ -458,29 +540,16 @@ void loop() {
         }
     }
 
-    // Handle other tasks
-    checkTelegramCommands();
+    // ============================================
+    // CRITICAL: Watering Control Loop (Core 1)
+    // ============================================
+    // This loop runs every 10ms (100Hz) for responsive sensor monitoring.
+    // Network operations (WiFi, MQTT, Telegram, OTA) run independently on
+    // Core 0 and cannot block this loop, preventing overflow issues.
 
-    // Check WiFi connection
-    if (!NetworkManager::isWiFiConnected()) {
-        DebugHelper::debugImportant("⚠️ WiFi disconnected, attempting reconnect...");
-        NetworkManager::connectWiFi();
-        delay(5000);
-        return;
-    }
-
-    // Handle MQTT
-    NetworkManager::loopMQTT();
-
-    // Process watering logic
     wateringSystem.processWateringLoop();
 
-    // Handle OTA updates
-    loopOta();
-
-    // Flush buffered debug messages to Telegram
-    DebugHelper::loop();
-
-    // Small delay to prevent watchdog issues
+    // Small delay to prevent watchdog issues (10ms = 100Hz loop rate)
+    // This ensures sensors are checked every 100ms as designed
     delay(10);
 }

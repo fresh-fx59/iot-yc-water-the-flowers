@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.14.2";
+const char *VERSION = "watering_system_1.15.2";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -72,6 +72,14 @@ const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
 
 // ============================================
+// Overflow Sensor Debouncing Constants
+// ============================================
+// Software debouncing to prevent false triggers from electrical noise
+const int OVERFLOW_DEBOUNCE_SAMPLES = 7;        // Number of readings to take
+const int OVERFLOW_DEBOUNCE_THRESHOLD = 5;      // Minimum LOW readings to declare overflow (5 out of 7)
+const unsigned long OVERFLOW_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5ms)
+
+// ============================================
 // Learning Algorithm Constants
 // ============================================
 const float LEARNING_EMPTY_THRESHOLD =
@@ -85,6 +93,9 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
     86400000; // 24 hours minimum between auto-watering attempts
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
+const unsigned long RECENT_WATERING_THRESHOLD_MS =
+    7200000; // 2 hours - if tray is wet within this time after last watering,
+             // likely a restart/power-outage scenario (don't punish with interval doubling)
 
 // ============================================
 // DS3231 Battery Voltage Calibration

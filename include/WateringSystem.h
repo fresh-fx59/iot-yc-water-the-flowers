@@ -26,9 +26,9 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.8.7.json"; // ACTIVE: Current learning data
+    "/learning_data_v1.15.2.json"; // ACTIVE: Current learning data (v1.15.2 reset)
 const char *LEARNING_DATA_FILE_OLD =
-    "/learning_data_v1.8.5.json"; // OLD: Will be deleted on boot
+    "/learning_data_v1.8.7.json"; // OLD: Will be deleted on boot (contained broken intervals)
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)
@@ -514,15 +514,30 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
   }
   lastOverflowCheck = currentTime;
 
-  // Read master overflow sensor (LOW = overflow detected)
-  int sensorValue = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+  // Software debouncing: Take multiple readings to filter out electrical noise
+  // This prevents false triggers from pump/valve switching and EMI
+  int lowReadings = 0;
 
-  // If overflow detected (sensor reads LOW)
-  if (sensorValue == LOW) {
+  for (int i = 0; i < OVERFLOW_DEBOUNCE_SAMPLES; i++) {
+    int reading = digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+    if (reading == LOW) {
+      lowReadings++;
+    }
+
+    // Small delay between readings to avoid catching the same noise spike
+    if (i < OVERFLOW_DEBOUNCE_SAMPLES - 1) {
+      delay(OVERFLOW_DEBOUNCE_DELAY_MS);
+    }
+  }
+
+  // Require threshold number of LOW readings to declare overflow
+  // Example: 5 out of 7 readings must be LOW to trigger
+  if (lowReadings >= OVERFLOW_DEBOUNCE_THRESHOLD) {
     if (!overflowDetected) {
       // First detection - trigger emergency stop
       DebugHelper::debugImportant("🚨🚨🚨 MASTER OVERFLOW SENSOR TRIGGERED! 🚨🚨🚨");
-      DebugHelper::debugImportant("Water overflow detected on GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
+      DebugHelper::debugImportant("Water overflow detected on GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) +
+                                  " (" + String(lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW readings)");
       overflowDetected = true;
 
       // Emergency stop everything
@@ -1303,7 +1318,39 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   // wateringStartTime == 0 means pump never started, rainDetected == true means
   // sensor is wet
   if (valve->wateringStartTime == 0 && valve->rainDetected) {
-    DebugHelper::debugImportant("🧠 ADAPTIVE LEARNING: Tray already full");
+    // CRITICAL: Detect restart/power-outage scenarios
+    // If tray was recently watered (< 2 hours ago), this is likely a restart
+    // Don't punish with interval doubling - just skip this cycle
+    if (valve->lastWateringCompleteTime > 0) {
+      unsigned long timeSinceLastWatering =
+          currentTime - valve->lastWateringCompleteTime;
+
+      // Handle millis() overflow (rare but possible)
+      if (timeSinceLastWatering > 4000000000UL) {
+        // Overflow detected, assume long time passed
+        timeSinceLastWatering = RECENT_WATERING_THRESHOLD_MS + 1000;
+      }
+
+      if (timeSinceLastWatering < RECENT_WATERING_THRESHOLD_MS) {
+        // Recently watered - likely restart/power outage scenario
+        DebugHelper::debugImportant(
+            "🧠 RESTART DETECTION: Tray wet from recent watering");
+        DebugHelper::debugImportant(
+            "  Time since last watering: " +
+            LearningAlgorithm::formatDuration(timeSinceLastWatering));
+        DebugHelper::debugImportant(
+            "  Skipping cycle (no interval change) - likely power outage/restart");
+
+        // Don't modify interval - just skip this cycle
+        // Update attempt time to prevent auto-watering retry loops
+        valve->lastWateringAttemptTime = currentTime;
+        saveLearningData();
+        return;
+      }
+    }
+
+    // Tray has been wet for a LONG time - genuinely slow consumption
+    DebugHelper::debugImportant("🧠 ADAPTIVE LEARNING: Tray still full after long time");
 
     // Double the interval (exponential backoff) - tray is consuming water
     // slower than expected
@@ -1500,16 +1547,22 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
     return;
 
   ValveController *valve = valves[valveIndex];
+
+  // Reset all calibration data (idempotent - safe to call multiple times)
   valve->isCalibrated = false;
   valve->baselineFillDuration = 0;
   valve->lastFillDuration = 0;
+  valve->previousFillDuration = 0;
   valve->emptyToFullDuration = 0;
   valve->lastWateringCompleteTime = 0;
+  valve->lastWateringAttemptTime = 0;
   valve->lastWaterLevelPercent = 0.0;
   valve->totalWateringCycles = 0;
+  valve->intervalMultiplier = 1.0; // CRITICAL: Reset interval multiplier
 
   DebugHelper::debug("═══════════════════════════════════════");
   DebugHelper::debug("🔄 CALIBRATION RESET: Valve " + String(valveIndex));
+  DebugHelper::debug("  All learning data cleared (interval: 1.0x)");
   DebugHelper::debug("  Next watering will establish new baseline");
   DebugHelper::debug("═══════════════════════════════════════");
   publishStateChange("valve" + String(valveIndex), "calibration_reset");
@@ -1525,12 +1578,15 @@ inline void WateringSystem::resetAllCalibrations() {
     valves[i]->isCalibrated = false;
     valves[i]->baselineFillDuration = 0;
     valves[i]->lastFillDuration = 0;
+    valves[i]->previousFillDuration = 0;
     valves[i]->emptyToFullDuration = 0;
     valves[i]->lastWateringCompleteTime = 0;
+    valves[i]->lastWateringAttemptTime = 0;
     valves[i]->lastWaterLevelPercent = 0.0;
     valves[i]->totalWateringCycles = 0;
+    valves[i]->intervalMultiplier = 1.0; // CRITICAL: Reset interval multiplier
   }
-  DebugHelper::debug("  All valves reset to uncalibrated state");
+  DebugHelper::debug("  All valves reset to uncalibrated state (intervals: 1.0x)");
   DebugHelper::debug("═══════════════════════════════════════");
   publishStateChange("system", "all_calibrations_reset");
 

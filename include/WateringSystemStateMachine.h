@@ -164,22 +164,24 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->wateringStartTime = 0;  // Reset for next watering cycle
 
                     // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
-                    bool anyWateringStop = false;
-                    for (int i = 0; i < NUM_VALVES; i++) {
-                        if (valves[i]->phase == PHASE_WATERING) {
-                            anyWateringStop = true;
-                            break;
+                    {
+                        bool anyWateringStop = false;
+                        for (int i = 0; i < NUM_VALVES; i++) {
+                            if (valves[i]->phase == PHASE_WATERING) {
+                                anyWateringStop = true;
+                                break;
+                            }
                         }
-                    }
-                    if (!anyWateringStop) {
-                        digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
-                        DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+                        if (!anyWateringStop) {
+                            digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+                            DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+                        }
                     }
                 }
             }
             break;
 
-        case PHASE_CLOSING_VALVE:
+        case PHASE_CLOSING_VALVE: {
             // Record session end for Telegram before processing learning data
             if (telegramSessionActive && sessionData[valveIndex].active) {
                 String status;
@@ -238,8 +240,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
             }
             break;
+        }
 
-        case PHASE_ERROR:
+        case PHASE_ERROR: {
             DebugHelper::debugImportant("❌ ERROR: Valve " + String(valveIndex) + " in error state");
             closeValve(valveIndex);
             valve->phase = PHASE_IDLE;
@@ -259,6 +262,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
             }
             break;
+        }
     }
 }
 

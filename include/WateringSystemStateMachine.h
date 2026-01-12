@@ -162,6 +162,19 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->phase = PHASE_IDLE;  // Go directly to IDLE (no learning data for manual stop)
                     valve->wateringRequested = false;
                     valve->wateringStartTime = 0;  // Reset for next watering cycle
+
+                    // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
+                    bool anyWateringStop = false;
+                    for (int i = 0; i < NUM_VALVES; i++) {
+                        if (valves[i]->phase == PHASE_WATERING) {
+                            anyWateringStop = true;
+                            break;
+                        }
+                    }
+                    if (!anyWateringStop) {
+                        digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+                        DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+                    }
                 }
             }
             break;
@@ -210,6 +223,20 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             valve->wateringStartTime = 0;  // CRITICAL: Reset for next watering cycle
             publishStateChange("valve" + String(valveIndex), "valve_closed");
             updatePumpState();
+
+            // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
+            // This complements the fix in readRainSensor() to manage GPIO 18 state
+            bool anyWatering = false;
+            for (int i = 0; i < NUM_VALVES; i++) {
+                if (valves[i]->phase == PHASE_WATERING) {
+                    anyWatering = true;
+                    break;
+                }
+            }
+            if (!anyWatering) {
+                digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+                DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+            }
             break;
 
         case PHASE_ERROR:
@@ -218,6 +245,19 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             valve->phase = PHASE_IDLE;
             valve->wateringStartTime = 0;  // Reset for next watering cycle
             updatePumpState();
+
+            // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
+            bool anyWateringError = false;
+            for (int i = 0; i < NUM_VALVES; i++) {
+                if (valves[i]->phase == PHASE_WATERING) {
+                    anyWateringError = true;
+                    break;
+                }
+            }
+            if (!anyWateringError) {
+                digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+                DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+            }
             break;
     }
 }

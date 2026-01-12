@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.14.1 (config.h:10)
+**Version**: 1.14.2 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -229,7 +229,7 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 1. Baud 115200, --raw if gibberish
 2. buildfs before uploadfs, files→/web/ not /data/web/
 3. API 1-6, internal 0-5
-4. **CRITICAL**: Sensors need TWO power: valve pin HIGH + GPIO 18 HIGH. Without valve pin→always WET. Fixed v1.13.4: readRainSensor() now powers both. Prod: valve open during read, test: power both
+4. **CRITICAL**: Sensors need TWO power: valve pin HIGH + GPIO 18 HIGH. Fixed v1.14.2: GPIO 18 stays HIGH continuously during PHASE_WATERING (not pulsed). Previous bug: GPIO 18 turned off after each read → sensors blind 90% of time. Fixed v1.13.4: readRainSensor() powers both. Test mode: powers all valves+GPIO18 continuously
 5. setWateringSystemRef() BEFORE setupOta() or API fails
 6. Watering continues if WiFi/MQTT down (design)
 7. LittleFS before wateringSystem.init() (loads data)

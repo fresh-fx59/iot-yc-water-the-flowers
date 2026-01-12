@@ -597,6 +597,9 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
   digitalWrite(PUMP_PIN, LOW);
   pumpState = PUMP_OFF;
 
+  // CRITICAL: Turn off sensor power (GPIO 18) - no valves watering
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+
   // Turn off LED
   statusLED.clear();
   statusLED.show();
@@ -604,7 +607,7 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
   // Stop sequential mode if active
   sequentialMode = false;
 
-  DebugHelper::debugImportant("✓ All valves closed, pump stopped, system halted");
+  DebugHelper::debugImportant("✓ All valves closed, pump stopped, sensors off, system halted");
 }
 
 // ========== RESET OVERFLOW FLAG ==========
@@ -947,6 +950,19 @@ inline void WateringSystem::stopWatering(int valveIndex) {
   valve->phase = PHASE_IDLE;
   publishStateChange("valve" + String(valveIndex), "cycle_stopped");
   updatePumpState();
+
+  // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
+  bool anyWatering = false;
+  for (int i = 0; i < NUM_VALVES; i++) {
+    if (valves[i]->phase == PHASE_WATERING) {
+      anyWatering = true;
+      break;
+    }
+  }
+  if (!anyWatering) {
+    digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+    DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+  }
 }
 
 inline void WateringSystem::startSequentialWatering() {
@@ -1135,28 +1151,53 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
   // CRITICAL: Rain sensors need TWO power signals (per CLAUDE.md):
   // 1. Valve pin HIGH (specific sensor power)
   // 2. GPIO 18 HIGH (common rail enable)
-  // Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off
+  //
+  // IMPORTANT: During PHASE_WATERING, GPIO 18 must stay HIGH continuously
+  // to allow sensors to detect water as soon as it arrives. Turning it off
+  // between reads causes sensor blindness (sensor only powered 10% of time).
+  //
+  // Power management strategy:
+  // - PHASE_WATERING: Keep GPIO 18 HIGH (managed by state machine)
+  // - Other phases: Turn on briefly for reading, then off
 
   // Ensure pins are configured correctly
   pinMode(VALVE_PINS[valveIndex], OUTPUT);
   pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
 
+  // Check if any valve is currently in PHASE_WATERING
+  bool anyWatering = false;
+  for (int i = 0; i < NUM_VALVES; i++) {
+    if (valves[i]->phase == PHASE_WATERING) {
+      anyWatering = true;
+      break;
+    }
+  }
+
   // Power on sensor: valve pin + common rail
   digitalWrite(VALVE_PINS[valveIndex], HIGH);
   digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
-  delay(SENSOR_POWER_STABILIZATION);
+
+  // Only delay if we're turning on GPIO 18 for the first time
+  // (if already watering, GPIO 18 is already HIGH and stable)
+  if (!anyWatering) {
+    delay(SENSOR_POWER_STABILIZATION);
+  }
 
   // Read sensor: LOW = wet, HIGH = dry (with pull-up)
   int rawValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
 
-  // Power off common rail (keep valve pin as-is since valve should stay open during watering)
-  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  // Power management: Only turn off GPIO 18 if NOT in watering phase
+  // During watering, GPIO 18 stays HIGH for continuous sensor monitoring
+  if (!anyWatering) {
+    digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  }
 
   // ENHANCED LOGGING: Log actual GPIO values for debugging
   static unsigned long lastDetailedLog = 0;
   if (millis() - lastDetailedLog > 5000) {  // Detailed log every 5s
     DebugHelper::debug("Sensor " + String(valveIndex) + " GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) +
-                      ": raw=" + String(rawValue) + " (" + String(rawValue == LOW ? "WET" : "DRY") + ")");
+                      ": raw=" + String(rawValue) + " (" + String(rawValue == LOW ? "WET" : "DRY") +
+                      "), GPIO18=" + String(anyWatering ? "CONTINUOUS" : "PULSED"));
     lastDetailedLog = millis();
   }
 

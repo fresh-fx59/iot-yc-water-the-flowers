@@ -936,17 +936,24 @@ inline void WateringSystem::startNextInSequence() {
 
 // ========== Hardware Control ==========
 inline bool WateringSystem::readRainSensor(int valveIndex) {
-  // SAFETY: Verify power pin is configured correctly
+  // CRITICAL: Rain sensors need TWO power signals (per CLAUDE.md):
+  // 1. Valve pin HIGH (specific sensor power)
+  // 2. GPIO 18 HIGH (common rail enable)
+  // Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off
+
+  // Ensure pins are configured correctly
+  pinMode(VALVE_PINS[valveIndex], OUTPUT);
   pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
 
-  // Power on sensor
+  // Power on sensor: valve pin + common rail
+  digitalWrite(VALVE_PINS[valveIndex], HIGH);
   digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
   delay(SENSOR_POWER_STABILIZATION);
 
   // Read sensor: LOW = wet, HIGH = dry (with pull-up)
   int rawValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
 
-  // Power off immediately
+  // Power off common rail (keep valve pin as-is since valve should stay open during watering)
   digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
 
   // ENHANCED LOGGING: Log actual GPIO values for debugging
@@ -1687,6 +1694,7 @@ inline void WateringSystem::testSensor(int valveIndex) {
   DebugHelper::debug("     ✓ Sensor pin configured as INPUT_PULLUP");
 
   // Test 3: Read sensor with power OFF (should be HIGH due to pullup)
+  digitalWrite(VALVE_PINS[valveIndex], LOW);
   digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
   delay(100);
   int valueOff = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
@@ -1694,10 +1702,13 @@ inline void WateringSystem::testSensor(int valveIndex) {
                      " (" + String(valueOff == HIGH ? "HIGH - DRY ✓" : "LOW - UNEXPECTED ⚠️") + ")");
 
   // Test 4: Read sensor with power ON (actual reading)
+  // CRITICAL: Sensor needs valve pin HIGH + GPIO 18 HIGH
+  digitalWrite(VALVE_PINS[valveIndex], HIGH);
   digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
   delay(SENSOR_POWER_STABILIZATION);
   int valueOn = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
   digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+  digitalWrite(VALVE_PINS[valveIndex], LOW);
 
   DebugHelper::debug("  4️⃣ Sensor reading (power ON): " + String(valueOn) +
                      " (" + String(valueOn == LOW ? "LOW - WET 💧" : "HIGH - DRY ☀️") + ")");
@@ -1733,15 +1744,19 @@ inline void WateringSystem::testAllSensors() {
     pinMode(RAIN_SENSOR_PINS[i], INPUT_PULLUP);
 
     // Read with power OFF
+    digitalWrite(VALVE_PINS[i], LOW);
     digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
     delay(50);
     int valueOff = digitalRead(RAIN_SENSOR_PINS[i]);
 
     // Read with power ON
+    // CRITICAL: Sensor needs valve pin HIGH + GPIO 18 HIGH
+    digitalWrite(VALVE_PINS[i], HIGH);
     digitalWrite(RAIN_SENSOR_POWER_PIN, HIGH);
     delay(SENSOR_POWER_STABILIZATION);
     int valueOn = digitalRead(RAIN_SENSOR_PINS[i]);
     digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+    digitalWrite(VALVE_PINS[i], LOW);
 
     // Add to summary
     String tray = String(i + 1);

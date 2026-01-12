@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.14.0 (config.h:10)
+**Version**: 1.14.1 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -120,6 +120,8 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 **Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=19 (INPUT_PULLUP, HIGH=water, LOW=empty), LED=48, RTC I2C SDA=14/SCL=3/0x68, Battery ADC=1/Ctrl=2
 
+**Relay Module** (v1.14.1): 6-channel relay with automatic sensor control (https://aliexpress.ru/item/32831141593.html). Hardware-level safety: when rain sensor detects WET, relay automatically opens (cuts power) regardless of GPIO state. No GPIO verification performed after digitalWrite due to this feature - read-back would show LOW when sensor is wet (expected behavior).
+
 **Sensor Logic (CRITICAL, fixed v1.13.4)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY. v1.13.4 fixed readRainSensor() to power both signals correctly.
 
 **Overflow** (v1.12.1): 2N2222 circuit, GPIO 42, 100ms poll, LOW=emergency
@@ -157,6 +159,14 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 ### Telegram
 
 **Config** (secret.h): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+**Commands** (v1.14.1):
+- `/halt` - Enter halt mode (blocks all watering, OTA ready)
+- `/resume` - Exit halt mode (restore normal operation)
+- `/time` - Show current RTC time, temperature, battery
+- `/settime` - Auto-sync time from NTP (Moscow UTC+3)
+- `/settime YYYY-MM-DD HH:MM:SS` - Manual time set (e.g. `/settime 2026-01-12 14:30:00`)
+- `/reset_overflow` - Clear overflow sensor flag
 
 **Notifications** (sequential watering only): Start (session ID, trigger, trays) + Completion table (tray, duration, status: OK/FULL/TIMEOUT/STOPPED). TelegramNotifier.h, HTTPS api.telegram.org, WateringSessionData
 

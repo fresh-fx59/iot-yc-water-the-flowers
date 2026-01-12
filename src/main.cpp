@@ -37,11 +37,54 @@ PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
 int lastUpdateId = 0; // Tracks the last processed Telegram update ID to avoid reprocessing old messages.
 
-// ============================================ 
+// ============================================
+// NTP Time Sync Helper
+// Syncs RTC with NTP server (Moscow timezone: UTC+3)
+// ============================================
+bool syncTimeFromNTP() {
+    DebugHelper::debug("🌐 Syncing time from NTP...");
+
+    // Moscow timezone: UTC+3, no DST
+    const long gmtOffset_sec = 3 * 3600;
+    const int daylightOffset_sec = 0;
+
+    // Configure NTP (pool.ntp.org with fallbacks)
+    configTime(gmtOffset_sec, daylightOffset_sec, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+
+    // Wait for time to be set (max 10 seconds)
+    int retries = 0;
+    while (retries < 20) {
+        time_t now = time(nullptr);
+        if (now > 1640000000) { // Jan 2022 - sanity check
+            // Time successfully obtained from NTP
+            struct tm *timeinfo = localtime(&now);
+            char buffer[30];
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+            DebugHelper::debug("✓ NTP time obtained: " + String(buffer));
+
+            // Set RTC from NTP time
+            DS3231RTC::setTime(now);
+
+            // Re-sync ESP32 system time from RTC (ensures consistency)
+            DS3231RTC::setSystemTimeFromRTC();
+
+            DebugHelper::debug("✓ RTC synchronized with NTP");
+            return true;
+        }
+        delay(500);
+        retries++;
+    }
+
+    DebugHelper::debugImportant("❌ NTP sync timeout - check internet connection");
+    return false;
+}
+
+// ============================================
 // Telegram Command Handler
 // Processes incoming Telegram commands like /halt and /resume.
 // timeout: Long polling timeout in seconds (0 for immediate check)
-// ============================================ 
+// ============================================
 void checkTelegramCommands(int timeout = 10) {
     if (!NetworkManager::isWiFiConnected()) {
         return;
@@ -76,6 +119,120 @@ void checkTelegramCommands(int timeout = 10) {
 
             DebugHelper::flushBuffer();
             sendTelegramDebug(resumeMessage);
+        }
+    } else if (command == "/time" || command == "time") {
+        // Display current time from RTC
+        float temp = DS3231RTC::getTemperature();
+        float battery = DS3231RTC::getBatteryVoltage();
+
+        String timeMessage = "⏰ <b>Current Time</b>\n\n";
+        timeMessage += "📅 " + TelegramNotifier::getCurrentDateTime() + "\n";
+        timeMessage += "🌡️ RTC Temp: " + String(temp, 2) + " °C\n";
+        timeMessage += "🔋 Battery: " + String(battery, 3) + " V";
+
+        if (battery < 2.5) {
+            timeMessage += " ⚠️ LOW!";
+        }
+
+        timeMessage += "\n\n💡 Use /settime to update";
+
+        sendTelegramDebug(timeMessage);
+    } else if (command == "/settime" || command == "settime" ||
+               command.startsWith("/settime ") || command.startsWith("settime ")) {
+
+        // Extract time string (if provided)
+        String timeStr = command;
+        timeStr.replace("/settime", "");
+        timeStr.replace("settime", "");
+        timeStr.trim();
+
+        // AUTO MODE: No arguments provided - sync from NTP
+        if (timeStr.length() == 0) {
+            DebugHelper::flushBuffer();
+
+            String syncingMessage = "🌐 <b>Auto Time Sync</b>\n\n";
+            syncingMessage += "⏳ Connecting to NTP servers...\n";
+            syncingMessage += "🌍 Timezone: Moscow (UTC+3)";
+            sendTelegramDebug(syncingMessage);
+
+            // Attempt NTP sync
+            if (syncTimeFromNTP()) {
+                String successMessage = "✅ <b>TIME AUTO-SYNCED</b>\n\n";
+                successMessage += "⏰ Current time: " + TelegramNotifier::getCurrentDateTime() + "\n";
+                successMessage += "🌐 Source: NTP (pool.ntp.org)\n";
+                successMessage += "🔧 RTC and system time synchronized\n\n";
+                successMessage += "💡 To set manually: /settime YYYY-MM-DD HH:MM:SS";
+
+                DebugHelper::flushBuffer();
+                sendTelegramDebug(successMessage);
+            } else {
+                String errorMessage = "❌ <b>NTP Sync Failed</b>\n\n";
+                errorMessage += "⚠️ Could not reach NTP servers\n";
+                errorMessage += "🔍 Check:\n";
+                errorMessage += "  • Internet connection\n";
+                errorMessage += "  • WiFi signal strength\n";
+                errorMessage += "  • Router firewall (port 123)\n\n";
+                errorMessage += "💡 Try manual: /settime YYYY-MM-DD HH:MM:SS\n";
+                errorMessage += "Example: /settime 2026-01-12 14:30:00";
+
+                DebugHelper::flushBuffer();
+                sendTelegramDebug(errorMessage);
+            }
+        }
+        // MANUAL MODE: User provided date/time
+        else {
+            // Parse datetime: YYYY-MM-DD HH:MM:SS
+            int year, month, day, hour, minute, second;
+            if (sscanf(timeStr.c_str(), "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) == 6) {
+                // Validate ranges
+                if (year >= 2000 && year <= 2099 && month >= 1 && month <= 12 &&
+                    day >= 1 && day <= 31 && hour >= 0 && hour <= 23 &&
+                    minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
+
+                    // Calculate day of week (1=Sunday, 7=Saturday)
+                    // Using Zeller's congruence simplified
+                    int y = year;
+                    int m = month;
+                    if (m < 3) {
+                        m += 12;
+                        y--;
+                    }
+                    int dayOfWeek = (day + (13 * (m + 1)) / 5 + y + y / 4 - y / 100 + y / 400) % 7;
+                    dayOfWeek = (dayOfWeek + 6) % 7 + 1; // Convert to 1-7 (Sunday=1)
+
+                    // Set RTC time
+                    DS3231RTC::setTime(second, minute, hour, dayOfWeek, day, month, year - 2000);
+
+                    // Update ESP32 system time from RTC
+                    DS3231RTC::setSystemTimeFromRTC();
+
+                    String successMessage = "✅ <b>TIME MANUALLY SET</b>\n\n";
+                    successMessage += "⏰ New time: " + TelegramNotifier::getCurrentDateTime() + "\n";
+                    successMessage += "📅 Day of week: " + String(dayOfWeek) + "\n";
+                    successMessage += "🔧 RTC and system time synchronized";
+
+                    DebugHelper::flushBuffer();
+                    sendTelegramDebug(successMessage);
+                    DebugHelper::debugImportant("✓ RTC time manually set to: " + timeStr);
+                } else {
+                    String errorMessage = "❌ <b>Invalid date/time values</b>\n\n";
+                    errorMessage += "Valid ranges:\n";
+                    errorMessage += "• Year: 2000-2099\n";
+                    errorMessage += "• Month: 1-12\n";
+                    errorMessage += "• Day: 1-31\n";
+                    errorMessage += "• Hour: 0-23\n";
+                    errorMessage += "• Minute: 0-59\n";
+                    errorMessage += "• Second: 0-59";
+                    sendTelegramDebug(errorMessage);
+                }
+            } else {
+                String errorMessage = "❌ <b>Invalid time format</b>\n\n";
+                errorMessage += "Usage:\n";
+                errorMessage += "• Auto-sync: /settime\n";
+                errorMessage += "• Manual: /settime YYYY-MM-DD HH:MM:SS\n\n";
+                errorMessage += "Example: /settime 2026-01-12 14:30:00";
+                sendTelegramDebug(errorMessage);
+            }
         }
     }
 }

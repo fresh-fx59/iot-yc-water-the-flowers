@@ -1164,16 +1164,16 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
 }
 
 inline void WateringSystem::openValve(int valveIndex) {
+  // NOTE: No GPIO verification is performed after digitalWrite() because the relay
+  // module has automatic sensor-based control. When the rain sensor is WET, the relay
+  // module's hardware automatically opens the relay (disables power) regardless of
+  // GPIO state. This is a hardware-level safety feature. GPIO read-back would show
+  // LOW even when GPIO is set HIGH (expected behavior, not a failure).
+
   DebugHelper::debugImportant("🔧 OPENING VALVE " + String(valveIndex));
   DebugHelper::debug("  GPIO Pin: " + String(VALVE_PINS[valveIndex]));
-  DebugHelper::debug("  Setting GPIO to HIGH...");
 
   digitalWrite(VALVE_PINS[valveIndex], HIGH);
-
-  // Read back the pin state to verify
-  int pinState = digitalRead(VALVE_PINS[valveIndex]);
-  DebugHelper::debugImportant("  GPIO After: " +
-                              String(pinState == HIGH ? "HIGH" : "LOW"));
 
   valves[valveIndex]->state = VALVE_OPEN;
   activeValveCount++;

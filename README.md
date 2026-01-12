@@ -4,7 +4,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-**Version 1.13.0** - Extracted State Machine Architecture + Comprehensive Testing + Learning Algorithm!
+**Version 1.13.5** - Extracted State Machine Architecture + Comprehensive Testing + Learning Algorithm!
+
+**Recent Updates:**
+- **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
 
 ## 🏗️ Architectural Improvements (v1.13.0)
 
@@ -1042,8 +1045,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.13.0
+**Version:** 1.13.5
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
 **Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Master Overflow Sensor, Emergency Halt Mode, 6-Layer Safety System, Time-Based Learning
 **Testing:** 20 native tests (no hardware required)
+**Bug Fixes:** v1.13.4 - Rain sensor reading now correctly powers valve pin + GPIO 18

@@ -118,7 +118,7 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 **Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), LED=48, RTC I2C SDA=14/SCL=3/0x68, Battery ADC=1/Ctrl=2
 
-**Sensor Logic (CRITICAL)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY.
+**Sensor Logic (CRITICAL, fixed v1.13.4)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY. v1.13.4 fixed readRainSensor() to power both signals correctly.
 
 **Overflow** (v1.12.1): 2N2222 circuit, GPIO 42, 100ms poll, LOW=emergency
 
@@ -215,7 +215,7 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 1. Baud 115200, --raw if gibberish
 2. buildfs before uploadfs, files→/web/ not /data/web/
 3. API 1-6, internal 0-5
-4. **CRITICAL**: Sensors need TWO power: valve pin HIGH + GPIO 18 HIGH. Without valve pin→always WET. Prod: valve open during read, test: power both
+4. **CRITICAL**: Sensors need TWO power: valve pin HIGH + GPIO 18 HIGH. Without valve pin→always WET. Fixed v1.13.4: readRainSensor() now powers both. Prod: valve open during read, test: power both
 5. setWateringSystemRef() BEFORE setupOta() or API fails
 6. Watering continues if WiFi/MQTT down (design)
 7. LittleFS before wateringSystem.init() (loads data)

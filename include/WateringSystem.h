@@ -10,9 +10,11 @@
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <LittleFS.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 
 // External MQTT client (defined in main.cpp)
 extern PubSubClient mqttClient;
@@ -77,6 +79,11 @@ private:
   bool overflowDetected; // If true, water overflow detected - block all watering
   unsigned long lastOverflowCheck; // Last time overflow sensor was checked
 
+  // Water level sensor tracking
+  bool waterLevelLow; // If true, water tank is empty - block all watering
+  unsigned long lastWaterLevelCheck; // Last time water level sensor was checked
+  bool waterLevelLowNotificationSent; // Track if low water notification was sent
+
 public:
   // ========== Constructor ==========
   WateringSystem()
@@ -84,7 +91,8 @@ public:
         lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
         sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
-        lastOverflowCheck(0) {
+        lastOverflowCheck(0), waterLevelLow(false), lastWaterLevelCheck(0),
+        waterLevelLowNotificationSent(false) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -153,6 +161,10 @@ public:
   bool isOverflowDetected() { return overflowDetected; }
   void resetOverflowFlag(); // Reset overflow flag after fixing issue
 
+  // Water level sensor control
+  bool isWaterLevelLow() { return waterLevelLow; }
+  void checkWaterLevel(); // Manual water level check (for testing)
+
 private:
   // ========== Core Logic ==========
   void processValve(int valveIndex, unsigned long currentTime);
@@ -161,6 +173,7 @@ private:
   void checkAutoWatering(unsigned long currentTime);
   void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
   void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
+  void checkWaterLevelSensor(unsigned long currentTime);  // Water level sensor check
   void emergencyStopAll(const String &reason);  // Emergency stop all watering
 
   // ========== Hardware Control ==========
@@ -217,6 +230,10 @@ inline void WateringSystem::init() {
   // Initialize master overflow sensor pin
   pinMode(MASTER_OVERFLOW_SENSOR_PIN, INPUT_PULLUP);
   DebugHelper::debugImportant("Master overflow sensor: GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
+
+  // Initialize water level sensor pin
+  pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
+  DebugHelper::debugImportant("Water level sensor: GPIO " + String(WATER_LEVEL_SENSOR_PIN));
 
   DebugHelper::debugImportant("✓ WateringSystem initialized");
   publishStateChange("system", "initialized");
@@ -411,6 +428,9 @@ inline void WateringSystem::processWateringLoop() {
   // 🚨 MASTER OVERFLOW SENSOR - HIGHEST PRIORITY CHECK
   checkMasterOverflowSensor(currentTime);
 
+  // 🚨 WATER LEVEL SENSOR - CHECK TANK WATER LEVEL
+  checkWaterLevelSensor(currentTime);
+
   // 🚨 GLOBAL SAFETY WATCHDOG - ALWAYS RUN FIRST
   globalSafetyWatchdog(currentTime);
 
@@ -593,10 +613,168 @@ inline void WateringSystem::resetOverflowFlag() {
   DebugHelper::debugImportant("✓ Overflow flag reset - system ready to resume");
 }
 
+// ========== WATER LEVEL SENSOR WATCHDOG ==========
+// Monitors water level sensor and blocks watering if tank is empty
+inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
+  // Check sensor every 100ms to ensure fast response
+  if (currentTime - lastWaterLevelCheck < WATER_LEVEL_CHECK_INTERVAL) {
+    return;
+  }
+  lastWaterLevelCheck = currentTime;
+
+  // Read water level sensor (HIGH = water detected, LOW = no water/empty)
+  int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
+
+  // If water level is low (sensor reads LOW)
+  if (sensorValue == LOW) {
+    if (!waterLevelLow) {
+      // First detection - trigger emergency stop and send notification
+      DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW DETECTED! ⚠️⚠️⚠️");
+      DebugHelper::debugImportant("Water tank is empty - GPIO " + String(WATER_LEVEL_SENSOR_PIN));
+      waterLevelLow = true;
+      waterLevelLowNotificationSent = false;
+
+      // Emergency stop everything if currently watering
+      bool anyWatering = false;
+      for (int i = 0; i < NUM_VALVES; i++) {
+        if (valves[i]->phase != PHASE_IDLE) {
+          anyWatering = true;
+          break;
+        }
+      }
+      if (anyWatering) {
+        emergencyStopAll("WATER LEVEL LOW");
+      }
+
+      // Flush debug buffer before sending Telegram notification
+      DebugHelper::flushBuffer();
+
+      // Send Telegram notification (only once)
+      if (WiFi.isConnected() && !waterLevelLowNotificationSent) {
+        String message = "⚠️⚠️⚠️ <b>WATER LEVEL LOW</b> ⚠️⚠️⚠️\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "💧 Water tank is empty or low\n";
+        message += "🔧 Sensor GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "\n\n";
+        message += "✅ Actions taken:\n";
+        if (anyWatering) {
+          message += "  • All valves CLOSED\n";
+          message += "  • Pump STOPPED\n";
+        }
+        message += "  • Watering BLOCKED\n\n";
+        message += "🔄 System will resume automatically when water is refilled";
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                     "&text=";
+
+        // URL encode the message
+        String encoded = "";
+        for (size_t i = 0; i < message.length(); i++) {
+          char c = message.charAt(i);
+          if (c == ' ') {
+            encoded += "+";
+          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += c;
+          } else {
+            encoded += '%';
+            char hex[3];
+            sprintf(hex, "%02X", c);
+            encoded += hex;
+          }
+        }
+
+        url += encoded + "&parse_mode=HTML";
+
+        http.begin(client, url);
+        http.setTimeout(10000);
+        http.GET();
+        http.end();
+
+        waterLevelLowNotificationSent = true;
+        DebugHelper::debugImportant("📱 Water level low notification sent to Telegram");
+      }
+    }
+  } else {
+    // Water level is OK (sensor reads HIGH)
+    if (waterLevelLow) {
+      // Water was low but now restored
+      DebugHelper::debugImportant("✅ WATER LEVEL RESTORED!");
+      DebugHelper::debugImportant("Water tank refilled - normal operation resumed");
+      waterLevelLow = false;
+
+      // Flush debug buffer before sending Telegram notification
+      DebugHelper::flushBuffer();
+
+      // Send restoration notification
+      if (WiFi.isConnected()) {
+        String message = "✅ <b>WATER LEVEL RESTORED</b> ✅\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "💧 Water tank refilled\n";
+        message += "🔄 System resuming normal operation\n\n";
+        message += "✓ Watering operations enabled";
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        client.setInsecure();
+
+        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                     "&text=";
+
+        // URL encode the message
+        String encoded = "";
+        for (size_t i = 0; i < message.length(); i++) {
+          char c = message.charAt(i);
+          if (c == ' ') {
+            encoded += "+";
+          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encoded += c;
+          } else {
+            encoded += '%';
+            char hex[3];
+            sprintf(hex, "%02X", c);
+            encoded += hex;
+          }
+        }
+
+        url += encoded + "&parse_mode=HTML";
+
+        http.begin(client, url);
+        http.setTimeout(10000);
+        http.GET();
+        http.end();
+
+        DebugHelper::debugImportant("📱 Water level restored notification sent to Telegram");
+      }
+
+      // Reset notification flag for next low water event
+      waterLevelLowNotificationSent = false;
+    }
+  }
+}
+
+// ========== MANUAL WATER LEVEL CHECK ==========
+// For testing and diagnostics
+inline void WateringSystem::checkWaterLevel() {
+  int sensorValue = digitalRead(WATER_LEVEL_SENSOR_PIN);
+  String status = (sensorValue == HIGH) ? "OK (Water detected)" : "LOW (No water)";
+  DebugHelper::debugImportant("Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " + status);
+  DebugHelper::debugImportant("Current state: " + String(waterLevelLow ? "BLOCKED" : "NORMAL"));
+}
+
 // ========== Automatic Watering Check ==========
 inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
+    return;
+  }
+
+  // WATER LEVEL CHECK: Block all watering if water tank is empty
+  if (waterLevelLow) {
     return;
   }
 
@@ -641,6 +819,12 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
     DebugHelper::debug("🚨 Watering blocked - OVERFLOW DETECTED");
+    return;
+  }
+
+  // WATER LEVEL CHECK: Block all watering if water tank is empty
+  if (waterLevelLow) {
+    DebugHelper::debug("💧 Watering blocked - WATER LEVEL LOW");
     return;
   }
 
@@ -772,6 +956,12 @@ inline void WateringSystem::startSequentialWatering() {
     return;
   }
 
+  // WATER LEVEL CHECK: Block all watering if water tank is empty
+  if (waterLevelLow) {
+    DebugHelper::debug("💧 Sequential watering blocked - WATER LEVEL LOW");
+    return;
+  }
+
   // HALT MODE CHECK: Block all watering operations
   if (haltMode) {
     DebugHelper::debug("🛑 Sequential watering blocked - system in HALT MODE");
@@ -826,6 +1016,12 @@ inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
     DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
+    return;
+  }
+
+  // WATER LEVEL CHECK: Block all watering if water tank is empty
+  if (waterLevelLow) {
+    DebugHelper::debug("💧 Sequential watering blocked - WATER LEVEL LOW");
     return;
   }
 

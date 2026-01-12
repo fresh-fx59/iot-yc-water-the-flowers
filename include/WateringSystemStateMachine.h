@@ -234,6 +234,12 @@ inline void WateringSystem::publishCurrentState() {
         stateJson += ",\"sequence_total\":" + String(sequenceLength);
     }
 
+    // Add water level sensor status
+    stateJson += ",\"water_level\":{";
+    stateJson += "\"status\":\"" + String(waterLevelLow ? "low" : "ok") + "\"";
+    stateJson += ",\"blocked\":" + String(waterLevelLow ? "true" : "false");
+    stateJson += "}";
+
     stateJson += ",\"valves\":[";
 
     for (int i = 0; i < NUM_VALVES; i++) {

@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.13.5 (config.h:10)
+**Version**: 1.14.0 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -70,19 +70,21 @@ Pure time-based learning helpers (3 tests):
 `pio test -e native` - 20 tests (desktop, no ESP32): state transitions, timeouts, learning calcs, safety scenarios
 Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_SUMMARY.md
 
-### Safety Features (v1.11.0-v1.12.5)
+### Safety Features (v1.11.0-v1.14.0)
 
 **L1: Master Overflow Sensor** (GPIO 42, 100ms poll, WateringSystem.h:530-595): LOW=overflow → `emergencyStopAll()`, blocks all watering. Recovery: `reset_overflow`
 
-**L2: Timeouts** (config.h:66-67): MAX_WATERING_TIME=25s, ABSOLUTE_SAFETY_TIMEOUT=30s
+**L2: Water Level Sensor** (v1.14.0, GPIO 19, 100ms poll): HIGH=water OK, LOW=empty → blocks all watering, auto-resume when refilled. Telegram notifications on low/restored
 
-**L3: Two-Tier SM Timeouts** (WateringSystemStateMachine.h:77-106): 25s (normal, learning data), 30s (emergency, force GPIO)
+**L3: Timeouts** (config.h:66-67): MAX_WATERING_TIME=25s, ABSOLUTE_SAFETY_TIMEOUT=30s
 
-**L4: Global Watchdog** (WateringSystem.h:479-520): `globalSafetyWatchdog()` every loop, bypasses SM, force GPIO off
+**L4: Two-Tier SM Timeouts** (WateringSystemStateMachine.h:77-106): 25s (normal, learning data), 30s (emergency, force GPIO)
 
-**L5: Sensor Logging** (WateringSystem.h:832-838): Log GPIO every 5s during watering
+**L5: Global Watchdog** (WateringSystem.h:479-520): `globalSafetyWatchdog()` every loop, bypasses SM, force GPIO off
 
-**L6: Diagnostics** (WateringSystem.h:1530-1627): `testSensor(idx)`, `testAllSensors()`, MQTT: `test_sensors`, `test_sensor_N`
+**L6: Sensor Logging** (WateringSystem.h:832-838): Log GPIO every 5s during watering
+
+**L7: Diagnostics** (WateringSystem.h:1530-1627): `testSensor(idx)`, `testAllSensors()`, MQTT: `test_sensors`, `test_sensor_N`
 
 ### Halt Mode (v1.12.0)
 
@@ -116,11 +118,13 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 ### Hardware (ESP32-S3-N8R2)
 
-**Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), LED=48, RTC I2C SDA=14/SCL=3/0x68, Battery ADC=1/Ctrl=2
+**Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=19 (INPUT_PULLUP, HIGH=water, LOW=empty), LED=48, RTC I2C SDA=14/SCL=3/0x68, Battery ADC=1/Ctrl=2
 
 **Sensor Logic (CRITICAL, fixed v1.13.4)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY. v1.13.4 fixed readRainSensor() to power both signals correctly.
 
 **Overflow** (v1.12.1): 2N2222 circuit, GPIO 42, 100ms poll, LOW=emergency
+
+**Water Level** (v1.14.0): Float switch, GPIO 19, 100ms poll, HIGH=water OK, LOW=empty. Auto-blocks watering, sends Telegram, auto-resumes when refilled
 
 **DS3231 RTC** (v1.10.0+): Time source (no NTP), CR2032, temp sensor, 100kHz I2C, DS3231RTC.h
 
@@ -146,7 +150,7 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow`
 
-**State** (`$devices/{ID}/state`, 2s): JSON with pump, sequential_mode, valves[id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}]
+**State** (`$devices/{ID}/state`, 2s): JSON with pump, sequential_mode, water_level{status, blocked}, valves[id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}]
 
 **Notes**: Auto-publish 2s, individual valve via web only, Telegram also accepts `/halt`/`resume`/`reset_overflow`
 

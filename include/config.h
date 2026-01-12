@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.13.6";
+const char *VERSION = "watering_system_1.14.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -45,6 +45,9 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 // Master Overflow Sensor pin (2N2222 transistor circuit)
 #define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
 
+// Water Level Sensor pin (float switch in water tank)
+#define WATER_LEVEL_SENSOR_PIN 19  // HIGH = water detected, LOW = no water/empty
+
 // ============================================
 // System Constants
 // ============================================
@@ -66,6 +69,7 @@ const unsigned long STATE_PUBLISH_INTERVAL =
 const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - REDUCED FOR SAFETY
 const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
+const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
 
 // ============================================
 // Learning Algorithm Constants

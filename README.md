@@ -1,12 +1,13 @@
 # Description
 
-This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors and 1 water pump.
+This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors, 1 water pump, 1 water level sensor, and 1 master overflow sensor.
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-**Version 1.13.5** - Extracted State Machine Architecture + Comprehensive Testing + Learning Algorithm!
+**Version 1.14.0** - Water Level Sensor + 7-Layer Safety System!
 
 **Recent Updates:**
+- **v1.14.0**: Added water level sensor (GPIO 19) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
 - **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
 
 ## 🏗️ Architectural Improvements (v1.13.0)
@@ -70,11 +71,11 @@ pio test -e native
 - `OVERWATERING_RISK_ANALYSIS.md` - Safety analysis and mitigation
 - `OVERWATERING_TEST_SUMMARY.md` - Test results and validation
 
-## 🛡️ Safety Improvements (v1.11.0 - v1.12.5)
+## 🛡️ Safety Improvements (v1.11.0 - v1.14.0)
 
 ### Multi-Layer Timeout Protection
 
-The system now includes **6 independent safety layers** to prevent overwatering:
+The system now includes **7 independent safety layers** to prevent overwatering and ensure safe operation:
 
 **Layer 1: Master Overflow Sensor (v1.12.1)**
 - **Hardware**: Rain sensor on GPIO 42 (2N2222 transistor circuit)
@@ -87,26 +88,37 @@ The system now includes **6 independent safety layers** to prevent overwatering:
   - Telegram alert sent with emergency details
 - **Recovery**: Manual intervention required, send `/reset_overflow` command
 
-**Layer 2: Safety Timeouts** (v1.12.5)
+**Layer 2: Water Level Sensor (v1.14.0)**
+- **Hardware**: Float switch on GPIO 19 (monitors water tank level)
+- **Detection**: HIGH = water OK, LOW = tank empty
+- **Response Time**: 100ms polling
+- **Automatic Actions**:
+  - Blocks all watering operations when tank is empty
+  - Stops active watering immediately if water runs out
+  - Sends Telegram notification on low water
+  - Sends Telegram notification when water is restored
+- **Recovery**: Automatic - system resumes normal operation when tank is refilled (no manual intervention needed)
+
+**Layer 3: Safety Timeouts** (v1.12.5)
 - MAX_WATERING_TIME: **25 seconds** (normal watering timeout)
 - ABSOLUTE_SAFETY_TIMEOUT: **30 seconds** (emergency hard limit)
 
-**Layer 3: Two-Tier State Machine Timeouts**
+**Layer 4: Two-Tier State Machine Timeouts**
 - Normal timeout (25s): Standard valve closure with learning data processing
 - Emergency cutoff (30s): Forces hardware shutdown via direct GPIO control
 
-**Layer 4: Global Safety Watchdog**
+**Layer 5: Global Safety Watchdog**
 - Runs independently every loop iteration
 - Bypasses state machine if timeout exceeded
 - Forces valves/pump OFF directly via GPIO
 - Cannot be blocked by state machine issues
 
-**Layer 5: Enhanced Sensor Logging**
+**Layer 6: Enhanced Sensor Logging**
 - Logs raw GPIO values every 5 seconds during watering
 - Tracks sensor readings for post-incident analysis
 - Helps diagnose hardware failures
 
-**Layer 6: Sensor Diagnostic Tools**
+**Layer 7: Sensor Diagnostic Tools**
 - `test_sensors` - Test all 6 sensors and generate report
 - `test_sensor_N` (N=0-5) - Test individual sensor
 - Detects pullup resistor failures
@@ -183,6 +195,57 @@ When overflow detected:
 
 ⚠️ Manual intervention required!
 Send /reset_overflow to resume operations
+```
+
+### 💧 Water Level Sensor (v1.14.0)
+
+**Hardware Circuit:**
+- Float switch in water tank connected to GPIO 19
+- Pulls GPIO HIGH when water present (tank OK)
+- Pulls GPIO LOW when no water (tank empty)
+
+**Safety Features:**
+- ✅ **High priority check** - Runs second in every loop (100ms polling, right after overflow sensor)
+- ✅ **Automatic blocking** - Prevents watering when tank is empty
+- ✅ **Emergency stop** - Stops active watering if water runs out mid-cycle
+- ✅ **Telegram notifications** - Alerts on low water and when restored
+- ✅ **Automatic recovery** - Resumes normal operation when tank is refilled (no manual intervention)
+
+**Automatic Response:**
+When water level low detected:
+1. All future watering attempts blocked (manual, sequential, auto-watering)
+2. If watering is active: valves closed immediately, pump stopped
+3. Telegram notification sent with low water alert
+4. System continuously monitors for water restoration
+5. When water restored: Telegram notification sent, normal operation resumes automatically
+
+**Example Telegram Alerts:**
+
+**Low Water Alert:**
+```
+⚠️⚠️⚠️ WATER LEVEL LOW ⚠️⚠️⚠️
+
+⏰ 12-01-2026 10:15:32
+💧 Water tank is empty or low
+🔧 Sensor GPIO 19
+
+✅ Actions taken:
+  • All valves CLOSED
+  • Pump STOPPED
+  • Watering BLOCKED
+
+🔄 System will resume automatically when water is refilled
+```
+
+**Water Restored:**
+```
+✅ WATER LEVEL RESTORED ✅
+
+⏰ 12-01-2026 10:45:18
+💧 Water tank refilled
+🔄 System resuming normal operation
+
+✓ Watering operations enabled
 ```
 
 ## Core Watering Algorithm
@@ -424,15 +487,24 @@ platformio device monitor -b 115200 --raw
 - Sensor 6: Valve GPIO 17, Sensor GPIO 13
 
 **Water Level Sensor (GPIO 19):**
-- `W` - Read once
-- `N` - Monitor continuously
+- `W` - Read water level sensor once (HIGH = water OK, LOW = empty)
+- `N` - Monitor water level sensor continuously
+- `S` - Stop monitoring
+
+**Master Overflow Sensor (GPIO 42):**
+- `O` - Read overflow sensor once
+- `V` - Monitor overflow sensor continuously
+- `S` - Stop monitoring
 
 **DS3231 RTC (I2C):**
 - `T` - Read time/date/temperature
 - `I` - Scan I2C bus for devices
+- `U` - Set RTC to current time (use web dashboard)
+- `K` - Reset RTC to epoch (2000-01-01 00:00:00)
+- `B` - Read battery voltage (VBAT)
 
 **System:**
-- `F` - Full sequence test (all components)
+- `F` - Full sequence test (all components including water level sensor)
 - `H` - Show menu
 
 ## Switching Between Production/Test
@@ -1005,6 +1077,10 @@ Each valve in the state includes a `learning` object:
 {
   "pump": "off",
   "sequential_mode": false,
+  "water_level": {
+    "status": "ok",
+    "blocked": false
+  },
   "valves": [
     {
       "id": 0,
@@ -1030,6 +1106,10 @@ Each valve in the state includes a `learning` object:
 }
 ```
 
+**Water Level Sensor Fields (v1.14.0):**
+- `water_level.status`: Current tank water level - "ok" (water present) or "low" (tank empty)
+- `water_level.blocked`: Whether watering is blocked due to low water - true (blocked) or false (normal)
+
 **Time-Based Learning Fields (v1.5.0):**
 - `calibrated`: Has the valve completed first baseline calibration?
 - `auto_watering`: Is automatic watering enabled for this valve?
@@ -1045,9 +1125,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.13.5
+**Version:** 1.14.0
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Master Overflow Sensor, Emergency Halt Mode, 6-Layer Safety System, Time-Based Learning
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning
 **Testing:** 20 native tests (no hardware required)
-**Bug Fixes:** v1.13.4 - Rain sensor reading now correctly powers valve pin + GPIO 18
+**New in v1.14.0:** Water level sensor (GPIO 19) - auto-blocks watering when tank empty, auto-resumes when refilled, Telegram notifications

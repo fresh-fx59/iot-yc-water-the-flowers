@@ -84,6 +84,7 @@ private:
   bool waterLevelLow; // If true, water tank is empty - block all watering
   unsigned long lastWaterLevelCheck; // Last time water level sensor was checked
   bool waterLevelLowNotificationSent; // Track if low water notification was sent
+  unsigned long waterLevelLowFirstDetectedTime; // When LOW was first detected (for 10s delay)
 
 public:
   // ========== Constructor ==========
@@ -93,7 +94,8 @@ public:
         sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
         lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
-        lastWaterLevelCheck(0), waterLevelLowNotificationSent(false) {
+        lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
+        waterLevelLowFirstDetectedTime(0) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -650,81 +652,109 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
 
   // If water level is low (sensor reads LOW)
   if (sensorValue == LOW) {
-    if (!waterLevelLow) {
-      // First detection - trigger emergency stop and send notification
-      DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW DETECTED! ⚠️⚠️⚠️");
-      DebugHelper::debugImportant("Water tank is empty - GPIO " + String(WATER_LEVEL_SENSOR_PIN));
-      waterLevelLow = true;
-      waterLevelLowNotificationSent = false;
+    // Start or continue tracking LOW detection time
+    if (waterLevelLowFirstDetectedTime == 0) {
+      // First LOW detection - start timer
+      waterLevelLowFirstDetectedTime = currentTime;
+      DebugHelper::debug("Water level LOW detected - waiting 10s for pipe drainage...");
+      return; // Don't block yet, wait for delay
+    }
 
-      // Emergency stop everything if currently watering
-      bool anyWatering = false;
-      for (int i = 0; i < NUM_VALVES; i++) {
-        if (valves[i]->phase != PHASE_IDLE) {
-          anyWatering = true;
-          break;
-        }
-      }
-      if (anyWatering) {
-        emergencyStopAll("WATER LEVEL LOW");
-      }
+    // Check if we've been LOW for at least 10 seconds
+    unsigned long lowDuration = currentTime - waterLevelLowFirstDetectedTime;
+    if (lowDuration >= WATER_LEVEL_LOW_DELAY) {
+      // Been LOW for 10+ seconds - now block watering
+      if (!waterLevelLow) {
+        // First time blocking - trigger emergency stop and send notification
+        DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW CONFIRMED (10s delay expired) ⚠️⚠️⚠️");
+        DebugHelper::debugImportant("Water tank is empty - GPIO " + String(WATER_LEVEL_SENSOR_PIN));
+        waterLevelLow = true;
+        waterLevelLowNotificationSent = false;
 
-      // Flush debug buffer before sending Telegram notification
-      DebugHelper::flushBuffer();
-
-      // Send Telegram notification (only once)
-      if (WiFi.isConnected() && !waterLevelLowNotificationSent) {
-        String message = "⚠️⚠️⚠️ <b>WATER LEVEL LOW</b> ⚠️⚠️⚠️\n\n";
-        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
-        message += "💧 Water tank is empty or low\n";
-        message += "🔧 Sensor GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "\n\n";
-        message += "✅ Actions taken:\n";
-        if (anyWatering) {
-          message += "  • All valves CLOSED\n";
-          message += "  • Pump STOPPED\n";
-        }
-        message += "  • Watering BLOCKED\n\n";
-        message += "🔄 System will resume automatically when water is refilled";
-
-        HTTPClient http;
-        WiFiClientSecure client;
-        client.setInsecure();
-
-        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                     "&text=";
-
-        // URL encode the message
-        String encoded = "";
-        for (size_t i = 0; i < message.length(); i++) {
-          char c = message.charAt(i);
-          if (c == ' ') {
-            encoded += "+";
-          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded += c;
-          } else {
-            encoded += '%';
-            char hex[3];
-            sprintf(hex, "%02X", c);
-            encoded += hex;
+        // Emergency stop everything if currently watering
+        bool anyWatering = false;
+        for (int i = 0; i < NUM_VALVES; i++) {
+          if (valves[i]->phase != PHASE_IDLE) {
+            anyWatering = true;
+            break;
           }
         }
+        if (anyWatering) {
+          emergencyStopAll("WATER LEVEL LOW");
+        }
 
-        url += encoded + "&parse_mode=HTML";
+        // Flush debug buffer before sending Telegram notification
+        DebugHelper::flushBuffer();
 
-        http.begin(client, url);
-        http.setTimeout(10000);
-        http.GET();
-        http.end();
+        // Send Telegram notification (only once)
+        if (WiFi.isConnected() && !waterLevelLowNotificationSent) {
+          String message = "⚠️⚠️⚠️ <b>WATER LEVEL LOW</b> ⚠️⚠️⚠️\n\n";
+          message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+          message += "💧 Water tank is empty or low\n";
+          message += "🔧 Sensor GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "\n";
+          message += "⏱️ Confirmed after 10s delay\n\n";
+          message += "✅ Actions taken:\n";
+          if (anyWatering) {
+            message += "  • All valves CLOSED\n";
+            message += "  • Pump STOPPED\n";
+          }
+          message += "  • Watering BLOCKED\n\n";
+          message += "🔄 System will resume automatically when water is refilled";
 
-        waterLevelLowNotificationSent = true;
-        DebugHelper::debugImportant("📱 Water level low notification sent to Telegram");
+          HTTPClient http;
+          WiFiClientSecure client;
+          client.setInsecure();
+
+          String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                       "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                       "&text=";
+
+          // URL encode the message
+          String encoded = "";
+          for (size_t i = 0; i < message.length(); i++) {
+            char c = message.charAt(i);
+            if (c == ' ') {
+              encoded += "+";
+            } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+              encoded += c;
+            } else {
+              encoded += '%';
+              char hex[3];
+              sprintf(hex, "%02X", c);
+              encoded += hex;
+            }
+          }
+
+          url += encoded + "&parse_mode=HTML";
+
+          http.begin(client, url);
+          http.setTimeout(10000);
+          http.GET();
+          http.end();
+
+          waterLevelLowNotificationSent = true;
+          DebugHelper::debugImportant("📱 Water level low notification sent to Telegram");
+        }
       }
+    } else {
+      // Still within 10s delay period - don't block yet
+      unsigned long remainingMs = WATER_LEVEL_LOW_DELAY - lowDuration;
+      DebugHelper::debug("Water level still LOW - " + String(remainingMs / 1000) + "s until blocking");
     }
   } else {
     // Water level is OK (sensor reads HIGH)
+
+    // Reset the LOW detection timer since we detected HIGH
+    if (waterLevelLowFirstDetectedTime != 0) {
+      waterLevelLowFirstDetectedTime = 0;
+      if (!waterLevelLow) {
+        // Water came back before the 10s delay - no blocking needed
+        DebugHelper::debug("Water level restored before 10s delay - pipe drainage detected");
+      }
+    }
+
     if (waterLevelLow) {
-      // Water was low but now restored
+      // Water was low and blocked, but now restored
       DebugHelper::debugImportant("✅ WATER LEVEL RESTORED!");
       DebugHelper::debugImportant("Water tank refilled - normal operation resumed");
       waterLevelLow = false;

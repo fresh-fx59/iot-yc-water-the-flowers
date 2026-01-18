@@ -4,9 +4,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-**Version 1.15.5** - Learning Data Reset!
+**Version 1.15.6** - Water Level Sensor Delay!
 
 **Recent Updates:**
+- **v1.15.6**: Added 10-second confirmation delay to water level sensor - prevents false low-water alarms when water drains back from pipes to tank after pump stops
 - **v1.15.5**: Reset learning data files to force immediate recalibration after bug fixes
 - **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
 - **v1.14.0**: Added water level sensor (GPIO 19) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
@@ -90,15 +91,17 @@ The system now includes **7 independent safety layers** to prevent overwatering 
   - Telegram alert sent with emergency details
 - **Recovery**: Manual intervention required, send `/reset_overflow` command
 
-**Layer 2: Water Level Sensor (v1.14.0)**
+**Layer 2: Water Level Sensor (v1.14.0, v1.15.6 delay)**
 - **Hardware**: Float switch on GPIO 19 (monitors water tank level)
 - **Detection**: HIGH = water OK, LOW = tank empty
 - **Response Time**: 100ms polling
+- **Confirmation Delay** (v1.15.6): 10-second delay before blocking watering - prevents false alarms from pipe drainage after pump stops
 - **Automatic Actions**:
-  - Blocks all watering operations when tank is empty
+  - Blocks all watering operations when tank is empty (after 10s confirmation)
   - Stops active watering immediately if water runs out
-  - Sends Telegram notification on low water
+  - Sends Telegram notification on low water (after delay expires)
   - Sends Telegram notification when water is restored
+  - Automatically cancels blocking if water level rises during 10s delay (pipe drainage detected)
 - **Recovery**: Automatic - system resumes normal operation when tank is refilled (no manual intervention needed)
 
 **Layer 3: Safety Timeouts** (v1.12.5)
@@ -230,6 +233,7 @@ When water level low detected:
 ⏰ 12-01-2026 10:15:32
 💧 Water tank is empty or low
 🔧 Sensor GPIO 19
+⏱️ Confirmed after 10s delay
 
 ✅ Actions taken:
   • All valves CLOSED
@@ -1181,9 +1185,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.15.5
+**Version:** 1.15.6
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
 **Testing:** 20 native tests (no hardware required)
-**New in v1.15.5:** Learning data reset - forces immediate recalibration on next boot after v1.15.4 bug fixes
+**New in v1.15.6:** Water level sensor 10-second confirmation delay - prevents false low-water alarms from pipe drainage after pump stops

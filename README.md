@@ -4,9 +4,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-**Version 1.15.4** - Overflow Recovery & Long Outage Detection!
+**Version 1.15.5** - Learning Data Reset!
 
 **Recent Updates:**
+- **v1.15.5**: Reset learning data files to force immediate recalibration after bug fixes
 - **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
 - **v1.14.0**: Added water level sensor (GPIO 19) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
 - **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
@@ -1180,9 +1181,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.15.4
+**Version:** 1.15.5
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
 **Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
 **Testing:** 20 native tests (no hardware required)
-**New in v1.15.4:** Overflow recovery learning protection + long outage boot detection - prevents interval doubling after overflow events, ensures immediate watering after extended power outages
+**New in v1.15.5:** Learning data reset - forces immediate recalibration on next boot after v1.15.4 bug fixes

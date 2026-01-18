@@ -65,6 +65,10 @@ struct ValveController {
   float intervalMultiplier; // Multiplier for base 24h interval
                             // (1.0=24h, 2.0=48h, 3.5=84h, etc.)
 
+  // Long outage recovery: Real time since last watering when millis() can't represent timestamp
+  unsigned long realTimeSinceLastWatering; // Duration in ms, calculated during load
+                                           // Used when lastWateringCompleteTime == 0 after long outage
+
   // Constructor
   ValveController(int idx)
       : valveIndex(idx), state(VALVE_CLOSED), phase(PHASE_IDLE),
@@ -74,7 +78,7 @@ struct ValveController {
         emptyToFullDuration(0), baselineFillDuration(0), lastFillDuration(0),
         previousFillDuration(0), lastWaterLevelPercent(0.0),
         isCalibrated(false), totalWateringCycles(0), autoWateringEnabled(true),
-        intervalMultiplier(1.0) {}
+        intervalMultiplier(1.0), realTimeSinceLastWatering(0) {}
 };
 
 // ============================================
@@ -178,8 +182,13 @@ inline bool shouldWaterNow(const ValveController *valve,
     return timeSinceLastWatering >= valve->emptyToFullDuration;
   }
 
-  // If no lastWateringCompleteTime, don't water (invalid/uncertain timestamp
-  // data) Boot watering logic will handle truly overdue valves instead
+  // Long outage case: millis() can't represent timestamp
+  // Use real time duration stored during load
+  if (valve->realTimeSinceLastWatering > 0) {
+    return valve->realTimeSinceLastWatering >= valve->emptyToFullDuration;
+  }
+
+  // If no timestamp data at all, don't water (safety)
   return false;
 }
 

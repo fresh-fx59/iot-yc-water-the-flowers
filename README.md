@@ -4,9 +4,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
-**Version 1.14.0** - Water Level Sensor + 7-Layer Safety System!
+**Version 1.15.4** - Overflow Recovery & Long Outage Detection!
 
 **Recent Updates:**
+- **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
 - **v1.14.0**: Added water level sensor (GPIO 19) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
 - **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
 
@@ -312,6 +313,60 @@ Watering 5: Fill 3.8s → Baseline: 5.2s, Water before: 27%, System stable
 - Manual trigger: Changes saved after each successful watering
 
 **Learning data is published in MQTT state updates** under each valve's `learning` object.
+
+### Learning Algorithm Improvements (v1.15.4)
+
+**Overflow Recovery Protection:**
+The system now intelligently handles scenarios where overflow blocks scheduled watering:
+
+**Problem Scenario:**
+1. Overflow detected (system locks)
+2. Scheduled watering time passes (watering blocked by overflow)
+3. User sends `/reset_overflow` command
+4. Tray found wet (possibly from rain or manual watering during overflow period)
+5. **OLD BEHAVIOR:** System incorrectly doubles watering interval (thinking plant consumed water slowly)
+6. **NEW BEHAVIOR:** System detects recent overflow reset, skips learning without penalty
+
+**Implementation:**
+- Tracks `lastOverflowResetTime` when overflow is reset
+- 2-hour grace period (`OVERFLOW_RECOVERY_THRESHOLD_MS`) after overflow reset
+- If tray found wet within grace period: Skip cycle, no interval change
+- Prevents incorrect learning from overflow-blocked watering cycles
+
+**Debug Output:**
+```
+🧠 OVERFLOW RECOVERY DETECTION: Tray wet after overflow reset
+  Time since overflow reset: 23s
+  Skipping cycle (no interval change) - watering was blocked by overflow
+```
+
+**Long Outage Boot Detection:**
+The system now correctly handles watering after extended power outages:
+
+**Problem Scenario:**
+1. System last watered on Day 0
+2. Power outage for 3+ days (longer than millis() can represent)
+3. System reboots on Day 3
+4. **OLD BEHAVIOR:** `lastWateringCompleteTime` set to 0 (can't represent in millis), `hasOverdueValves()` returns false, no watering triggered
+5. **NEW BEHAVIOR:** Stores `realTimeSinceLastWatering` duration, boot logic detects overdue, immediate catch-up watering
+
+**Implementation:**
+- New field: `ValveController.realTimeSinceLastWatering` (stores duration when timestamp can't fit in millis)
+- `loadLearningData()`: When `currentMillis < timeSinceWatering`, stores real duration instead of 0
+- `hasOverdueValves()`: Checks both `lastWateringCompleteTime` and `realTimeSinceLastWatering`
+- `shouldWaterNow()`: Uses real duration if timestamp is 0
+
+**Debug Output:**
+```
+Valve 2 is overdue (interval: 2d 0h)
+Overdue valves detected - starting catch-up watering
+```
+
+**Benefits:**
+- ✅ No false interval doubling after overflow events
+- ✅ Reliable watering after extended power outages (days/weeks)
+- ✅ Correct learning behavior in all edge cases
+- ✅ Maintains schedule stability through disruptions
 
 ## 📱 Telegram Bot Notifications (v1.5.0)
 
@@ -1125,9 +1180,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.14.0
+**Version:** 1.15.4
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
 **Testing:** 20 native tests (no hardware required)
-**New in v1.14.0:** Water level sensor (GPIO 19) - auto-blocks watering when tank empty, auto-resumes when refilled, Telegram notifications
+**New in v1.15.4:** Overflow recovery learning protection + long outage boot detection - prevents interval doubling after overflow events, ensures immediate watering after extended power outages

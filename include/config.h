@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.15.2";
+const char *VERSION = "watering_system_1.15.4";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -96,6 +96,9 @@ const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
 const unsigned long RECENT_WATERING_THRESHOLD_MS =
     7200000; // 2 hours - if tray is wet within this time after last watering,
              // likely a restart/power-outage scenario (don't punish with interval doubling)
+const unsigned long OVERFLOW_RECOVERY_THRESHOLD_MS =
+    7200000; // 2 hours - if overflow was reset within this time and tray is wet,
+             // skip learning (tray may have been refilled during overflow period)
 
 // ============================================
 // DS3231 Battery Voltage Calibration

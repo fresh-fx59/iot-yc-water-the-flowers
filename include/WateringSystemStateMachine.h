@@ -48,6 +48,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     // CRITICAL: Tray is full - update last watering time to NOW
                     // This makes auto-watering wait for consumption period before retrying
                     valve->lastWateringCompleteTime = currentTime;
+                    valve->realTimeSinceLastWatering = 0; // Clear outage duration
 
                     // If not calibrated, set temporary retry duration to attempt calibration later
                     if (!valve->isCalibrated) {

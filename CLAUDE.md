@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.15.2 (config.h:10)
+**Version**: 1.15.4 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -149,6 +149,10 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 **Boot Logic** (v1.8.1+, fixed v1.8.4/v1.8.5): First boot→water all | Overdue→water | Schedule→skip. v1.8.4: safe default no-water. v1.8.5: detect calibrated+zero timestamps as overdue
 
 **Restart Detection** (v1.15.2): Prevents interval explosion after power outages/restarts. If tray is found wet within 2 hours (RECENT_WATERING_THRESHOLD_MS) of last watering, skip cycle without punishing (no interval doubling). Only doubles interval if tray genuinely stayed wet for >2 hours (slow consumption). Critical for stability with frequent power cycles.
+
+**Overflow Recovery Protection** (v1.15.4): Prevents incorrect interval doubling after overflow events. When overflow is reset and tray found wet within 2 hours (OVERFLOW_RECOVERY_THRESHOLD_MS), skips learning without punishment. Addresses scenario: overflow blocks watering → scheduled time passes → overflow reset → tray still wet (rain/manual refill) → system now correctly skips cycle instead of doubling interval. Tracks `lastOverflowResetTime` in WateringSystem.h.
+
+**Long Outage Boot Detection** (v1.15.4): Fixes missed watering after extended power outages (>49 days or when millis() can't represent timestamp). Previously: after reboot, `loadLearningData()` set `lastWateringCompleteTime=0` when time offset exceeded millis range → `hasOverdueValves()` skipped check → no watering. Now: stores `realTimeSinceLastWatering` duration in ValveController when timestamp can't be represented → boot logic detects overdue valves using real duration → immediate catch-up watering. Critical fix for reliable operation after long outages.
 
 ### MQTT
 

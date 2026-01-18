@@ -78,6 +78,7 @@ private:
   // Master overflow sensor tracking
   bool overflowDetected; // If true, water overflow detected - block all watering
   unsigned long lastOverflowCheck; // Last time overflow sensor was checked
+  unsigned long lastOverflowResetTime; // When overflow was last reset (for learning algorithm)
 
   // Water level sensor tracking
   bool waterLevelLow; // If true, water tank is empty - block all watering
@@ -91,8 +92,8 @@ public:
         lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
         sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
-        lastOverflowCheck(0), waterLevelLow(false), lastWaterLevelCheck(0),
-        waterLevelLowNotificationSent(false) {
+        lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
+        lastWaterLevelCheck(0), waterLevelLowNotificationSent(false) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -395,9 +396,12 @@ inline bool WateringSystem::loadLearningData() {
       // New timestamp in current epoch
       if (currentMillis >= timeSinceWatering) {
         valve->lastWateringCompleteTime = currentMillis - timeSinceWatering;
+        valve->realTimeSinceLastWatering = 0; // Can use normal timestamp
       } else {
-        valve->lastWateringCompleteTime =
-            0; // Watering was longer ago than millis can represent
+        // Watering was longer ago than millis can represent
+        // Store the real duration for overdue detection
+        valve->lastWateringCompleteTime = 0;
+        valve->realTimeSinceLastWatering = timeSinceWatering;
       }
     }
 
@@ -628,6 +632,7 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
 // ========== RESET OVERFLOW FLAG ==========
 inline void WateringSystem::resetOverflowFlag() {
   overflowDetected = false;
+  lastOverflowResetTime = millis(); // Track when overflow was reset (for learning algorithm)
   DebugHelper::debugImportant("✓ Overflow flag reset - system ready to resume");
 }
 
@@ -1349,6 +1354,37 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       }
     }
 
+    // CRITICAL: Detect overflow recovery scenarios
+    // If overflow was recently reset (< 2 hours ago), tray may have been
+    // refilled during overflow period (rain, manual watering, etc.)
+    // Don't punish with interval doubling - just skip this cycle
+    if (lastOverflowResetTime > 0) {
+      unsigned long timeSinceOverflowReset = currentTime - lastOverflowResetTime;
+
+      // Handle millis() overflow (rare but possible)
+      if (timeSinceOverflowReset > 4000000000UL) {
+        // Overflow detected, assume long time passed
+        timeSinceOverflowReset = OVERFLOW_RECOVERY_THRESHOLD_MS + 1000;
+      }
+
+      if (timeSinceOverflowReset < OVERFLOW_RECOVERY_THRESHOLD_MS) {
+        // Overflow was recently reset - tray may have been refilled during overflow period
+        DebugHelper::debugImportant(
+            "🧠 OVERFLOW RECOVERY DETECTION: Tray wet after overflow reset");
+        DebugHelper::debugImportant(
+            "  Time since overflow reset: " +
+            LearningAlgorithm::formatDuration(timeSinceOverflowReset));
+        DebugHelper::debugImportant(
+            "  Skipping cycle (no interval change) - watering was blocked by overflow");
+
+        // Don't modify interval - just skip this cycle
+        // Update attempt time to prevent auto-watering retry loops
+        valve->lastWateringAttemptTime = currentTime;
+        saveLearningData();
+        return;
+      }
+    }
+
     // Tray has been wet for a LONG time - genuinely slow consumption
     DebugHelper::debugImportant("🧠 ADAPTIVE LEARNING: Tray still full after long time");
 
@@ -1393,6 +1429,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER;
     valve->emptyToFullDuration = BASE_INTERVAL_MS; // Start with 24h interval
     valve->lastWateringCompleteTime = currentTime;
+    valve->realTimeSinceLastWatering = 0; // Clear outage duration
     valve->lastWaterLevelPercent = 0.0;
 
     DebugHelper::debugImportant(
@@ -1480,6 +1517,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   valve->emptyToFullDuration =
       (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
   valve->lastWateringCompleteTime = currentTime;
+  valve->realTimeSinceLastWatering = 0; // Clear outage duration
 
   // Calculate water level before this watering (for logging)
   float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(
@@ -1906,30 +1944,24 @@ inline bool WateringSystem::hasOverdueValves() {
       continue;
     }
 
-    // CASE 1: Valve has learning data but lastWateringCompleteTime is 0
-    // This happens when outage was longer than millis() can represent
-    // If calibrated with emptyToFullDuration but no timestamp, watering was
-    // DEFINITELY overdue
-    if (valve->emptyToFullDuration > 0 &&
-        valve->lastWateringCompleteTime == 0) {
-      DebugHelper::debugImportant(
-          "Valve " + String(i) +
-          " is overdue - timestamp too old to represent (outage > " +
-          LearningAlgorithm::formatDuration(currentTime) + ")");
-      return true;
-    }
+    // Check for overdue watering using either millis timestamp or real time duration
+    if (valve->emptyToFullDuration > 0) {
+      bool isOverdue = false;
 
-    // CASE 2: Normal case - calculate next watering time from timestamp
-    if (valve->emptyToFullDuration > 0 && valve->lastWateringCompleteTime > 0) {
-      unsigned long nextWateringTime =
-          valve->lastWateringCompleteTime + valve->emptyToFullDuration;
+      if (valve->lastWateringCompleteTime > 0) {
+        // Normal case: Use millis() timestamp
+        unsigned long nextWateringTime =
+            valve->lastWateringCompleteTime + valve->emptyToFullDuration;
+        isOverdue = (currentTime >= nextWateringTime);
+      } else if (valve->realTimeSinceLastWatering > 0) {
+        // Long outage case: millis() can't represent timestamp, use real duration
+        isOverdue = (valve->realTimeSinceLastWatering >= valve->emptyToFullDuration);
+      }
 
-      // Check if next watering time is in the past (overdue)
-      if (currentTime >= nextWateringTime) {
+      if (isOverdue) {
         DebugHelper::debug(
-            "Valve " + String(i) + " is overdue - scheduled for " +
-            LearningAlgorithm::formatDuration(currentTime - nextWateringTime) +
-            " ago");
+            "Valve " + String(i) + " is overdue (interval: " +
+            LearningAlgorithm::formatDuration(valve->emptyToFullDuration) + ")");
         return true;
       }
     }

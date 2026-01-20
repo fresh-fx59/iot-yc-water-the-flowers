@@ -1880,8 +1880,14 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     } else if (!valve->isCalibrated && valve->emptyToFullDuration > 0) {
       // Not calibrated but has temporary 24h retry duration (tray was found
       // full)
-      unsigned long timeSinceWatering =
-          currentTime - valve->lastWateringCompleteTime;
+      unsigned long timeSinceWatering;
+
+      // Handle post-reboot case
+      if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
+        timeSinceWatering = valve->realTimeSinceLastWatering;
+      } else {
+        timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
+      }
 
       if (timeSinceWatering >= valve->emptyToFullDuration) {
         scheduleData[i][1] = "Now (retry)";
@@ -1922,8 +1928,17 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
       }
     } else {
       // Calculate planned watering time based on learned consumption
-      unsigned long timeSinceWatering =
-          currentTime - valve->lastWateringCompleteTime;
+      unsigned long timeSinceWatering;
+
+      // Handle post-reboot case where millis() can't represent the timestamp
+      // (occurs when watering happened longer ago than current millis() value)
+      if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
+        // Use real time duration calculated during load
+        timeSinceWatering = valve->realTimeSinceLastWatering;
+      } else {
+        // Normal case: calculate from millis() timestamp
+        timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
+      }
 
       if (timeSinceWatering >= valve->emptyToFullDuration) {
         // Already due for watering

@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.15.7 (config.h:10)
+**Version**: 1.15.8 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -153,6 +153,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 **Overflow Recovery Protection** (v1.15.4): Prevents incorrect interval doubling after overflow events. When overflow is reset and tray found wet within 2 hours (OVERFLOW_RECOVERY_THRESHOLD_MS), skips learning without punishment. Addresses scenario: overflow blocks watering → scheduled time passes → overflow reset → tray still wet (rain/manual refill) → system now correctly skips cycle instead of doubling interval. Tracks `lastOverflowResetTime` in WateringSystem.h.
 
 **Long Outage Boot Detection** (v1.15.4): Fixes missed watering after extended power outages (>49 days or when millis() can't represent timestamp). Previously: after reboot, `loadLearningData()` set `lastWateringCompleteTime=0` when time offset exceeded millis range → `hasOverdueValves()` skipped check → no watering. Now: stores `realTimeSinceLastWatering` duration in ValveController when timestamp can't be represented → boot logic detects overdue valves using real duration → immediate catch-up watering. Critical fix for reliable operation after long outages.
+
+**Schedule Stability After Reboot** (v1.15.8): Fixes watering schedule display shifting to boot time after power outages. Previously: `sendWateringSchedule()` calculated time since last watering using `currentTime - lastWateringCompleteTime`, but after reboot `lastWateringCompleteTime=0` when millis() couldn't represent the timestamp → schedule displayed as if watering happened at boot. Now: schedule calculation checks for `lastWateringCompleteTime==0 && realTimeSinceLastWatering>0` and uses real time duration instead. Schedule now remains stable across reboots, showing correct planned watering time based on actual last watering timestamp.
 
 ### MQTT
 

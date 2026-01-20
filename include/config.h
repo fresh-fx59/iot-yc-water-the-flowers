@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.15.6";
+const char *VERSION = "watering_system_1.15.7";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -70,7 +70,7 @@ const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - 
 const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
-const unsigned long WATER_LEVEL_LOW_DELAY = 10000; // Wait 10 seconds after detecting low water before blocking (water from pipes drains back to tank)
+const unsigned long WATER_LEVEL_LOW_DELAY = 11000; // Wait 11 seconds after detecting low water before blocking (allows watering to continue finishing cycle)
 
 // ============================================
 // Overflow Sensor Debouncing Constants

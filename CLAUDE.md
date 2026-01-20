@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.15.6 (config.h:10)
+**Version**: 1.15.7 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -74,7 +74,7 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 **L1: Master Overflow Sensor** (v1.15.1, GPIO 42, 100ms poll, software debounced 5/7 threshold, WateringSystem.h:510-595): LOW=overflow → `emergencyStopAll()`, blocks all watering. Debouncing prevents false triggers from electrical noise. Recovery: `reset_overflow`
 
-**L2: Water Level Sensor** (v1.14.0, GPIO 19, 100ms poll, 10s confirmation delay v1.15.6): HIGH=water OK, LOW=empty → blocks all watering, auto-resume when refilled. 10s delay prevents false triggers from pipe drainage. Telegram notifications on low/restored
+**L2: Water Level Sensor** (v1.14.0, GPIO 19, 100ms poll, 11s continuation time v1.15.7): HIGH=water OK, LOW=empty → blocks all watering, auto-resume when refilled. 11s continuation allows active watering to finish when tank runs low. Telegram notifications on low/restored
 
 **L3: Timeouts** (config.h:66-67): MAX_WATERING_TIME=25s, ABSOLUTE_SAFETY_TIMEOUT=30s
 
@@ -126,7 +126,7 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 **Overflow** (v1.12.1): 2N2222 circuit, GPIO 42, 100ms poll, LOW=emergency
 
-**Water Level** (v1.14.0): Float switch, GPIO 19, 100ms poll, HIGH=water OK, LOW=empty. Auto-blocks watering, sends Telegram, auto-resumes when refilled. v1.15.6: 10s delay (WATER_LEVEL_LOW_DELAY) before blocking - prevents false alarms from pipe drainage after pump stops
+**Water Level** (v1.14.0): Float switch, GPIO 19, 100ms poll, HIGH=water OK, LOW=empty. Auto-blocks watering, sends Telegram, auto-resumes when refilled. v1.15.7: 11s continuation time (WATER_LEVEL_LOW_DELAY) - allows active watering to finish when tank runs low, prevents debug spam
 
 **DS3231 RTC** (v1.10.0+): Time source (no NTP), CR2032, temp sensor, 100kHz I2C, DS3231RTC.h
 
@@ -254,4 +254,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 20. Native tests: `pio test -e native` (20 tests, no hw)
 21. Test R1-R6/M1-M6 power specific valve+GPIO18 only, M*=continuous until 'S'
 22. **v1.15.1**: Overflow sensor uses software debouncing (5/7 readings must be LOW). Test mode shows raw single readings for diagnostics. Production requires 5 out of 7 consecutive LOW readings to trigger overflow, filtering electrical noise from pump/valve switching
-23. **v1.15.6**: Water level sensor has 10s confirmation delay before blocking watering. Prevents false alarms when water drains back from pipes to tank after pump stops. System only blocks if LOW persists for full 10 seconds
+23. **v1.15.7**: Water level sensor has 11s continuation time before blocking watering. Allows active watering cycles to complete when tank runs low. Debug message only logs once (not every 100ms) to prevent spam. System blocks watering only if LOW persists for full 11 seconds

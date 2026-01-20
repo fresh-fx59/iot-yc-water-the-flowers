@@ -85,6 +85,7 @@ private:
   unsigned long lastWaterLevelCheck; // Last time water level sensor was checked
   bool waterLevelLowNotificationSent; // Track if low water notification was sent
   unsigned long waterLevelLowFirstDetectedTime; // When LOW was first detected (for 10s delay)
+  bool waterLevelLowWaitingLogged; // Track if we've logged the waiting message (prevent spam)
 
 public:
   // ========== Constructor ==========
@@ -95,7 +96,7 @@ public:
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
         lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
-        waterLevelLowFirstDetectedTime(0) {
+        waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -656,20 +657,22 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
     if (waterLevelLowFirstDetectedTime == 0) {
       // First LOW detection - start timer
       waterLevelLowFirstDetectedTime = currentTime;
-      DebugHelper::debug("Water level LOW detected - waiting 10s for pipe drainage...");
+      waterLevelLowWaitingLogged = false; // Reset waiting log flag
+      DebugHelper::debug("Water level LOW detected - allowing " + String(WATER_LEVEL_LOW_DELAY / 1000) + "s continuation time...");
       return; // Don't block yet, wait for delay
     }
 
-    // Check if we've been LOW for at least 10 seconds
+    // Check if we've been LOW for at least WATER_LEVEL_LOW_DELAY seconds
     unsigned long lowDuration = currentTime - waterLevelLowFirstDetectedTime;
     if (lowDuration >= WATER_LEVEL_LOW_DELAY) {
-      // Been LOW for 10+ seconds - now block watering
+      // Been LOW for full delay period - now block watering
       if (!waterLevelLow) {
         // First time blocking - trigger emergency stop and send notification
-        DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW CONFIRMED (10s delay expired) ⚠️⚠️⚠️");
+        DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW CONFIRMED (" + String(WATER_LEVEL_LOW_DELAY / 1000) + "s delay expired) ⚠️⚠️⚠️");
         DebugHelper::debugImportant("Water tank is empty - GPIO " + String(WATER_LEVEL_SENSOR_PIN));
         waterLevelLow = true;
         waterLevelLowNotificationSent = false;
+        waterLevelLowWaitingLogged = false; // Reset for next event
 
         // Emergency stop everything if currently watering
         bool anyWatering = false;
@@ -692,7 +695,7 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
           message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
           message += "💧 Water tank is empty or low\n";
           message += "🔧 Sensor GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "\n";
-          message += "⏱️ Confirmed after 10s delay\n\n";
+          message += "⏱️ Confirmed after " + String(WATER_LEVEL_LOW_DELAY / 1000) + "s delay\n\n";
           message += "✅ Actions taken:\n";
           if (anyWatering) {
             message += "  • All valves CLOSED\n";
@@ -737,9 +740,12 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
         }
       }
     } else {
-      // Still within 10s delay period - don't block yet
-      unsigned long remainingMs = WATER_LEVEL_LOW_DELAY - lowDuration;
-      DebugHelper::debug("Water level still LOW - " + String(remainingMs / 1000) + "s until blocking");
+      // Still within delay period - don't block yet, allow watering to continue
+      if (!waterLevelLowWaitingLogged) {
+        unsigned long remainingMs = WATER_LEVEL_LOW_DELAY - lowDuration;
+        DebugHelper::debug("Water level LOW - allowing " + String(remainingMs / 1000) + "s continuation time (won't spam)");
+        waterLevelLowWaitingLogged = true; // Only log once during the delay period
+      }
     }
   } else {
     // Water level is OK (sensor reads HIGH)
@@ -747,9 +753,10 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
     // Reset the LOW detection timer since we detected HIGH
     if (waterLevelLowFirstDetectedTime != 0) {
       waterLevelLowFirstDetectedTime = 0;
+      waterLevelLowWaitingLogged = false; // Reset waiting log flag
       if (!waterLevelLow) {
-        // Water came back before the 10s delay - no blocking needed
-        DebugHelper::debug("Water level restored before 10s delay - pipe drainage detected");
+        // Water came back before the delay period - no blocking needed
+        DebugHelper::debug("Water level restored before delay - pipe drainage detected");
       }
     }
 

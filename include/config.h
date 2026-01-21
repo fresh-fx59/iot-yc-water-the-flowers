@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.15.8";
+const char *VERSION = "watering_system_1.15.9";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================

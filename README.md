@@ -4,6 +4,8 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
+[Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
+
 **Version 1.15.6** - Water Level Sensor Delay!
 
 **Recent Updates:**

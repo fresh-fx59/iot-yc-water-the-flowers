@@ -26,9 +26,9 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.15.4.json"; // ACTIVE: Current learning data (v1.15.4 reset)
+    "/learning_data_v1.15.9.json"; // ACTIVE: Current learning data (v1.15.4 reset)
 const char *LEARNING_DATA_FILE_OLD =
-    "/learning_data_v1.15.2.json"; // OLD: Will be deleted on boot (previous version)
+    "/learning_data_v1.15.4.json"; // OLD: Will be deleted on boot (previous version)
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)

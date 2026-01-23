@@ -478,9 +478,9 @@ inline void WateringSystem::globalSafetyWatchdog(unsigned long currentTime) {
       unsigned long wateringDuration = currentTime - valve->wateringStartTime;
 
       // CRITICAL: If exceeded absolute timeout, FORCE STOP EVERYTHING
-      if (wateringDuration >= ABSOLUTE_SAFETY_TIMEOUT) {
+      if (wateringDuration >= getValveEmergencyTimeout(i)) {
         DebugHelper::debugImportant("🚨🚨🚨 GLOBAL SAFETY WATCHDOG TRIGGERED! 🚨🚨🚨");
-        DebugHelper::debugImportant("Valve " + String(i) + " exceeded " + String(ABSOLUTE_SAFETY_TIMEOUT / 1000) + "s!");
+        DebugHelper::debugImportant("Valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s!");
         DebugHelper::debugImportant("Duration: " + String(wateringDuration / 1000) + "s");
         DebugHelper::debugImportant("FORCING EMERGENCY SHUTDOWN!");
 

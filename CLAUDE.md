@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.15.8 (config.h:10)
+**Version**: 1.16.0 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -76,9 +76,13 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 
 **L2: Water Level Sensor** (v1.14.0, GPIO 19, 100ms poll, 11s continuation time v1.15.7): HIGH=water OK, LOW=empty → blocks all watering, auto-resume when refilled. 11s continuation allows active watering to finish when tank runs low. Telegram notifications on low/restored
 
-**L3: Timeouts** (config.h:66-67): MAX_WATERING_TIME=25s, ABSOLUTE_SAFETY_TIMEOUT=30s
+**L3: Timeouts** (config.h:69-105, v1.16.0 per-valve):
+- Normal timeout: Valve-specific (25-40s based on flow characteristics)
+- Emergency timeout: 5s higher than normal per valve
+- Valve 0 (Tray 1): 40s normal / 45s emergency (slower flow rate)
+- Valves 1-5: 25s normal / 30s emergency (standard flow)
 
-**L4: Two-Tier SM Timeouts** (WateringSystemStateMachine.h:77-106): 25s (normal, learning data), 30s (emergency, force GPIO)
+**L4: Two-Tier SM Timeouts** (WateringSystemStateMachine.h:77-106): Per-valve normal (learning data), per-valve emergency (force GPIO)
 
 **L5: Global Watchdog** (WateringSystem.h:479-520): `globalSafetyWatchdog()` every loop, bypasses SM, force GPIO off
 
@@ -93,6 +97,20 @@ Docs: NATIVE_TESTING_PLAN.md, OVERWATERING_RISK_ANALYSIS.md, OVERWATERING_TEST_S
 **Implementation** (WateringSystem.h:133-206): `haltMode` flag blocks all watering (startWatering, startSequentialWatering, checkAutoWatering). Commands: `/halt`, `/resume` (Telegram+MQTT)
 
 **Polling** (TelegramNotifier.h:182-232): `checkForCommands()` uses Telegram getUpdates, offset for dedupe, 1s timeout
+
+### Per-Valve Timeout Configuration (v1.16.0)
+
+**Configuration** (config.h:71-105):
+- Defined in `VALVE_NORMAL_TIMEOUTS[]` and `VALVE_EMERGENCY_TIMEOUTS[]` arrays
+- Access via `getValveNormalTimeout(index)` and `getValveEmergencyTimeout(index)`
+- Compile-time validation ensures emergency > normal + 5s
+- Different trays have different water flow rates/sensor characteristics
+- Tray 1 requires longer timeout (40s vs 25s) due to hardware differences
+
+**Migration from v1.15.x:**
+- Global timeouts (MAX_WATERING_TIME, ABSOLUTE_SAFETY_TIMEOUT) still exist for backward compatibility
+- No learning data migration required (timeouts are not persisted)
+- If you had custom timeout values in config.h, update corresponding array entries
 
 ### Watering Flow
 

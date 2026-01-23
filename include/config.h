@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.15.9";
+const char *VERSION = "watering_system_1.16.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -68,6 +68,43 @@ const unsigned long STATE_PUBLISH_INTERVAL =
     2000;                                      // Publish state every 2 seconds
 const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - REDUCED FOR SAFETY
 const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
+
+// Per-valve timeout configuration (v1.16.0)
+// Valve 0 (Tray 1) has longer timeout due to slower flow rate
+constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
+    30000,  // Valve 0: 30s (slower fill rate observed)
+    25000,  // Valve 1: 25s (standard)
+    25000,  // Valve 2: 25s (standard)
+    25000,  // Valve 3: 25s (standard)
+    25000,  // Valve 4: 25s (standard)
+    25000   // Valve 5: 25s (standard)
+};
+
+// Emergency timeouts: 5 seconds higher than normal (safety margin)
+constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
+    35000,  // Valve 0: 35s (5s margin)
+    30000,  // Valve 1: 30s (5s margin)
+    30000,  // Valve 2: 30s (5s margin)
+    30000,  // Valve 3: 30s (5s margin)
+    30000,  // Valve 4: 30s (5s margin)
+    30000   // Valve 5: 30s (5s margin)
+};
+
+// Helper functions for safe timeout access
+inline unsigned long getValveNormalTimeout(int valveIndex) {
+    if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+        return MAX_WATERING_TIME;  // Fallback to global default
+    }
+    return VALVE_NORMAL_TIMEOUTS[valveIndex];
+}
+
+inline unsigned long getValveEmergencyTimeout(int valveIndex) {
+    if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+        return ABSOLUTE_SAFETY_TIMEOUT;  // Fallback to global default
+    }
+    return VALVE_EMERGENCY_TIMEOUTS[valveIndex];
+}
+
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
 const unsigned long WATER_LEVEL_LOW_DELAY = 11000; // Wait 11 seconds after detecting low water before blocking (allows watering to continue finishing cycle)
@@ -158,5 +195,24 @@ const int WIFI_RETRY_DELAY_MS = 500;
 // OTA Configuration
 // ============================================
 const char *OTA_HOSTNAME = "esp32-watering";
+
+// ============================================
+// Compile-time Timeout Validation
+// ============================================
+// Ensures safety invariants: emergency timeout must be at least 5s higher than normal
+#define VALIDATE_TIMEOUT(idx) \
+    static_assert(VALVE_EMERGENCY_TIMEOUTS[idx] >= VALVE_NORMAL_TIMEOUTS[idx] + 5000, \
+        "Emergency timeout must be at least 5s higher than normal for valve " #idx)
+
+VALIDATE_TIMEOUT(0);
+VALIDATE_TIMEOUT(1);
+VALIDATE_TIMEOUT(2);
+VALIDATE_TIMEOUT(3);
+VALIDATE_TIMEOUT(4);
+VALIDATE_TIMEOUT(5);
+
+#undef VALIDATE_TIMEOUT
+
+static_assert(NUM_VALVES == 6, "Timeout arrays must match NUM_VALVES");
 
 #endif // CONFIG_H

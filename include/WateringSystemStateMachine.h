@@ -64,7 +64,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->phase = PHASE_CLOSING_VALVE;
                 } else {
                     // Sensor dry - start watering
-                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(MAX_WATERING_TIME / 1000) + "s)");
+                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
                     valve->phase = PHASE_WATERING;
@@ -76,8 +76,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
         case PHASE_WATERING:
             // SAFETY CHECK 1: ABSOLUTE EMERGENCY TIMEOUT - HARD CUTOFF
-            if (currentTime - valve->wateringStartTime >= ABSOLUTE_SAFETY_TIMEOUT) {
-                DebugHelper::debugImportant("🚨 EMERGENCY CUTOFF: Valve " + String(valveIndex) + " exceeded ABSOLUTE limit " + String(ABSOLUTE_SAFETY_TIMEOUT / 1000) + "s!");
+            if (currentTime - valve->wateringStartTime >= getValveEmergencyTimeout(valveIndex)) {
+                DebugHelper::debugImportant("🚨 EMERGENCY CUTOFF: Valve " + String(valveIndex) + " exceeded ABSOLUTE limit " + String(getValveEmergencyTimeout(valveIndex) / 1000) + "s!");
                 DebugHelper::debugImportant("🚨 This indicates a CRITICAL SAFETY FAILURE!");
                 DebugHelper::debugImportant("🚨 Check sensor hardware immediately!");
 
@@ -93,8 +93,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             }
 
             // SAFETY CHECK 2: Normal timeout - MAX WATERING TIME
-            if (currentTime - valve->wateringStartTime >= MAX_WATERING_TIME) {
-                DebugHelper::debugImportant("⚠️ TIMEOUT: Valve " + String(valveIndex) + " exceeded " + String(MAX_WATERING_TIME / 1000) + "s - IMMEDIATE SAFETY STOP");
+            if (currentTime - valve->wateringStartTime >= getValveNormalTimeout(valveIndex)) {
+                DebugHelper::debugImportant("⚠️ TIMEOUT: Valve " + String(valveIndex) + " exceeded " + String(getValveNormalTimeout(valveIndex) / 1000) + "s - IMMEDIATE SAFETY STOP");
 
                 // SAFETY: Immediately close valve and stop pump
                 valve->timeoutOccurred = true;
@@ -115,7 +115,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 // Show progress every 1 second
                 if ((currentTime - valve->wateringStartTime) % 1000 < RAIN_CHECK_INTERVAL) {
                     int elapsed = (currentTime - valve->wateringStartTime) / 1000;
-                    int remaining = (MAX_WATERING_TIME - (currentTime - valve->wateringStartTime)) / 1000;
+                    int remaining = (getValveNormalTimeout(valveIndex) - (currentTime - valve->wateringStartTime)) / 1000;
                     DebugHelper::debug("Valve " + String(valveIndex) + ": " + String(elapsed) + "s/" + String(remaining) + "s, Sensor: " + String(isRaining ? "WET" : "DRY"));
                 }
 
@@ -299,7 +299,7 @@ inline void WateringSystem::publishCurrentState() {
         // Add watering progress if active
         if (valve->phase == PHASE_WATERING && valve->wateringStartTime > 0) {
             unsigned long elapsed = millis() - valve->wateringStartTime;
-            int remainingSeconds = (MAX_WATERING_TIME - elapsed) / 1000;
+            int remainingSeconds = (getValveNormalTimeout(i) - elapsed) / 1000;
             if (remainingSeconds < 0) remainingSeconds = 0;
             stateJson += ",\"watering_seconds\":" + String(elapsed / 1000);
             stateJson += ",\"remaining_seconds\":" + String(remainingSeconds);

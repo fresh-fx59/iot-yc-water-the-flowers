@@ -580,6 +580,58 @@ void test_overwatering_realistic_partial_failure(void) {
     TEST_ASSERT_LESS_THAN(20000, normalValveTime);
 }
 
+// ============================================
+// PER-VALVE TIMEOUT CONFIGURATION TESTS
+// ============================================
+
+// Test per-valve timeout configuration
+void test_per_valve_timeout_configuration(void) {
+    // Test valve with longer timeout (valve 0 = 40s)
+    unsigned long wateringStartTime = 1000;
+    unsigned long currentTime = wateringStartTime + 39000; // 39s elapsed
+
+    ProcessResult result = processValveLogic(
+        PHASE_WATERING, currentTime, 0, wateringStartTime,
+        currentTime - 100, false, true,
+        VALVE_STABILIZATION_DELAY, RAIN_CHECK_INTERVAL,
+        getValveNormalTimeout(0), getValveEmergencyTimeout(0)
+    );
+
+    // Should NOT timeout yet (39s < 40s)
+    TEST_ASSERT_FALSE(result.timeoutOccurred);
+    TEST_ASSERT_EQUAL(PHASE_WATERING, result.newPhase);
+
+    // Now test at 40s boundary
+    currentTime = wateringStartTime + 40000;
+    result = processValveLogic(
+        PHASE_WATERING, currentTime, 0, wateringStartTime,
+        currentTime - 100, false, true,
+        VALVE_STABILIZATION_DELAY, RAIN_CHECK_INTERVAL,
+        getValveNormalTimeout(0), getValveEmergencyTimeout(0)
+    );
+
+    // Should timeout now (40s >= 40s)
+    TEST_ASSERT_TRUE(result.timeoutOccurred);
+    TEST_ASSERT_EQUAL(PHASE_CLOSING_VALVE, result.newPhase);
+}
+
+// Test emergency timeout for different valves
+void test_per_valve_emergency_timeout(void) {
+    // Test valve 0 (emergency = 45s)
+    unsigned long wateringStartTime = 1000;
+    unsigned long currentTime = wateringStartTime + 45000;
+
+    ProcessResult result = processValveLogic(
+        PHASE_WATERING, currentTime, 0, wateringStartTime,
+        currentTime - 100, false, true,
+        VALVE_STABILIZATION_DELAY, RAIN_CHECK_INTERVAL,
+        getValveNormalTimeout(0), getValveEmergencyTimeout(0)
+    );
+
+    TEST_ASSERT_TRUE(result.timeoutOccurred);
+    TEST_ASSERT_EQUAL(ACTION_EMERGENCY_STOP, result.action);
+}
+
 // ========== Main Test Runner ==========
 
 int main(int argc, char **argv) {
@@ -632,6 +684,10 @@ int main(int argc, char **argv) {
     RUN_TEST(test_overwatering_timeout_priority);
     RUN_TEST(test_overwatering_sensor_recovery);
     RUN_TEST(test_overwatering_realistic_partial_failure);
+
+    // Per-Valve Timeout Configuration Tests
+    RUN_TEST(test_per_valve_timeout_configuration);
+    RUN_TEST(test_per_valve_emergency_timeout);
 
     return UNITY_END();
 }

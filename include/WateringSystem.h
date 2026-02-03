@@ -26,9 +26,9 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.15.9.json"; // ACTIVE: Current learning data (v1.15.4 reset)
+    "/learning_data_v1.16.2.json"; // ACTIVE: Current learning data (v1.16.2 reset - 15% threshold)
 const char *LEARNING_DATA_FILE_OLD =
-    "/learning_data_v1.15.4.json"; // OLD: Will be deleted on boot (previous version)
+    "/learning_data_v1.15.9.json"; // OLD: Will be deleted on boot (previous version)
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)
@@ -165,6 +165,9 @@ public:
   bool isOverflowDetected() { return overflowDetected; }
   void resetOverflowFlag(); // Reset overflow flag after fixing issue
 
+  // GPIO hardware reinitialization (for stuck relay recovery)
+  void reinitializeGPIOHardware(); // Force GPIO reinitialization to unstick relays
+
   // Water level sensor control
   bool isWaterLevelLow() { return waterLevelLow; }
   void checkWaterLevel(); // Manual water level check (for testing)
@@ -244,6 +247,37 @@ inline void WateringSystem::init() {
 
   // Note: loadLearningData() is called from main.cpp after DS3231 RTC init
   // This ensures real time is available for proper timestamp conversion
+}
+
+// ========== GPIO Hardware Reinitialization ==========
+// Force GPIO reinitialization to unstick relay modules
+// Call this after events that may leave relays in stuck state:
+// - Overflow sensor recovery
+// - Water level sensor recovery
+// - WiFi/MQTT reconnection after long disconnection
+// - Any situation where physical power cycle would normally be needed
+inline void WateringSystem::reinitializeGPIOHardware() {
+  DebugHelper::debugImportant("🔧 Reinitializing GPIO hardware to unstick relay modules...");
+
+  // Reinitialize pump pin
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
+
+  // Reinitialize sensor power pin
+  pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
+  digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+
+  // Reinitialize all valve pins
+  for (int i = 0; i < NUM_VALVES; i++) {
+    pinMode(VALVE_PINS[i], OUTPUT);
+    digitalWrite(VALVE_PINS[i], LOW);
+  }
+
+  // Small delay to allow GPIO hardware to stabilize
+  delay(100);
+
+  DebugHelper::debugImportant("✓ GPIO hardware reinitialized - all pins set to OUTPUT/LOW");
+  DebugHelper::debugImportant("✓ Relay modules should now be in known good state");
 }
 
 // ========== Persistence Functions ==========
@@ -636,6 +670,12 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
 inline void WateringSystem::resetOverflowFlag() {
   overflowDetected = false;
   lastOverflowResetTime = millis(); // Track when overflow was reset (for learning algorithm)
+
+  // Reinitialize GPIO hardware to unstick relay modules
+  // This is critical because relay modules can get stuck after emergency stop
+  // and need GPIO reinitialization (not just flag clearing) to recover
+  reinitializeGPIOHardware();
+
   DebugHelper::debugImportant("✓ Overflow flag reset - system ready to resume");
 }
 
@@ -765,6 +805,10 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
       DebugHelper::debugImportant("✅ WATER LEVEL RESTORED!");
       DebugHelper::debugImportant("Water tank refilled - normal operation resumed");
       waterLevelLow = false;
+
+      // Reinitialize GPIO hardware to unstick relay modules
+      // Same issue as overflow: relay modules can get stuck after emergency stop
+      reinitializeGPIOHardware();
 
       // Flush debug buffer before sending Telegram notification
       DebugHelper::flushBuffer();
@@ -1339,7 +1383,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   // Algorithm constants (extracted for easy tuning)
   const unsigned long BASE_INTERVAL_MS = 86400000; // 24 hours
   const float BASELINE_TOLERANCE =
-      0.95; // 95% - threshold for "tray not fully empty"
+      0.85; // 85% - threshold for "tray not fully empty"
   const long FILL_STABLE_TOLERANCE_MS =
       500; // ±0.5s - threshold for "same fill time"
   const float MIN_INTERVAL_MULTIPLIER = 1.0; // Never go below 24h
@@ -1493,7 +1537,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
 
   // Adaptive interval adjustment algorithm
   if (fillDuration < valve->baselineFillDuration * BASELINE_TOLERANCE) {
-    // Fill < 95% of baseline - tray not fully empty, need longer interval
+    // Fill < 85% of baseline - tray not fully empty, need longer interval
     valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
     DebugHelper::debugImportant(
         "  ⬆️  Fill < baseline → Interval: " + String(oldMultiplier, 2) +
@@ -1511,7 +1555,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
                                 "x (+" + String(INTERVAL_INCREMENT_LARGE, 1) +
                                 ")");
   } else {
-    // Fill ≈ baseline (within 5%) - fine-tuning phase
+    // Fill ≈ baseline (within 15%) - fine-tuning phase
     long fillDiff = (long)(fillDuration - valve->previousFillDuration);
 
     if (abs(fillDiff) < FILL_STABLE_TOLERANCE_MS) {

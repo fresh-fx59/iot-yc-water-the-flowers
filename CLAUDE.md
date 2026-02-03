@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.16.0 (config.h:10)
+**Version**: 1.16.2 (config.h:10)
 **Testing**: 20 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -176,23 +176,24 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 ### MQTT
 
-**Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow`
+**Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow` (clear overflow + reinit GPIO), `reinit_gpio` (force GPIO hardware reset for stuck relays)
 
 **State** (`$devices/{ID}/state`, 2s): JSON with pump, sequential_mode, water_level{status, blocked}, valves[id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}]
 
-**Notes**: Auto-publish 2s, individual valve via web only, Telegram also accepts `/halt`/`resume`/`reset_overflow`
+**Notes**: Auto-publish 2s, individual valve via web only, Telegram also accepts `/halt`/`resume`/`reset_overflow`/`reinit_gpio`
 
 ### Telegram
 
 **Config** (secret.h): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-**Commands** (v1.14.1):
+**Commands** (v1.16.2):
 - `/halt` - Enter halt mode (blocks all watering, OTA ready)
 - `/resume` - Exit halt mode (restore normal operation)
 - `/time` - Show current RTC time, temperature, battery
 - `/settime` - Auto-sync time from NTP (Moscow UTC+3)
 - `/settime YYYY-MM-DD HH:MM:SS` - Manual time set (e.g. `/settime 2026-01-12 14:30:00`)
-- `/reset_overflow` - Clear overflow sensor flag
+- `/reset_overflow` - Clear overflow sensor flag and reinitialize GPIO hardware
+- `/reinit_gpio` - Force GPIO hardware reinitialization (for stuck relay recovery)
 
 **Notifications** (sequential watering only): Start (session ID, trigger, trays) + Completion table (tray, duration, status: OK/FULL/TIMEOUT/STOPPED). TelegramNotifier.h, HTTPS api.telegram.org, WateringSessionData
 
@@ -275,3 +276,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 21. Test R1-R6/M1-M6 power specific valve+GPIO18 only, M*=continuous until 'S'
 22. **v1.15.1**: Overflow sensor uses software debouncing (5/7 readings must be LOW). Test mode shows raw single readings for diagnostics. Production requires 5 out of 7 consecutive LOW readings to trigger overflow, filtering electrical noise from pump/valve switching
 23. **v1.15.7**: Water level sensor has 11s continuation time before blocking watering. Allows active watering cycles to complete when tank runs low. Debug message only logs once (not every 100ms) to prevent spam. System blocks watering only if LOW persists for full 11 seconds
+24. **v1.16.2**: GPIO hardware reinitialization fixes stuck relay modules. After emergency stops (overflow, water level), `resetOverflowFlag()` and water level recovery automatically call `reinitializeGPIOHardware()` which reinitializes all valve/pump pins to known good state. Manual trigger: `/reinit_gpio` (Telegram/MQTT). Fixes issue where relay modules stay stuck after emergency events and require physical power cycle

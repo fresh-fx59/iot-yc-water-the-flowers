@@ -6,9 +6,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.15.6** - Water Level Sensor Delay!
+**Version 1.16.2** - GPIO Hardware Reinitialization & Learning Algorithm Improvements!
 
 **Recent Updates:**
+- **v1.16.2**: Added GPIO hardware reinitialization to fix stuck relay modules after emergency events. New `/reinit_gpio` command (Telegram/MQTT). Automatic GPIO reset after overflow/water level recovery. Learning algorithm threshold adjusted from 95% to 85% for better calibration.
 - **v1.15.6**: Added 10-second confirmation delay to water level sensor - prevents false low-water alarms when water drains back from pipes to tank after pump stops
 - **v1.15.5**: Reset learning data files to force immediate recalibration after bug fixes
 - **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
@@ -1082,11 +1083,21 @@ mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'resume'
 
 **Master Overflow Sensor (v1.12.1):**
 ```bash
-# Reset overflow flag after fixing overflow issue
+# Reset overflow flag after fixing overflow issue (auto-reinitializes GPIO)
 mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reset_overflow'
 
 # Or via Telegram: /reset_overflow
 ```
+
+**GPIO Hardware Reinitialization (v1.16.2):**
+```bash
+# Force GPIO hardware reinitialization (fixes stuck relays)
+mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reinit_gpio'
+
+# Or via Telegram: /reinit_gpio
+```
+
+**Note:** `/reset_overflow` and water level recovery now automatically reinitialize GPIO hardware. Manual `/reinit_gpio` is useful if relays get stuck without triggering these events.
 
 **Sensor Diagnostics:**
 ```bash
@@ -1187,9 +1198,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.15.6
+**Version:** 1.16.2
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
 **Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
 **Testing:** 20 native tests (no hardware required)
-**New in v1.15.6:** Water level sensor 10-second confirmation delay - prevents false low-water alarms from pipe drainage after pump stops
+**New in v1.16.2:** GPIO hardware reinitialization to fix stuck relay modules, `/reinit_gpio` command, learning algorithm threshold improved (95% → 85%)

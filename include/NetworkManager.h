@@ -152,6 +152,11 @@ private:
             DebugHelper::debugImportant("📡 MQTT Command: Resetting overflow flag");
             wateringSystem->resetOverflowFlag();
         }
+        // Reinitialize GPIO hardware (for stuck relays)
+        else if (command == "reinit_gpio" || command == "/reinit_gpio") {
+            DebugHelper::debugImportant("📡 MQTT Command: Reinitializing GPIO hardware");
+            wateringSystem->reinitializeGPIOHardware();
+        }
         else {
             DebugHelper::debug("Unknown MQTT command: " + command);
         }

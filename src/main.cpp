@@ -288,6 +288,32 @@ void checkTelegramCommands(int timeout) {
                 sendTelegramDebug(errorMessage);
             }
         }
+    } else if (command == "/reset_overflow" || command == "reset_overflow") {
+        DebugHelper::debugImportant("🔄 RESET OVERFLOW command received!");
+        wateringSystem.resetOverflowFlag();
+
+        // Send confirmation
+        String message = "✅ <b>OVERFLOW FLAG RESET</b>\n\n";
+        message += "• Emergency stop cleared\n";
+        message += "• GPIO hardware reinitialized\n";
+        message += "• System ready to resume watering\n\n";
+        message += "💡 Auto-watering will resume when trays are empty";
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
+    } else if (command == "/reinit_gpio" || command == "reinit_gpio") {
+        DebugHelper::debugImportant("🔧 REINIT GPIO command received!");
+        wateringSystem.reinitializeGPIOHardware();
+
+        // Send confirmation
+        String message = "✅ <b>GPIO HARDWARE REINITIALIZED</b>\n\n";
+        message += "• All valve pins reinitialized\n";
+        message += "• Pump pin reinitialized\n";
+        message += "• Sensor power pin reinitialized\n\n";
+        message += "💡 Use this if relay modules are stuck after emergency events";
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
     }
 }
 

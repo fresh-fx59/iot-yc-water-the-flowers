@@ -173,6 +173,16 @@ inline bool shouldWaterNow(const ValveController *valve,
     return true;
   }
 
+  // TIMEOUT RETRY mode: Uncalibrated valve with timeout, retrying after 24h
+  // Has emptyToFullDuration set but no lastWateringCompleteTime (never succeeded)
+  // Relies on lastWateringAttemptTime 24h check above
+  if (!valve->isCalibrated && valve->lastWateringCompleteTime == 0 &&
+      valve->lastWateringAttemptTime > 0) {
+    // Already passed 24h minimum interval check above (line 160-166)
+    // Safe to retry watering attempt
+    return true;
+  }
+
   // SAFETY 2: Check if tray is empty based on learned consumption rate
   // If tray was last filled 3 days ago and consumption takes 3 days, tray
   // should be empty now

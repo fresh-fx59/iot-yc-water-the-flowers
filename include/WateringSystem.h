@@ -1394,9 +1394,29 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       0.5; // Binary search refinement (decrease)
   const float INTERVAL_INCREMENT_FINE = 0.25; // Fine-tuning adjustment
 
-  // Skip if timeout occurred
+  // Handle timeout scenarios
   if (valve->timeoutOccurred) {
-    DebugHelper::debug("🧠 Skipping learning - timeout occurred");
+    // SPECIAL CASE: First watering timeout on uncalibrated valve
+    // Set up 24-hour auto-retry to allow the system to try again
+    if (!valve->isCalibrated) {
+      DebugHelper::debugImportant("⏰ TIMEOUT on first watering - scheduling 24h retry");
+
+      // Set up minimal learning data to enable auto-watering retry
+      valve->lastWateringAttemptTime = currentTime;
+      valve->emptyToFullDuration = BASE_INTERVAL_MS; // 24 hours
+      valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER; // 1.0x
+      // Keep isCalibrated = false so next successful watering establishes baseline
+
+      DebugHelper::debugImportant("  Next attempt in: 24 hours");
+      DebugHelper::debug("  Valve remains uncalibrated until successful watering");
+
+      saveLearningData();
+      sendScheduleUpdateIfNeeded();
+      return;
+    }
+
+    // For calibrated valves, skip learning on timeout
+    DebugHelper::debug("🧠 Skipping learning - timeout occurred (calibrated valve)");
     return;
   }
 

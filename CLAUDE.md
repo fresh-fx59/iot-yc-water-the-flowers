@@ -3,8 +3,8 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.16.2 (config.h:10)
-**Testing**: 20 native unit tests (desktop, no hardware)
+**Version**: 1.16.3 (config.h:10)
+**Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
 
@@ -174,6 +174,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Schedule Stability After Reboot** (v1.15.8): Fixes watering schedule display shifting to boot time after power outages. Previously: `sendWateringSchedule()` calculated time since last watering using `currentTime - lastWateringCompleteTime`, but after reboot `lastWateringCompleteTime=0` when millis() couldn't represent the timestamp → schedule displayed as if watering happened at boot. Now: schedule calculation checks for `lastWateringCompleteTime==0 && realTimeSinceLastWatering>0` and uses real time duration instead. Schedule now remains stable across reboots, showing correct planned watering time based on actual last watering timestamp.
 
+**Timeout Retry for Uncalibrated Valves** (v1.16.3): Automatic 24-hour retry when timeout occurs on first watering. Previously: timeout on uncalibrated valve → skip learning → no auto-retry → manual intervention required. Now: timeout on uncalibrated valve → sets `lastWateringAttemptTime=currentTime`, `emptyToFullDuration=86400000` (24h), keeps `isCalibrated=false` → auto-watering triggers retry after 24h → if successful, establishes baseline. Multiple timeouts reschedule 24h retries. Implemented in WateringSystem.h:1397-1419 (processLearningData) and ValveController.h:175-180 (shouldWaterNow). Maintains 24h minimum interval safety, persistent across reboots, no interference with calibrated valves.
+
 ### MQTT
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow` (clear overflow + reinit GPIO), `reinit_gpio` (force GPIO hardware reset for stuck relays)
@@ -210,7 +212,7 @@ Usage: `DebugHelper::debug()`, `debugImportant()`, `flushBuffer()`, `loop()`
 SSID, SSID_PASSWORD, YC_DEVICE_ID, MQTT_PASSWORD, OTA_USER, OTA_PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 ### Safety Summary
-Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolation, auto-water (calibrated+enabled+empty), persistence, 20 tests
+Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolation, auto-water (calibrated+enabled+empty), persistence, 30 tests, auto-retry on timeout (24h)
 
 ### Testing & Debug
 

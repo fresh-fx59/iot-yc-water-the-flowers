@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.16.2";
+const char *VERSION = "watering_system_1.16.4";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -72,9 +72,9 @@ const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s
 // Per-valve timeout configuration (v1.16.0)
 // Valve 0 (Tray 1) has longer timeout due to slower flow rate
 constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
-    35000,  // Valve 0: 30s (slower fill rate observed)
-    25000,  // Valve 1: 25s (standard)
-    25000,  // Valve 2: 25s (standard)
+    35000,  // Valve 0: 35s (slower fill rate observed)
+    30000,  // Valve 1: 30s (increased timeout)
+    30000,  // Valve 2: 30s (increased timeout)
     25000,  // Valve 3: 25s (standard)
     25000,  // Valve 4: 25s (standard)
     25000   // Valve 5: 25s (standard)
@@ -82,9 +82,9 @@ constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
 
 // Emergency timeouts: 5 seconds higher than normal (safety margin)
 constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
-    40000,  // Valve 0: 35s (5s margin)
-    30000,  // Valve 1: 30s (5s margin)
-    30000,  // Valve 2: 30s (5s margin)
+    40000,  // Valve 0: 40s (5s margin)
+    35000,  // Valve 1: 35s (5s margin)
+    35000,  // Valve 2: 35s (5s margin)
     30000,  // Valve 3: 30s (5s margin)
     30000,  // Valve 4: 30s (5s margin)
     30000   // Valve 5: 30s (5s margin)

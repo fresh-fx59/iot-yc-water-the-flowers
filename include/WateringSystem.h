@@ -2004,6 +2004,37 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
         timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
       }
 
+      // Calculate effective watering interval considering 24h minimum safety check
+      // This matches the logic in shouldWaterNow() (ValveController.h:160-192)
+      unsigned long effectiveInterval = valve->emptyToFullDuration;
+
+      // Apply 24h minimum interval if we have lastWateringAttemptTime
+      if (valve->lastWateringAttemptTime > 0) {
+        unsigned long timeSinceAttempt = currentTime - valve->lastWateringAttemptTime;
+        unsigned long timeUntilMinInterval = 0;
+
+        if (timeSinceAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
+          timeUntilMinInterval = AUTO_WATERING_MIN_INTERVAL_MS - timeSinceAttempt;
+        }
+
+        // Use the maximum of learned interval and minimum safety interval
+        unsigned long timeUntilLearnedInterval =
+            (timeSinceWatering < valve->emptyToFullDuration)
+            ? (valve->emptyToFullDuration - timeSinceWatering)
+            : 0;
+
+        if (timeUntilMinInterval > timeUntilLearnedInterval) {
+          // 24h minimum not reached yet - this is the actual blocking condition
+          time_t plannedTime = now + (timeUntilMinInterval / 1000);
+          struct tm plannedTm;
+          localtime_r(&plannedTime, &plannedTm);
+          char buffer[20];
+          strftime(buffer, sizeof(buffer), "%d/%m %H:%M", &plannedTm);
+          scheduleData[i][1] = String(buffer);
+          continue; // Skip to next valve
+        }
+      }
+
       if (timeSinceWatering >= valve->emptyToFullDuration) {
         // Already due for watering
         scheduleData[i][1] = "Now";

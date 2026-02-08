@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.16.5 (config.h:10)
+**Version**: 1.16.6 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -178,6 +178,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Schedule Display Fix** (v1.16.5): Fixed mismatch between displayed watering schedule and actual auto-watering trigger time. Previously: schedule showed planned time based on learned `emptyToFullDuration` (e.g., 19.6h), but auto-watering enforced 24h minimum safety interval (AUTO_WATERING_MIN_INTERVAL_MS), causing valves to skip scheduled waterings. Now: `sendWateringSchedule()` checks both learned interval and 24h minimum, displays the later of the two → schedule accurately reflects when watering will actually occur. Fixes issue where fast-consuming trays (< 24h) showed incorrect schedules and missed waterings. Implemented in WateringSystem.h:2007-2036.
 
+**Thread-Safe MQTT Publishing** (v1.16.6): Fixed MQTT disconnection blocking auto-watering. Previously: `publishCurrentState()` and `publishStateChange()` called `mqttClient.publish()`/`mqttClient.connected()` from Core 1 (watering loop), while `loopMQTT()`/`connectMQTT()` ran on Core 0 (network task). PubSubClient is not thread-safe → concurrent access during MQTT reconnection (TLS handshake, blocking delays) could hang the main loop → `checkAutoWatering()` never triggered. Now: Core 1 only caches state JSON and sets `volatile bool mqttPublishPending` flag. Core 0 calls `publishPendingMQTTState()` to publish via MQTT. `publishStateChange()` no longer accesses mqttClient (state changes captured in periodic 2s state updates). Boot watering logic also no longer requires WiFi. Implemented in WateringSystemStateMachine.h:355-380, WateringSystem.h:90, main.cpp:78-80.
+
 ### MQTT
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow` (clear overflow + reinit GPIO), `reinit_gpio` (force GPIO hardware reset for stuck relays)
@@ -281,3 +283,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 22. **v1.15.1**: Overflow sensor uses software debouncing (5/7 readings must be LOW). Test mode shows raw single readings for diagnostics. Production requires 5 out of 7 consecutive LOW readings to trigger overflow, filtering electrical noise from pump/valve switching
 23. **v1.15.7**: Water level sensor has 11s continuation time before blocking watering. Allows active watering cycles to complete when tank runs low. Debug message only logs once (not every 100ms) to prevent spam. System blocks watering only if LOW persists for full 11 seconds
 24. **v1.16.2**: GPIO hardware reinitialization fixes stuck relay modules. After emergency stops (overflow, water level), `resetOverflowFlag()` and water level recovery automatically call `reinitializeGPIOHardware()` which reinitializes all valve/pump pins to known good state. Manual trigger: `/reinit_gpio` (Telegram/MQTT). Fixes issue where relay modules stay stuck after emergency events and require physical power cycle
+25. **v1.16.6**: NEVER access `mqttClient` from Core 1 (watering loop). PubSubClient is not thread-safe. All MQTT publishing goes through `mqttPublishPending` flag → Core 0 calls `publishPendingMQTTState()`. Watering must never depend on network connectivity

@@ -75,6 +75,9 @@ void networkTask(void* parameter) {
             // Handle MQTT (can block)
             NetworkManager::loopMQTT();
 
+            // Publish pending MQTT state from Core 0 (thread-safe)
+            wateringSystem.publishPendingMQTTState();
+
             // Check Telegram commands (non-blocking)
             checkTelegramCommands(0);
 
@@ -545,13 +548,15 @@ void loop() {
     }
 
     // First loop: Send schedule and smart boot watering (if not in halt mode)
-    if (firstLoop && NetworkManager::isWiFiConnected()) {
+    if (firstLoop) {
         firstLoop = false;
 
-        // Send watering schedule
-        wateringSystem.sendWateringSchedule("Startup Schedule");
+        // Send watering schedule (best-effort, doesn't block watering)
+        if (NetworkManager::isWiFiConnected()) {
+            wateringSystem.sendWateringSchedule("Startup Schedule");
+        }
 
-        // Smart boot watering: only water if needed
+        // Smart boot watering: only water if needed (NO network dependency)
         // 1. Fresh device (no calibration data) - water to establish baseline
         // 2. OR any valve is overdue (next watering time in past) - catch up after long outage
         // This prevents over-watering during frequent power cycles

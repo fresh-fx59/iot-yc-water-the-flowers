@@ -352,24 +352,26 @@ inline void WateringSystem::publishCurrentState() {
     // Cache state for web interface
     lastStateJson = stateJson;
 
-    // Publish to MQTT if connected
-    if (mqttClient.connected()) {
-        mqttClient.publish(STATE_TOPIC.c_str(), stateJson.c_str());
+    // Signal Core 0 (networkTask) to publish via MQTT
+    // NOTE: mqttClient is NOT accessed here - it's not thread-safe
+    mqttPublishPending = true;
+}
+
+// Called from Core 0 (networkTask) to publish cached state via MQTT
+inline void WateringSystem::publishPendingMQTTState() {
+    if (mqttPublishPending && mqttClient.connected()) {
+        mqttClient.publish(STATE_TOPIC.c_str(), lastStateJson.c_str());
+        mqttPublishPending = false;
     }
 }
 
 inline void WateringSystem::publishStateChange(const String& component, const String& state) {
-    if (!mqttClient.connected()) {
-        return; // Silently fail - don't disrupt watering
-    }
-
-    String eventJson = "{\"component\":\"" + component +
-                       "\",\"state\":\"" + state +
-                       "\",\"timestamp\":" + String(millis()) + "}";
-
-    if (!mqttClient.publish(EVENT_TOPIC.c_str(), eventJson.c_str())) {
-        DebugHelper::debug("⚠️ MQTT publish failed: " + component + " -> " + state);
-    }
+    // NOTE: This is called from Core 1 (watering loop).
+    // Do NOT access mqttClient here - it's not thread-safe.
+    // State changes are captured in periodic publishCurrentState() updates
+    // which Core 0 publishes via publishPendingMQTTState().
+    (void)component;
+    (void)state;
 }
 
 #endif // WATERING_SYSTEM_STATE_MACHINE_H

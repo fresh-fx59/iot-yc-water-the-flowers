@@ -87,6 +87,9 @@ private:
   unsigned long waterLevelLowFirstDetectedTime; // When LOW was first detected (for 10s delay)
   bool waterLevelLowWaitingLogged; // Track if we've logged the waiting message (prevent spam)
 
+  // Thread-safe MQTT publishing flag (Core 1 sets, Core 0 publishes)
+  volatile bool mqttPublishPending;
+
 public:
   // ========== Constructor ==========
   WateringSystem()
@@ -96,7 +99,8 @@ public:
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
         lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
-        waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false) {
+        waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
+        mqttPublishPending(false) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -136,6 +140,7 @@ public:
 
   // State management
   void publishCurrentState();
+  void publishPendingMQTTState();  // Called from Core 0 (networkTask) to publish cached state via MQTT
   void clearTimeoutFlag(int valveIndex);
 
   // Telegram session tracking

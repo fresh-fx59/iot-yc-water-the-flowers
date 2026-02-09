@@ -97,8 +97,8 @@ public:
         sendMessage(message);
     }
 
-    // Send watering start notification
-    static void sendWateringStarted(const String& triggerType, const String& trayNumbers) {
+    // Format watering start notification (no network call)
+    static String formatWateringStarted(const String& triggerType, const String& trayNumbers) {
         String timestamp = "Session " + getCurrentDateTime();
 
         String message = "🚿 <b>Watering Started</b>\n";
@@ -106,12 +106,17 @@ public:
         message += "🔧 Trigger: " + triggerType + "\n";
         message += "🌱 Trays: " + trayNumbers;
 
-        DebugHelper::debug("\n📱 Sending Telegram start notification...");
-        sendMessage(message);
+        return message;
     }
 
-    // Send watering completion notification with results table
-    static void sendWateringComplete(const String results[][3], int numTrays) {
+    // Send watering start notification
+    static void sendWateringStarted(const String& triggerType, const String& trayNumbers) {
+        DebugHelper::debug("\n📱 Sending Telegram start notification...");
+        sendMessage(formatWateringStarted(triggerType, trayNumbers));
+    }
+
+    // Format watering completion notification (no network call)
+    static String formatWateringComplete(const String results[][3], int numTrays) {
         String message = "✅ <b>Watering Complete</b>\n\n";
         message += "<pre>";
         message += "tray | duration(sec) | status\n";
@@ -136,13 +141,18 @@ public:
 
         message += "</pre>";
 
-        DebugHelper::debug("\n📱 Sending Telegram completion notification...");
-        sendMessage(message);
+        return message;
     }
 
-    // Send watering schedule notification showing planned watering times
+    // Send watering completion notification with results table
+    static void sendWateringComplete(const String results[][3], int numTrays) {
+        DebugHelper::debug("\n📱 Sending Telegram completion notification...");
+        sendMessage(formatWateringComplete(results, numTrays));
+    }
+
+    // Format watering schedule notification (no network call)
     // scheduleData[i][0] = tray number, [1] = planned time, [2] = duration, [3] = cycle (hours)
-    static void sendWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
+    static String formatWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
         String message = "📅 <b>" + title + "</b>\n";
         message += "⏰ " + getCurrentDateTime() + "\n\n";
         message += "<pre>";
@@ -173,8 +183,13 @@ public:
 
         message += "</pre>";
 
+        return message;
+    }
+
+    // Send watering schedule notification showing planned watering times
+    static void sendWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {
         DebugHelper::debug("\n📱 Sending Telegram schedule notification...");
-        sendMessage(message);
+        sendMessage(formatWateringSchedule(scheduleData, numTrays, title));
     }
 
     // Check for Telegram commands using long polling.

@@ -208,9 +208,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     results[0][1] = String(sessionData[valveIndex].duration, 1);
                     results[0][2] = sessionData[valveIndex].status;
 
-                    // Flush debug buffer and send completion
-                    DebugHelper::flushBuffer();
-                    TelegramNotifier::sendWateringComplete(results, 1);
+                    // Queue completion notification (non-blocking, sent from Core 0)
+                    queueTelegramNotification(TelegramNotifier::formatWateringComplete(results, 1));
                     endTelegramSession();
                     autoWateringValveIndex = -1;
                 }

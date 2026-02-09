@@ -78,6 +78,9 @@ void networkTask(void* parameter) {
             // Publish pending MQTT state from Core 0 (thread-safe)
             wateringSystem.publishPendingMQTTState();
 
+            // Send pending Telegram notifications from Core 0 (thread-safe)
+            wateringSystem.processPendingNotifications();
+
             // Check Telegram commands (non-blocking)
             checkTelegramCommands(0);
 

@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.16.6 (config.h:10)
+**Version**: 1.17.0 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -180,6 +180,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Thread-Safe MQTT Publishing** (v1.16.6): Fixed MQTT disconnection blocking auto-watering. Previously: `publishCurrentState()` and `publishStateChange()` called `mqttClient.publish()`/`mqttClient.connected()` from Core 1 (watering loop), while `loopMQTT()`/`connectMQTT()` ran on Core 0 (network task). PubSubClient is not thread-safe → concurrent access during MQTT reconnection (TLS handshake, blocking delays) could hang the main loop → `checkAutoWatering()` never triggered. Now: Core 1 only caches state JSON and sets `volatile bool mqttPublishPending` flag. Core 0 calls `publishPendingMQTTState()` to publish via MQTT. `publishStateChange()` no longer accesses mqttClient (state changes captured in periodic 2s state updates). Boot watering logic also no longer requires WiFi. Implemented in WateringSystemStateMachine.h:355-380, WateringSystem.h:90, main.cpp:78-80.
 
+**Thread-Safe Telegram Notifications** (v1.17.0): Removed all network calls from Core 1 watering loop. Previously: `checkMasterOverflowSensor()`, `checkWaterLevelSensor()`, `checkAutoWatering()`, `startSequentialWatering()`, `startNextInSequence()`, `sendScheduleUpdateIfNeeded()`, and `processValve()` made direct HTTPClient/TelegramNotifier calls with 10s timeouts from Core 1 → if WiFi down or Telegram API slow, sensor monitoring, auto-watering, and safety watchdogs stalled. Now: all Telegram notifications go through `notificationQueue` (8-slot ring buffer). Core 1 calls `queueTelegramNotification()` with pre-formatted messages (using `TelegramNotifier::formatWateringStarted/Complete/Schedule()`). Core 0 calls `processPendingNotifications()` in networkTask to send queued messages via `sendTelegramDebug()`. Also removed `delay(500)` from `sendScheduleUpdateIfNeeded()` and WiFi check from `sendWateringSchedule()`. Implemented in TelegramNotifier.h (format methods), WateringSystem.h (queue + all call sites), WateringSystemStateMachine.h (processValve), main.cpp:82.
+
 ### MQTT
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow` (clear overflow + reinit GPIO), `reinit_gpio` (force GPIO hardware reset for stuck relays)
@@ -284,3 +286,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 23. **v1.15.7**: Water level sensor has 11s continuation time before blocking watering. Allows active watering cycles to complete when tank runs low. Debug message only logs once (not every 100ms) to prevent spam. System blocks watering only if LOW persists for full 11 seconds
 24. **v1.16.2**: GPIO hardware reinitialization fixes stuck relay modules. After emergency stops (overflow, water level), `resetOverflowFlag()` and water level recovery automatically call `reinitializeGPIOHardware()` which reinitializes all valve/pump pins to known good state. Manual trigger: `/reinit_gpio` (Telegram/MQTT). Fixes issue where relay modules stay stuck after emergency events and require physical power cycle
 25. **v1.16.6**: NEVER access `mqttClient` from Core 1 (watering loop). PubSubClient is not thread-safe. All MQTT publishing goes through `mqttPublishPending` flag → Core 0 calls `publishPendingMQTTState()`. Watering must never depend on network connectivity
+26. **v1.17.0**: NEVER make HTTP/Telegram calls from Core 1 (watering loop). All Telegram notifications go through `notificationQueue` → Core 1 calls `queueTelegramNotification(message)` → Core 0 calls `processPendingNotifications()`. Use `TelegramNotifier::formatWateringStarted/Complete/Schedule()` to build messages without network calls

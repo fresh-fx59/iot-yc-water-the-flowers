@@ -10,11 +10,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
 #include <LittleFS.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 
 // External MQTT client (defined in main.cpp)
 extern PubSubClient mqttClient;
@@ -90,6 +88,13 @@ private:
   // Thread-safe MQTT publishing flag (Core 1 sets, Core 0 publishes)
   volatile bool mqttPublishPending;
 
+  // Thread-safe Telegram notification queue (Core 1 queues, Core 0 sends)
+  static const int NOTIFICATION_QUEUE_SIZE = 8;
+  String notificationQueue[NOTIFICATION_QUEUE_SIZE];
+  volatile int notificationQueueHead;
+  volatile int notificationQueueTail;
+  volatile int notificationQueueCount;
+
 public:
   // ========== Constructor ==========
   WateringSystem()
@@ -100,7 +105,9 @@ public:
         lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
         waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
-        mqttPublishPending(false) {
+        mqttPublishPending(false),
+        notificationQueueHead(0), notificationQueueTail(0),
+        notificationQueueCount(0) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -141,6 +148,8 @@ public:
   // State management
   void publishCurrentState();
   void publishPendingMQTTState();  // Called from Core 0 (networkTask) to publish cached state via MQTT
+  void queueTelegramNotification(const String& message);  // Queue notification from Core 1 (non-blocking)
+  void processPendingNotifications();  // Called from Core 0 (networkTask) to send queued Telegram messages
   void clearTimeoutFlag(int valveIndex);
 
   // Telegram session tracking
@@ -589,55 +598,20 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
       // Emergency stop everything
       emergencyStopAll("OVERFLOW DETECTED");
 
-      // Flush debug buffer before sending Telegram notification
-      DebugHelper::flushBuffer();
+      // Queue Telegram notification (non-blocking, sent from Core 0)
+      String message = "🚨🚨🚨 <b>WATER OVERFLOW DETECTED</b> 🚨🚨🚨\n\n";
+      message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+      message += "🔧 Master overflow sensor triggered\n";
+      message += "💧 Water is overflowing from tray!\n\n";
+      message += "✅ Emergency actions taken:\n";
+      message += "  • All valves CLOSED\n";
+      message += "  • Pump STOPPED\n";
+      message += "  • System LOCKED\n\n";
+      message += "⚠️  Manual intervention required!\n";
+      message += "Send /reset_overflow to resume operations";
 
-      // Send Telegram notification
-      if (WiFi.isConnected()) {
-        String message = "🚨🚨🚨 <b>WATER OVERFLOW DETECTED</b> 🚨🚨🚨\n\n";
-        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
-        message += "🔧 Master overflow sensor triggered\n";
-        message += "💧 Water is overflowing from tray!\n\n";
-        message += "✅ Emergency actions taken:\n";
-        message += "  • All valves CLOSED\n";
-        message += "  • Pump STOPPED\n";
-        message += "  • System LOCKED\n\n";
-        message += "⚠️  Manual intervention required!\n";
-        message += "Send /reset_overflow to resume operations";
-
-        HTTPClient http;
-        WiFiClientSecure client;
-        client.setInsecure();
-
-        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                     "&text=";
-
-        // URL encode the message
-        String encoded = "";
-        for (size_t i = 0; i < message.length(); i++) {
-          char c = message.charAt(i);
-          if (c == ' ') {
-            encoded += "+";
-          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded += c;
-          } else {
-            encoded += '%';
-            char hex[3];
-            sprintf(hex, "%02X", c);
-            encoded += hex;
-          }
-        }
-
-        url += encoded + "&parse_mode=HTML";
-
-        http.begin(client, url);
-        http.setTimeout(10000);
-        http.GET();
-        http.end();
-
-        DebugHelper::debugImportant("📱 Overflow notification sent to Telegram");
-      }
+      queueTelegramNotification(message);
+      DebugHelper::debugImportant("📱 Overflow notification queued for Telegram");
     }
   }
 }
@@ -731,11 +705,8 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
           emergencyStopAll("WATER LEVEL LOW");
         }
 
-        // Flush debug buffer before sending Telegram notification
-        DebugHelper::flushBuffer();
-
-        // Send Telegram notification (only once)
-        if (WiFi.isConnected() && !waterLevelLowNotificationSent) {
+        // Queue Telegram notification (non-blocking, sent from Core 0)
+        if (!waterLevelLowNotificationSent) {
           String message = "⚠️⚠️⚠️ <b>WATER LEVEL LOW</b> ⚠️⚠️⚠️\n\n";
           message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
           message += "💧 Water tank is empty or low\n";
@@ -749,39 +720,9 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
           message += "  • Watering BLOCKED\n\n";
           message += "🔄 System will resume automatically when water is refilled";
 
-          HTTPClient http;
-          WiFiClientSecure client;
-          client.setInsecure();
-
-          String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                       "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                       "&text=";
-
-          // URL encode the message
-          String encoded = "";
-          for (size_t i = 0; i < message.length(); i++) {
-            char c = message.charAt(i);
-            if (c == ' ') {
-              encoded += "+";
-            } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-              encoded += c;
-            } else {
-              encoded += '%';
-              char hex[3];
-              sprintf(hex, "%02X", c);
-              encoded += hex;
-            }
-          }
-
-          url += encoded + "&parse_mode=HTML";
-
-          http.begin(client, url);
-          http.setTimeout(10000);
-          http.GET();
-          http.end();
-
+          queueTelegramNotification(message);
           waterLevelLowNotificationSent = true;
-          DebugHelper::debugImportant("📱 Water level low notification sent to Telegram");
+          DebugHelper::debugImportant("📱 Water level low notification queued for Telegram");
         }
       }
     } else {
@@ -815,50 +756,15 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
       // Same issue as overflow: relay modules can get stuck after emergency stop
       reinitializeGPIOHardware();
 
-      // Flush debug buffer before sending Telegram notification
-      DebugHelper::flushBuffer();
+      // Queue Telegram notification (non-blocking, sent from Core 0)
+      String message = "✅ <b>WATER LEVEL RESTORED</b> ✅\n\n";
+      message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+      message += "💧 Water tank refilled\n";
+      message += "🔄 System resuming normal operation\n\n";
+      message += "✓ Watering operations enabled";
 
-      // Send restoration notification
-      if (WiFi.isConnected()) {
-        String message = "✅ <b>WATER LEVEL RESTORED</b> ✅\n\n";
-        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
-        message += "💧 Water tank refilled\n";
-        message += "🔄 System resuming normal operation\n\n";
-        message += "✓ Watering operations enabled";
-
-        HTTPClient http;
-        WiFiClientSecure client;
-        client.setInsecure();
-
-        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                     "&text=";
-
-        // URL encode the message
-        String encoded = "";
-        for (size_t i = 0; i < message.length(); i++) {
-          char c = message.charAt(i);
-          if (c == ' ') {
-            encoded += "+";
-          } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded += c;
-          } else {
-            encoded += '%';
-            char hex[3];
-            sprintf(hex, "%02X", c);
-            encoded += hex;
-          }
-        }
-
-        url += encoded + "&parse_mode=HTML";
-
-        http.begin(client, url);
-        http.setTimeout(10000);
-        http.GET();
-        http.end();
-
-        DebugHelper::debugImportant("📱 Water level restored notification sent to Telegram");
-      }
+      queueTelegramNotification(message);
+      DebugHelper::debugImportant("📱 Water level restored notification queued for Telegram");
 
       // Reset notification flag for next low water event
       waterLevelLowNotificationSent = false;
@@ -911,12 +817,9 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
       startTelegramSession("Auto (Tray " + String(i + 1) + ")");
       autoWateringValveIndex = i;
 
-      // Flush debug buffer before sending notification
-      DebugHelper::flushBuffer();
-
-      // Send start notification
+      // Queue start notification (non-blocking, sent from Core 0)
       String trayNumber = String(i + 1);
-      TelegramNotifier::sendWateringStarted("Auto", trayNumber);
+      queueTelegramNotification(TelegramNotifier::formatWateringStarted("Auto", trayNumber));
 
       startWatering(i);
     }
@@ -1125,10 +1028,8 @@ inline void WateringSystem::startSequentialWatering() {
     }
   }
 
-  // Flush debug buffer before sending notification
-  DebugHelper::flushBuffer();
-
-  TelegramNotifier::sendWateringStarted(sessionTriggerType, trayNumbers);
+  // Queue start notification (non-blocking, sent from Core 0)
+  queueTelegramNotification(TelegramNotifier::formatWateringStarted(sessionTriggerType, trayNumbers));
 
   startNextInSequence();
 }
@@ -1229,14 +1130,11 @@ inline void WateringSystem::startNextInSequence() {
         }
       }
 
-      // Flush all buffered debug messages before sending completion
-      // notification
-      DebugHelper::flushBuffer();
-
-      TelegramNotifier::sendWateringComplete(results, resultCount);
+      // Queue completion notification (non-blocking, sent from Core 0)
+      queueTelegramNotification(TelegramNotifier::formatWateringComplete(results, resultCount));
       endTelegramSession();
 
-      // Send updated watering schedule after sequential watering completes
+      // Queue updated watering schedule after sequential watering completes
       sendWateringSchedule("Updated Schedule");
     }
 
@@ -1376,8 +1274,7 @@ inline void WateringSystem::updatePumpState() {
 // ========== Helper: Schedule Update ==========
 inline void WateringSystem::sendScheduleUpdateIfNeeded() {
   if (!sequentialMode) {
-    DebugHelper::debug("📅 Sending updated watering schedule...");
-    delay(500); // Brief delay to ensure WiFi is stable
+    DebugHelper::debug("📅 Queuing updated watering schedule...");
     sendWateringSchedule("Updated Schedule");
   }
 }
@@ -1904,19 +1801,10 @@ inline void WateringSystem::endTelegramSession() {
 
 // ========== Watering Schedule Notification ==========
 inline void WateringSystem::sendWateringSchedule(const String &title) {
-  if (!WiFi.isConnected()) {
-    DebugHelper::debugImportant("❌ Cannot send schedule: WiFi not connected - "
-                                "will retry on next watering");
-    return;
-  }
-
   // Get current time from system time (already set from RTC at boot)
   time_t now;
   time(&now);
   struct tm *timeinfo = localtime(&now);
-
-  // Flush debug buffer before sending schedule notification
-  DebugHelper::flushBuffer();
 
   unsigned long currentTime = millis();
 
@@ -2066,7 +1954,8 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     }
   }
 
-  TelegramNotifier::sendWateringSchedule(scheduleData, NUM_VALVES, title);
+  // Queue schedule notification (non-blocking, sent from Core 0)
+  queueTelegramNotification(TelegramNotifier::formatWateringSchedule(scheduleData, NUM_VALVES, title));
 }
 
 // ========== Boot Watering Decision Helpers ==========
@@ -2258,6 +2147,34 @@ inline void WateringSystem::testAllSensors() {
   DebugHelper::debugImportant("═══════════════════════════════════════");
   DebugHelper::debugImportant("✓ ALL SENSORS TESTED");
   DebugHelper::debugImportant("═══════════════════════════════════════");
+}
+
+// ========== Telegram Notification Queue ==========
+// Queue a pre-formatted notification from Core 1 (non-blocking, no network calls)
+inline void WateringSystem::queueTelegramNotification(const String& message) {
+  if (notificationQueueCount >= NOTIFICATION_QUEUE_SIZE) {
+    DebugHelper::debug("⚠️ Telegram notification queue full - dropping message");
+    return;
+  }
+
+  notificationQueue[notificationQueueTail] = message;
+  notificationQueueTail = (notificationQueueTail + 1) % NOTIFICATION_QUEUE_SIZE;
+  notificationQueueCount++;
+}
+
+// Process pending notifications from Core 0 (networkTask) - sends via Telegram
+inline void WateringSystem::processPendingNotifications() {
+  while (notificationQueueCount > 0) {
+    String message = notificationQueue[notificationQueueHead];
+    notificationQueue[notificationQueueHead] = ""; // Free memory
+    notificationQueueHead = (notificationQueueHead + 1) % NOTIFICATION_QUEUE_SIZE;
+    notificationQueueCount--;
+
+    // Send via Telegram (blocking call is safe on Core 0)
+    if (WiFi.isConnected()) {
+      sendTelegramDebug(message);
+    }
+  }
 }
 
 // ============================================

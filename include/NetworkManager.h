@@ -19,6 +19,9 @@ extern PubSubClient mqttClient;
 class NetworkManager {
 private:
     static WateringSystem* wateringSystem;
+    static unsigned long mqttDisconnectedSince;   // 0 = connected, >0 = millis() when disconnect detected
+    static bool mqttLongOutageNotified;            // true if 10min outage notification was sent
+    static bool mqttSilentReconnect;               // suppress Telegram during short outage reconnects
 
 public:
     // ========== Initialization ==========
@@ -64,24 +67,32 @@ public:
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
-        DebugHelper::debug("Connecting to Yandex IoT Core as " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
+        if (!mqttSilentReconnect) {
+            DebugHelper::debug("Connecting to Yandex IoT Core as " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
+        }
 
         int attempts = 0;
         while (!mqttClient.connected() && attempts < 5) {
             yield();  // Feed watchdog
             String clientId = "WateringSystem_" + String(YC_DEVICE_ID);
             if (mqttClient.connect(clientId.c_str(), YC_DEVICE_ID, MQTT_PASSWORD)) {
-                DebugHelper::debug("✓ MQTT Connected!");
+                if (!mqttSilentReconnect) {
+                    DebugHelper::debug("✓ MQTT Connected!");
+                }
 
                 if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
-                    DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
+                    if (!mqttSilentReconnect) {
+                        DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
+                    }
                 } else {
                     DebugHelper::debugImportant("❌ Failed to subscribe to commands");
                 }
 
                 publishConnectionEvent();
             } else {
-                DebugHelper::debugImportant("❌ MQTT connection failed, rc=" + String(mqttClient.state()) + " retrying in 5 seconds");
+                if (!mqttSilentReconnect) {
+                    DebugHelper::debugImportant("❌ MQTT connection failed, rc=" + String(mqttClient.state()) + " retrying in 5 seconds");
+                }
                 delay(5000);
                 attempts++;
             }
@@ -91,8 +102,33 @@ public:
     static void loopMQTT() {
         if (mqttClient.connected()) {
             mqttClient.loop();
+            // Check if we just reconnected after an outage
+            if (mqttDisconnectedSince > 0) {
+                unsigned long outageDuration = millis() - mqttDisconnectedSince;
+                if (outageDuration >= MQTT_OUTAGE_NOTIFY_THRESHOLD_MS) {
+                    unsigned long minutes = outageDuration / 60000;
+                    unsigned long seconds = (outageDuration / 1000) % 60;
+                    DebugHelper::debugImportant("✓ MQTT reconnected after " + String(minutes) + "m " + String(seconds) + "s outage");
+                }
+                mqttDisconnectedSince = 0;
+                mqttLongOutageNotified = false;
+                mqttSilentReconnect = false;
+            }
         } else {
-            DebugHelper::debugImportant("⚠️ MQTT disconnected, attempting reconnect...");
+            if (mqttDisconnectedSince == 0) {
+                // First detection of disconnect
+                mqttDisconnectedSince = millis();
+                if (mqttDisconnectedSince == 0) mqttDisconnectedSince = 1;  // avoid 0 (means "connected")
+            } else if (!mqttLongOutageNotified) {
+                unsigned long outageDuration = millis() - mqttDisconnectedSince;
+                if (outageDuration >= MQTT_OUTAGE_NOTIFY_THRESHOLD_MS) {
+                    unsigned long minutes = outageDuration / 60000;
+                    DebugHelper::debugImportant("⚠️ MQTT disconnected for " + String(minutes) + " minutes, still trying to reconnect...");
+                    mqttLongOutageNotified = true;
+                }
+            }
+            // Suppress Telegram for short outage reconnect attempts
+            mqttSilentReconnect = (millis() - mqttDisconnectedSince) < MQTT_OUTAGE_NOTIFY_THRESHOLD_MS;
             connectMQTT();
         }
     }
@@ -171,14 +207,21 @@ private:
         String connectTopic = STATE_TOPIC + String("/connection");
 
         if (mqttClient.publish(connectTopic.c_str(), connectMessage.c_str())) {
-            DebugHelper::debug("Published connection event");
+            if (!mqttSilentReconnect) {
+                DebugHelper::debug("Published connection event");
+            }
         } else {
-            DebugHelper::debugImportant("❌ Failed to publish connection event");
+            if (!mqttSilentReconnect) {
+                DebugHelper::debugImportant("❌ Failed to publish connection event");
+            }
         }
     }
 };
 
 // Static member initialization
 WateringSystem* NetworkManager::wateringSystem = nullptr;
+unsigned long NetworkManager::mqttDisconnectedSince = 0;
+bool NetworkManager::mqttLongOutageNotified = false;
+bool NetworkManager::mqttSilentReconnect = false;
 
 #endif // NETWORK_MANAGER_H

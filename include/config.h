@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.17.0";
+const char *VERSION = "watering_system_1.17.1";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -173,6 +173,7 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 // ============================================
 // MQTT Configuration
 // ============================================
+const unsigned long MQTT_OUTAGE_NOTIFY_THRESHOLD_MS = 600000;  // 10 minutes - only notify Telegram for outages longer than this
 const char *MQTT_SERVER = "mqtt.cloud.yandex.net";
 const int MQTT_PORT = 8883;
 const int MQTT_BUFFER_SIZE = 1024;

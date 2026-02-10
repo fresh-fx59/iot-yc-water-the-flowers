@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.17.0 (config.h:10)
+**Version**: 1.17.1 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -182,6 +182,8 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 
 **Thread-Safe Telegram Notifications** (v1.17.0): Removed all network calls from Core 1 watering loop. Previously: `checkMasterOverflowSensor()`, `checkWaterLevelSensor()`, `checkAutoWatering()`, `startSequentialWatering()`, `startNextInSequence()`, `sendScheduleUpdateIfNeeded()`, and `processValve()` made direct HTTPClient/TelegramNotifier calls with 10s timeouts from Core 1 → if WiFi down or Telegram API slow, sensor monitoring, auto-watering, and safety watchdogs stalled. Now: all Telegram notifications go through `notificationQueue` (8-slot ring buffer). Core 1 calls `queueTelegramNotification()` with pre-formatted messages (using `TelegramNotifier::formatWateringStarted/Complete/Schedule()`). Core 0 calls `processPendingNotifications()` in networkTask to send queued messages via `sendTelegramDebug()`. Also removed `delay(500)` from `sendScheduleUpdateIfNeeded()` and WiFi check from `sendWateringSchedule()`. Implemented in TelegramNotifier.h (format methods), WateringSystem.h (queue + all call sites), WateringSystemStateMachine.h (processValve), main.cpp:82.
 
+**MQTT Outage Notification Throttling** (v1.17.1): Suppresses Telegram spam for brief MQTT disconnections. Previously: every MQTT disconnect/reconnect cycle sent 5 messages to Telegram (disconnect, connecting, connected, subscribed, published). Now: outage tracking in NetworkManager.h with `mqttDisconnectedSince` timestamp. Short outages (<10 min, `MQTT_OUTAGE_NOTIFY_THRESHOLD_MS=600000` in config.h) are completely silent in Telegram. Long outages (≥10 min) send one notification when threshold reached, then one summary with duration on reconnect. Initial boot connection always logged. `mqttSilentReconnect` flag suppresses `connectMQTT()` and `publishConnectionEvent()` Telegram output during short outages.
+
 ### MQTT
 
 **Commands** (`$devices/{ID}/commands`): `start_all` (seq 5→0), `halt`/`resume`, `test_sensors`, `test_sensor_N`, `reset_overflow` (clear overflow + reinit GPIO), `reinit_gpio` (force GPIO hardware reset for stuck relays)
@@ -287,3 +289,4 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 24. **v1.16.2**: GPIO hardware reinitialization fixes stuck relay modules. After emergency stops (overflow, water level), `resetOverflowFlag()` and water level recovery automatically call `reinitializeGPIOHardware()` which reinitializes all valve/pump pins to known good state. Manual trigger: `/reinit_gpio` (Telegram/MQTT). Fixes issue where relay modules stay stuck after emergency events and require physical power cycle
 25. **v1.16.6**: NEVER access `mqttClient` from Core 1 (watering loop). PubSubClient is not thread-safe. All MQTT publishing goes through `mqttPublishPending` flag → Core 0 calls `publishPendingMQTTState()`. Watering must never depend on network connectivity
 26. **v1.17.0**: NEVER make HTTP/Telegram calls from Core 1 (watering loop). All Telegram notifications go through `notificationQueue` → Core 1 calls `queueTelegramNotification(message)` → Core 0 calls `processPendingNotifications()`. Use `TelegramNotifier::formatWateringStarted/Complete/Schedule()` to build messages without network calls
+27. **v1.17.1**: MQTT disconnect/reconnect messages are suppressed from Telegram for outages < 10 minutes (`MQTT_OUTAGE_NOTIFY_THRESHOLD_MS`). Only long outages get Telegram notifications. Adjust threshold in config.h if needed

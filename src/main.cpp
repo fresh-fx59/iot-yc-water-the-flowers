@@ -61,15 +61,12 @@ void networkTask(void* parameter) {
         // CRITICAL: Only run network operations if NOT in halt mode
         // In halt mode, main loop handles Telegram commands to ensure /resume works
         if (!wateringSystem.isHaltMode()) {
-            // Check WiFi connection (can block, but won't affect watering)
+            // WiFi reconnection with exponential backoff (v1.17.3)
+            // loopWiFi() handles cleanup, backoff, and recovery notifications
+            NetworkManager::loopWiFi();
             if (!NetworkManager::isWiFiConnected()) {
-                DebugHelper::debugImportant("⚠️ WiFi disconnected, attempting reconnect...");
-                NetworkManager::connectWiFi();
-                // If reconnect fails, wait and try again
-                if (!NetworkManager::isWiFiConnected()) {
-                    vTaskDelay(5000 / portTICK_PERIOD_MS);
-                    continue;
-                }
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                continue;
             }
 
             // Handle MQTT (can block)

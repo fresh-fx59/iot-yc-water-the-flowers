@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.17.1";
+const char *VERSION = "watering_system_1.17.3";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -191,6 +191,12 @@ const String STATE_TOPIC = DEVICE_TOPIC_PREFIX + String("state");
 // ============================================
 const int WIFI_MAX_RETRY_ATTEMPTS = 30;
 const int WIFI_RETRY_DELAY_MS = 500;
+
+// WiFi reconnection backoff (v1.17.3)
+const unsigned long WIFI_RECONNECT_BACKOFF_INITIAL_MS = 5000;   // Start with 5s between attempts
+const unsigned long WIFI_RECONNECT_BACKOFF_MAX_MS = 300000;     // Cap at 5 minutes
+const int WIFI_RECONNECT_MAX_ATTEMPTS = 5;                      // 5 retries per attempt (2.5s blocking)
+const unsigned long WIFI_OUTAGE_NOTIFY_THRESHOLD_MS = 60000;    // 1 min before Telegram notification
 
 // ============================================
 // OTA Configuration

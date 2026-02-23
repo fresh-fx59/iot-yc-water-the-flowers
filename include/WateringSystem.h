@@ -1839,9 +1839,9 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
       // full)
       unsigned long timeSinceWatering;
 
-      // Handle post-reboot case
+      // Handle post-reboot case (add elapsed millis to frozen boot snapshot)
       if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
-        timeSinceWatering = valve->realTimeSinceLastWatering;
+        timeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
       } else {
         timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
       }
@@ -1890,8 +1890,8 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
       // Handle post-reboot case where millis() can't represent the timestamp
       // (occurs when watering happened longer ago than current millis() value)
       if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
-        // Use real time duration calculated during load
-        timeSinceWatering = valve->realTimeSinceLastWatering;
+        // Add elapsed millis() to frozen boot snapshot
+        timeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
       } else {
         // Normal case: calculate from millis() timestamp
         timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
@@ -1995,8 +1995,9 @@ inline bool WateringSystem::hasOverdueValves() {
             valve->lastWateringCompleteTime + valve->emptyToFullDuration;
         isOverdue = (currentTime >= nextWateringTime);
       } else if (valve->realTimeSinceLastWatering > 0) {
-        // Long outage case: millis() can't represent timestamp, use real duration
-        isOverdue = (valve->realTimeSinceLastWatering >= valve->emptyToFullDuration);
+        // Long outage case: add elapsed millis() to frozen boot snapshot
+        unsigned long totalTimeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
+        isOverdue = (totalTimeSinceWatering >= valve->emptyToFullDuration);
       }
 
       if (isOverdue) {

@@ -192,10 +192,11 @@ inline bool shouldWaterNow(const ValveController *valve,
     return timeSinceLastWatering >= valve->emptyToFullDuration;
   }
 
-  // Long outage case: millis() can't represent timestamp
-  // Use real time duration stored during load
+  // Long outage case: millis() can't represent timestamp at boot
+  // realTimeSinceLastWatering is a frozen snapshot from boot - add elapsed millis()
   if (valve->realTimeSinceLastWatering > 0) {
-    return valve->realTimeSinceLastWatering >= valve->emptyToFullDuration;
+    unsigned long totalTimeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
+    return totalTimeSinceWatering >= valve->emptyToFullDuration;
   }
 
   // If no timestamp data at all, don't water (safety)

@@ -174,6 +174,8 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 // MQTT Configuration
 // ============================================
 const unsigned long MQTT_OUTAGE_NOTIFY_THRESHOLD_MS = 600000;  // 10 minutes - only notify Telegram for outages longer than this
+const unsigned long MQTT_RECONNECT_BACKOFF_INITIAL_MS = 5000;  // Start with 5s between attempts
+const unsigned long MQTT_RECONNECT_BACKOFF_MAX_MS = 300000;    // Cap at 5 minutes
 const char *MQTT_SERVER = "mqtt.cloud.yandex.net";
 const int MQTT_PORT = 8883;
 const int MQTT_BUFFER_SIZE = 1024;

@@ -29,6 +29,10 @@ private:
     static unsigned long lastWifiReconnectAttempt;  // millis() of last reconnect attempt
     static unsigned long wifiReconnectBackoffMs;   // current backoff interval (grows exponentially)
 
+    // MQTT reconnection backoff (v1.17.3)
+    static unsigned long lastMqttReconnectAttempt;  // millis() of last reconnect attempt
+    static unsigned long mqttReconnectBackoffMs;   // current backoff interval (grows exponentially)
+
 public:
     // ========== Initialization ==========
     static void setWateringSystem(WateringSystem* ws) {
@@ -38,10 +42,12 @@ public:
     static void init() {
         // Configure MQTT client
         wifiClient.setInsecure(); // For development - use proper certificates in production
+        wifiClient.setTimeout(5);  // 5 second TLS handshake timeout (default 30s blocks Core 0 too long)
         mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
         mqttClient.setCallback(messageCallback);
         mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
         mqttClient.setKeepAlive(MQTT_KEEP_ALIVE);
+        mqttClient.setSocketTimeout(5);  // 5 second socket timeout for MQTT operations
         DebugHelper::debug("Network Manager initialized");
     }
 
@@ -144,6 +150,9 @@ public:
     }
 
     // ========== MQTT Management ==========
+
+    // Single-attempt MQTT connect (v1.17.3: no retry loop, backoff handled by loopMQTT)
+    // Blocks max ~5s (TLS timeout) instead of old 175s (5 attempts × 35s)
     static void connectMQTT() {
         if (mqttClient.connected()) return;
 
@@ -151,30 +160,27 @@ public:
             DebugHelper::debug("Connecting to Yandex IoT Core as " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
         }
 
-        int attempts = 0;
-        while (!mqttClient.connected() && attempts < 5) {
-            yield();  // Feed watchdog
-            String clientId = "WateringSystem_" + String(YC_DEVICE_ID);
-            if (mqttClient.connect(clientId.c_str(), YC_DEVICE_ID, MQTT_PASSWORD)) {
+        yield();  // Feed watchdog
+        String clientId = "WateringSystem_" + String(YC_DEVICE_ID);
+        if (mqttClient.connect(clientId.c_str(), YC_DEVICE_ID, MQTT_PASSWORD)) {
+            if (!mqttSilentReconnect) {
+                DebugHelper::debug("✓ MQTT Connected!");
+            }
+
+            if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
                 if (!mqttSilentReconnect) {
-                    DebugHelper::debug("✓ MQTT Connected!");
+                    DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
                 }
-
-                if (mqttClient.subscribe(COMMAND_TOPIC.c_str())) {
-                    if (!mqttSilentReconnect) {
-                        DebugHelper::debug("Subscribed to: " + COMMAND_TOPIC);
-                    }
-                } else {
-                    DebugHelper::debugImportant("❌ Failed to subscribe to commands");
-                }
-
-                publishConnectionEvent();
             } else {
-                if (!mqttSilentReconnect) {
-                    DebugHelper::debugImportant("❌ MQTT connection failed, rc=" + String(mqttClient.state()) + " retrying in 5 seconds");
-                }
-                delay(5000);
-                attempts++;
+                DebugHelper::debugImportant("❌ Failed to subscribe to commands");
+            }
+
+            publishConnectionEvent();
+            // Reset backoff on success
+            mqttReconnectBackoffMs = MQTT_RECONNECT_BACKOFF_INITIAL_MS;
+        } else {
+            if (!mqttSilentReconnect) {
+                DebugHelper::debugImportant("❌ MQTT connection failed, rc=" + String(mqttClient.state()));
             }
         }
     }
@@ -195,12 +201,13 @@ public:
                 mqttSilentReconnect = false;
             }
         } else {
+            unsigned long now = millis();
             if (mqttDisconnectedSince == 0) {
                 // First detection of disconnect
-                mqttDisconnectedSince = millis();
+                mqttDisconnectedSince = now;
                 if (mqttDisconnectedSince == 0) mqttDisconnectedSince = 1;  // avoid 0 (means "connected")
             } else if (!mqttLongOutageNotified) {
-                unsigned long outageDuration = millis() - mqttDisconnectedSince;
+                unsigned long outageDuration = now - mqttDisconnectedSince;
                 if (outageDuration >= MQTT_OUTAGE_NOTIFY_THRESHOLD_MS) {
                     unsigned long minutes = outageDuration / 60000;
                     DebugHelper::debugImportant("⚠️ MQTT disconnected for " + String(minutes) + " minutes, still trying to reconnect...");
@@ -208,8 +215,17 @@ public:
                 }
             }
             // Suppress Telegram for short outage reconnect attempts
-            mqttSilentReconnect = (millis() - mqttDisconnectedSince) < MQTT_OUTAGE_NOTIFY_THRESHOLD_MS;
-            connectMQTT();
+            mqttSilentReconnect = (now - mqttDisconnectedSince) < MQTT_OUTAGE_NOTIFY_THRESHOLD_MS;
+
+            // Exponential backoff between MQTT reconnection attempts (v1.17.3)
+            if (now - lastMqttReconnectAttempt >= mqttReconnectBackoffMs) {
+                lastMqttReconnectAttempt = now;
+                connectMQTT();
+                // Increase backoff for next attempt if still disconnected
+                if (!mqttClient.connected()) {
+                    mqttReconnectBackoffMs = min(mqttReconnectBackoffMs * 2, MQTT_RECONNECT_BACKOFF_MAX_MS);
+                }
+            }
         }
     }
 
@@ -303,6 +319,8 @@ WateringSystem* NetworkManager::wateringSystem = nullptr;
 unsigned long NetworkManager::mqttDisconnectedSince = 0;
 bool NetworkManager::mqttLongOutageNotified = false;
 bool NetworkManager::mqttSilentReconnect = false;
+unsigned long NetworkManager::lastMqttReconnectAttempt = 0;
+unsigned long NetworkManager::mqttReconnectBackoffMs = MQTT_RECONNECT_BACKOFF_INITIAL_MS;
 unsigned long NetworkManager::wifiDisconnectedSince = 0;
 bool NetworkManager::wifiLongOutageNotified = false;
 unsigned long NetworkManager::lastWifiReconnectAttempt = 0;

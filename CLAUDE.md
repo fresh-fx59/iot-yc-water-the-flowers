@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.17.3 (config.h:10)
+**Version**: 1.17.4 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -158,7 +158,9 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 1. Exponential: full→double(2x), fill<95%baseline→+1x, fill>baseline→update+1x
 2. Binary: fill≈baseline→-0.5x, fill↓→+0.25x, fill↑→+0.25x
 
-**Constants** (processLearningData): BASELINE_TOLERANCE=0.95, FILL_STABLE_TOLERANCE_MS=500, adjustments: 2.0/1.0/0.5/0.25
+**Constants** (processLearningData, WateringSystem.h:1285-1297): BASELINE_TOLERANCE=0.70 (v1.17.4), FILL_STABLE_TOLERANCE_MS=500, BASE_INTERVAL_MS=86400000 (24h), MIN_INTERVAL_MULTIPLIER=1.0, adjustments: INTERVAL_DOUBLE=2.0, INTERVAL_INCREMENT_LARGE=1.0, INTERVAL_DECREMENT_BINARY=0.5, INTERVAL_INCREMENT_FINE=0.25. Also AUTO_WATERING_MIN_INTERVAL_MS=86400000 (config.h:130) enforces 24h floor in shouldWaterNow()
+
+**Interval Tuning Guide** (v1.17.4): `emptyToFullDuration = BASE_INTERVAL_MS × intervalMultiplier`. Algorithm paths: fill < BASELINE_TOLERANCE×baseline → +1.0x (penalty); fill > baseline → new baseline + 1.0x; fill ≈ baseline & stable → -0.5x (only decrease path); fill ≈ baseline & changed → +0.25x. To water MORE often: lower BASELINE_TOLERANCE (shrinks penalty zone), lower INTERVAL_INCREMENT_LARGE (less aggressive growth), increase INTERVAL_DECREMENT_BINARY (faster recovery), lower MIN_INTERVAL_MULTIPLIER or BASE_INTERVAL_MS (lower floor). To water LESS often: reverse. Reset calibration by swapping LEARNING_DATA_FILE filenames in WateringSystem.h:26-29
 
 **Example**: 15s→baseline15s/1x(24h) → full→2x(48h) → 10s→3x(72h) → 16s→baseline16s/4x(96h) → 16s→3.5x(84h) → 15s→3.75x(90h) → 16s→3.25x(78h) ✓optimal
 

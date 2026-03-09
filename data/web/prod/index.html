@@ -29,6 +29,13 @@
             <p id="systemStatusText">Ready</p>
           </div>
         </div>
+        <div class="status-item">
+          <div class="status-indicator" id="lampStatus"></div>
+          <div class="status-text">
+            <h3>Plant Lamp</h3>
+            <p id="lampStatusText">OFF (AUTO)</p>
+          </div>
+        </div>
       </div>
 
       <div class="info-box">
@@ -83,6 +90,16 @@
             <button class="btn btn-danger" onclick="stopSequentialWatering()">Stop</button>
           </div>
         </div>
+
+        <div class="scenario-card">
+          <h2>💡 Plant Lamp</h2>
+          <p>Control the grow light relay manually or return it to the automatic 22:00 -> 07:00 schedule.</p>
+          <div class="btn-group btn-group-3">
+            <button class="btn btn-primary" onclick="setLampMode('on')">Lamp ON</button>
+            <button class="btn btn-danger" onclick="setLampMode('off')">Lamp OFF</button>
+            <button class="btn btn-secondary" onclick="setLampMode('auto')">Lamp AUTO</button>
+          </div>
+        </div>
       </div>
 
       <!-- Status Log -->
@@ -95,7 +112,7 @@
     </div>
 
     <div class="footer">
-      <p>🌱 Smart Watering System v1.0.0 | ESP32-S3 DevKit | <a href="/firmware" style="color: #667eea; text-decoration: none;">Firmware Update</a></p>
+      <p>🌱 Smart Watering System v1.18.1 | ESP32-S3 DevKit | <a href="/firmware" style="color: #667eea; text-decoration: none;">Firmware Update</a></p>
     </div>
   </div>
 

@@ -78,6 +78,35 @@ inline void handleStatusApi() {
     httpServer.send(200, "application/json", stateJson);
 }
 
+inline void handlePlantLightApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+
+    String action = httpServer.arg("action");
+
+    if (action == "on") {
+        g_wateringSystem_ptr->setPlantLightManualOn();
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Plant light turned on manually\"}");
+        return;
+    }
+
+    if (action == "off") {
+        g_wateringSystem_ptr->setPlantLightManualOff();
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Plant light turned off manually\"}");
+        return;
+    }
+
+    if (action == "auto") {
+        g_wateringSystem_ptr->setPlantLightAuto();
+        httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Plant light returned to automatic schedule\"}");
+        return;
+    }
+
+    httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid action (use on, off, or auto)\"}");
+}
+
 inline void handleResetCalibrationApi() {
     if (!g_wateringSystem_ptr) {
         httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");

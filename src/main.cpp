@@ -405,6 +405,8 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/stop");
     httpServer.on("/api/status", HTTP_GET, handleStatusApi);
     Serial.println("  ✓ Registered /api/status");
+    httpServer.on("/api/lamp", HTTP_GET, handlePlantLightApi);
+    Serial.println("  ✓ Registered /api/lamp");
     httpServer.on("/api/reset_calibration", HTTP_GET, handleResetCalibrationApi);
     Serial.println("  ✓ Registered /api/reset_calibration");
 }

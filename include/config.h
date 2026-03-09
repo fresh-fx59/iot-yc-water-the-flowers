@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.18.0";
+const char *VERSION = "watering_system_1.18.1";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -51,7 +51,7 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 // Plant light relay pin
 // Change this if you wire the lamp relay to a different free ESP32 GPIO.
 #define PLANT_LIGHT_RELAY_PIN 41
-const bool PLANT_LIGHT_ACTIVE_HIGH = true;
+const bool PLANT_LIGHT_ACTIVE_HIGH = false;
 
 // ============================================
 // System Constants

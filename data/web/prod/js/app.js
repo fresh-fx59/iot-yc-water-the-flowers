@@ -3,6 +3,16 @@ let isSequentialRunning = false;
 let currentSequenceIndex = 0;
 let sequenceValves = [];
 
+function formatLampStatus(plantLight) {
+  if (!plantLight) {
+    return 'Unavailable';
+  }
+
+  const state = (plantLight.state || 'off').toUpperCase();
+  const mode = (plantLight.mode || 'auto').replace('_', ' ').toUpperCase();
+  return `${state} (${mode})`;
+}
+
 function selectValve(valveNum, button) {
   // Clear previous selection
   document.querySelectorAll('.valve-btn').forEach(btn => btn.classList.remove('selected'));
@@ -139,6 +149,21 @@ function stopSequentialWatering() {
     .catch(e => addLog(`✗ Error: ${e}`, 'error'));
 }
 
+function setLampMode(action) {
+  addLog(`Setting plant lamp to ${action.toUpperCase()}...`, 'info');
+  fetch(`/api/lamp?action=${action}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        addLog(`✓ ${data.message}`, 'success');
+        updateStatus();
+      } else {
+        addLog(`✗ Failed to update lamp: ${data.message}`, 'error');
+      }
+    })
+    .catch(e => addLog(`✗ Error: ${e}`, 'error'));
+}
+
 function updateStatus() {
   fetch('/api/status')
     .then(r => r.json())
@@ -169,6 +194,17 @@ function updateStatus() {
         systemStatus.classList.add('inactive');
         systemText.textContent = 'Idle';
       }
+
+      const lampStatus = document.getElementById('lampStatus');
+      const lampText = document.getElementById('lampStatusText');
+      if (data.plant_light && data.plant_light.state === 'on') {
+        lampStatus.classList.add('active');
+        lampStatus.classList.remove('inactive');
+      } else {
+        lampStatus.classList.remove('active');
+        lampStatus.classList.add('inactive');
+      }
+      lampText.textContent = formatLampStatus(data.plant_light);
     })
     .catch(e => console.error('Status update error:', e));
 }

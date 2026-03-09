@@ -42,7 +42,7 @@
   
   .status-bar {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 20px;
     margin-bottom: 30px;
     padding: 20px;
@@ -156,6 +156,10 @@
     grid-template-columns: 1fr 1fr;
     gap: 10px;
   }
+
+  .btn-group-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
   
   .btn {
     padding: 12px 20px;
@@ -199,6 +203,17 @@
   .btn-danger:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    background: #455a64;
+    color: white;
+  }
+
+  .btn-secondary:hover {
+    background: #37474f;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(69, 90, 100, 0.3);
   }
   
   .status-log {
@@ -296,6 +311,10 @@
   
     .valve-controls {
       grid-template-columns: repeat(2, 1fr);
+    }
+
+    .btn-group-3 {
+      grid-template-columns: 1fr;
     }
   
     .header h1 {

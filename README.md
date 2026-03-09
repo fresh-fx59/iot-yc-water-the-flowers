@@ -6,9 +6,10 @@ This code manages ESP32 device. It responsible for watering the flowers. The sys
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.0** - Plant Light Automation & Telegram Control!
+**Version 1.18.1** - Plant Light Relay Polarity Fix & Dashboard Control!
 
 **Recent Updates:**
+- **v1.18.1**: Fixed plant light relay polarity (active-low), so Telegram/manual commands and the 22:00 -> 07:00 schedule now match physical ON/OFF behavior. Added dashboard controls via `/api/lamp`.
 - **v1.18.0**: Added plant light relay control on a free ESP32 GPIO with automatic overnight schedule (22:00 -> 07:00), Telegram commands (`/lamp`, `/lamp_on`, `/lamp_off`, `/lamp_auto`), and MQTT/web status reporting.
 - **v1.16.2**: Added GPIO hardware reinitialization to fix stuck relay modules after emergency events. New `/reinit_gpio` command (Telegram/MQTT). Automatic GPIO reset after overflow/water level recovery. Learning algorithm threshold adjusted from 95% to 85% for better calibration.
 - **v1.15.6**: Added 10-second confirmation delay to water level sensor - prevents false low-water alarms when water drains back from pipes to tank after pump stops

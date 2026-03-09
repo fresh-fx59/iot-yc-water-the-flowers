@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.18.0 (config.h:10)
+**Version**: 1.18.1 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -214,6 +214,10 @@ Binary search/gradient ascent for optimal watering interval (max fill time). Per
 - `/lamp_on` - Turn plant lamp ON manually (pauses auto schedule)
 - `/lamp_off` - Turn plant lamp OFF manually (pauses auto schedule)
 - `/lamp_auto` - Return plant lamp to automatic schedule (22:00 -> 07:00)
+
+**Dashboard/API** (v1.18.1):
+- `/api/lamp?action=on|off|auto` - Web dashboard/manual HTTP control for plant lamp
+- Plant lamp relay is configured active-low in `config.h` (`PLANT_LIGHT_ACTIVE_HIGH = false`)
 
 **Notifications** (sequential watering only): Start (session ID, trigger, trays) + Completion table (tray, duration, status: OK/FULL/TIMEOUT/STOPPED). TelegramNotifier.h, HTTPS api.telegram.org, WateringSessionData
 

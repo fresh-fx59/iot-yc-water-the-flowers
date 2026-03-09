@@ -3,6 +3,7 @@
 #include <unity.h>
 #include <ArduinoFake.h>
 #include "LearningAlgorithm.h"
+#include "PlantLightController.h"
 #include "StateMachineLogic.h"
 #include "TestConfig.h"
 
@@ -68,6 +69,42 @@ void test_format_duration(void) {
 // ============================================
 // STATE MACHINE TESTS
 // ============================================
+
+// ============================================
+// PLANT LIGHT SCHEDULE TESTS
+// ============================================
+
+void test_plant_light_schedule_is_on_at_22_00(void) {
+    tm timeInfo = {};
+    timeInfo.tm_hour = 22;
+    timeInfo.tm_min = 0;
+
+    TEST_ASSERT_TRUE(PlantLightController::isScheduleActive(timeInfo));
+}
+
+void test_plant_light_schedule_stays_on_after_midnight(void) {
+    tm timeInfo = {};
+    timeInfo.tm_hour = 1;
+    timeInfo.tm_min = 30;
+
+    TEST_ASSERT_TRUE(PlantLightController::isScheduleActive(timeInfo));
+}
+
+void test_plant_light_schedule_turns_off_at_07_00(void) {
+    tm timeInfo = {};
+    timeInfo.tm_hour = 7;
+    timeInfo.tm_min = 0;
+
+    TEST_ASSERT_FALSE(PlantLightController::isScheduleActive(timeInfo));
+}
+
+void test_plant_light_schedule_is_off_during_day(void) {
+    tm timeInfo = {};
+    timeInfo.tm_hour = 15;
+    timeInfo.tm_min = 0;
+
+    TEST_ASSERT_FALSE(PlantLightController::isScheduleActive(timeInfo));
+}
 
 // ========== PHASE_IDLE Tests ==========
 
@@ -641,6 +678,12 @@ int main(int argc, char **argv) {
     RUN_TEST(test_calculate_water_level);
     RUN_TEST(test_calculate_empty_duration);
     RUN_TEST(test_format_duration);
+
+    // Plant Light Schedule Tests
+    RUN_TEST(test_plant_light_schedule_is_on_at_22_00);
+    RUN_TEST(test_plant_light_schedule_stays_on_after_midnight);
+    RUN_TEST(test_plant_light_schedule_turns_off_at_07_00);
+    RUN_TEST(test_plant_light_schedule_is_off_during_day);
 
     // State Machine Tests - PHASE_IDLE
     RUN_TEST(test_idle_phase_does_nothing);

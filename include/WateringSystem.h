@@ -3,6 +3,7 @@
 
 #include "DebugHelper.h"
 #include "TelegramNotifier.h"
+#include "PlantLightController.h"
 #include "ValveController.h"
 #include "config.h"
 #include "DS3231RTC.h"
@@ -84,6 +85,8 @@ private:
   bool waterLevelLowNotificationSent; // Track if low water notification was sent
   unsigned long waterLevelLowFirstDetectedTime; // When LOW was first detected (for 10s delay)
   bool waterLevelLowWaitingLogged; // Track if we've logged the waiting message (prevent spam)
+  PlantLightController plantLight;
+  unsigned long lastPlantLightScheduleCheck;
 
   // Thread-safe MQTT publishing flag (Core 1 sets, Core 0 publishes)
   volatile bool mqttPublishPending;
@@ -105,6 +108,7 @@ public:
         lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
         waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
+        lastPlantLightScheduleCheck(0),
         mqttPublishPending(false),
         notificationQueueHead(0), notificationQueueTail(0),
         notificationQueueCount(0) {
@@ -185,6 +189,10 @@ public:
   // Water level sensor control
   bool isWaterLevelLow() { return waterLevelLow; }
   void checkWaterLevel(); // Manual water level check (for testing)
+  bool setPlantLightManualOn();
+  bool setPlantLightManualOff();
+  bool setPlantLightAuto();
+  String getPlantLightStatusMessage();
 
 private:
   // ========== Core Logic ==========
@@ -195,6 +203,7 @@ private:
   void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
   void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
   void checkWaterLevelSensor(unsigned long currentTime);  // Water level sensor check
+  void updatePlantLightSchedule(unsigned long currentTime);
   void emergencyStopAll(const String &reason);  // Emergency stop all watering
 
   // ========== Hardware Control ==========
@@ -256,6 +265,10 @@ inline void WateringSystem::init() {
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
   DebugHelper::debugImportant("Water level sensor: GPIO " + String(WATER_LEVEL_SENSOR_PIN));
 
+  plantLight.init();
+  DebugHelper::debugImportant("Plant light relay: GPIO " + String(PLANT_LIGHT_RELAY_PIN) +
+                              " (auto 22:00-07:00)");
+
   DebugHelper::debugImportant("✓ WateringSystem initialized");
   publishStateChange("system", "initialized");
 
@@ -286,6 +299,11 @@ inline void WateringSystem::reinitializeGPIOHardware() {
     pinMode(VALVE_PINS[i], OUTPUT);
     digitalWrite(VALVE_PINS[i], LOW);
   }
+
+  // Reinitialize plant light relay without changing logical mode/state.
+  pinMode(PLANT_LIGHT_RELAY_PIN, OUTPUT);
+  digitalWrite(PLANT_LIGHT_RELAY_PIN,
+               plantLight.isOn() == PLANT_LIGHT_ACTIVE_HIGH ? HIGH : LOW);
 
   // Small delay to allow GPIO hardware to stabilize
   delay(100);
@@ -488,6 +506,9 @@ inline void WateringSystem::processWateringLoop() {
 
   // 🚨 GLOBAL SAFETY WATCHDOG - ALWAYS RUN FIRST
   globalSafetyWatchdog(currentTime);
+
+  // Plant light schedule runs independently of watering safety logic.
+  updatePlantLightSchedule(currentTime);
 
   // Check for automatic watering (time-based)
   if (!sequentialMode) {
@@ -779,6 +800,69 @@ inline void WateringSystem::checkWaterLevel() {
   String status = (sensorValue == HIGH) ? "OK (Water detected)" : "LOW (No water)";
   DebugHelper::debugImportant("Water Level Sensor (GPIO " + String(WATER_LEVEL_SENSOR_PIN) + "): " + status);
   DebugHelper::debugImportant("Current state: " + String(waterLevelLow ? "BLOCKED" : "NORMAL"));
+}
+
+inline void WateringSystem::updatePlantLightSchedule(unsigned long currentTime) {
+  if (currentTime - lastPlantLightScheduleCheck <
+      PLANT_LIGHT_SCHEDULE_CHECK_INTERVAL_MS) {
+    return;
+  }
+  lastPlantLightScheduleCheck = currentTime;
+
+  time_t now;
+  time(&now);
+  bool changed = plantLight.applyAutomaticSchedule(now);
+
+  if (!changed) {
+    return;
+  }
+
+  String message = String(plantLight.isOn() ? "💡 <b>PLANT LIGHT ON</b>\n\n"
+                                            : "🌙 <b>PLANT LIGHT OFF</b>\n\n");
+  message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+  message += "🤖 Mode: automatic schedule\n";
+  message += "📅 Schedule: 22:00 -> 07:00";
+
+  queueTelegramNotification(message);
+  publishStateChange("plant_light", plantLight.isOn() ? "on" : "off");
+}
+
+inline bool WateringSystem::setPlantLightManualOn() {
+  bool changed = plantLight.setManualOn();
+  publishStateChange("plant_light", "manual_on");
+  publishCurrentState();
+  return changed;
+}
+
+inline bool WateringSystem::setPlantLightManualOff() {
+  bool changed = plantLight.setManualOff();
+  publishStateChange("plant_light", "manual_off");
+  publishCurrentState();
+  return changed;
+}
+
+inline bool WateringSystem::setPlantLightAuto() {
+  time_t now;
+  time(&now);
+  bool changed = plantLight.setAuto(now);
+  publishStateChange("plant_light", "auto");
+  publishCurrentState();
+  return changed;
+}
+
+inline String WateringSystem::getPlantLightStatusMessage() {
+  time_t now;
+  time(&now);
+
+  String message = "💡 <b>Plant Light Status</b>\n\n";
+  message += "State: " + String(plantLight.isOn() ? "ON" : "OFF") + "\n";
+  message += "Mode: " + String(plantLight.getModeName()) + "\n";
+  message += "Relay GPIO: " + String(PLANT_LIGHT_RELAY_PIN) + "\n";
+  message += "Schedule: 22:00 -> 07:00\n";
+  message += "Auto wants: " +
+             String(plantLight.shouldBeOnNow(now) ? "ON now" : "OFF now");
+
+  return message;
 }
 
 // ========== Automatic Watering Check ==========

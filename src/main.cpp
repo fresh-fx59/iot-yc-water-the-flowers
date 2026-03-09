@@ -191,6 +191,7 @@ void checkTelegramCommands(int timeout) {
             timeMessage += " ⚠️ LOW!";
         }
 
+        timeMessage += "\n\n" + wateringSystem.getPlantLightStatusMessage();
         timeMessage += "\n\n💡 Use /settime to update";
 
         sendTelegramDebug(timeMessage);
@@ -314,6 +315,42 @@ void checkTelegramCommands(int timeout) {
         message += "• Pump pin reinitialized\n";
         message += "• Sensor power pin reinitialized\n\n";
         message += "💡 Use this if relay modules are stuck after emergency events";
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
+    } else if (command == "/lamp" || command == "lamp" ||
+               command == "/lamp_status" || command == "lamp_status") {
+        sendTelegramDebug(wateringSystem.getPlantLightStatusMessage());
+    } else if (command == "/lamp_on" || command == "lamp_on") {
+        wateringSystem.setPlantLightManualOn();
+
+        String message = "💡 <b>PLANT LIGHT MANUAL ON</b>\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "🔌 Relay GPIO: " + String(PLANT_LIGHT_RELAY_PIN) + "\n";
+        message += "🤖 Mode: manual_on\n";
+        message += "💡 Auto schedule paused until /lamp_auto";
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
+    } else if (command == "/lamp_off" || command == "lamp_off") {
+        wateringSystem.setPlantLightManualOff();
+
+        String message = "🌙 <b>PLANT LIGHT MANUAL OFF</b>\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "🔌 Relay GPIO: " + String(PLANT_LIGHT_RELAY_PIN) + "\n";
+        message += "🤖 Mode: manual_off\n";
+        message += "💡 Auto schedule paused until /lamp_auto";
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
+    } else if (command == "/lamp_auto" || command == "lamp_auto") {
+        wateringSystem.setPlantLightAuto();
+
+        String message = "🤖 <b>PLANT LIGHT AUTO MODE</b>\n\n";
+        message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+        message += "📅 Schedule: 22:00 -> 07:00\n";
+        message += "🔄 Manual override cleared\n\n";
+        message += wateringSystem.getPlantLightStatusMessage();
 
         DebugHelper::flushBuffer();
         sendTelegramDebug(message);

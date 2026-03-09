@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.17.4";
+const char *VERSION = "watering_system_1.18.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -47,6 +47,11 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // Water Level Sensor pin (float switch in water tank)
 #define WATER_LEVEL_SENSOR_PIN 19  // HIGH = water detected, LOW = no water/empty
+
+// Plant light relay pin
+// Change this if you wire the lamp relay to a different free ESP32 GPIO.
+#define PLANT_LIGHT_RELAY_PIN 41
+const bool PLANT_LIGHT_ACTIVE_HIGH = true;
 
 // ============================================
 // System Constants
@@ -108,6 +113,13 @@ inline unsigned long getValveEmergencyTimeout(int valveIndex) {
 const unsigned long SENSOR_POWER_STABILIZATION = 100; // Sensor power-on delay
 const unsigned long WATER_LEVEL_CHECK_INTERVAL = 100; // Check water level every 100ms
 const unsigned long WATER_LEVEL_LOW_DELAY = 11000; // Wait 11 seconds after detecting low water before blocking (allows watering to continue finishing cycle)
+const unsigned long PLANT_LIGHT_SCHEDULE_CHECK_INTERVAL_MS = 1000; // Check lamp schedule every second
+
+// Plant light schedule (local RTC/system time)
+const int PLANT_LIGHT_SCHEDULE_ON_HOUR = 22;
+const int PLANT_LIGHT_SCHEDULE_ON_MINUTE = 0;
+const int PLANT_LIGHT_SCHEDULE_OFF_HOUR = 7;
+const int PLANT_LIGHT_SCHEDULE_OFF_MINUTE = 0;
 
 // ============================================
 // Overflow Sensor Debouncing Constants

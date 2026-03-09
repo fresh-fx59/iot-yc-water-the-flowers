@@ -284,6 +284,14 @@ inline void WateringSystem::publishCurrentState() {
     stateJson += ",\"blocked\":" + String(waterLevelLow ? "true" : "false");
     stateJson += "}";
 
+    stateJson += ",\"plant_light\":{";
+    stateJson += "\"state\":\"" + String(plantLight.isOn() ? "on" : "off") + "\"";
+    stateJson += ",\"mode\":\"" + String(plantLight.getModeName()) + "\"";
+    stateJson += ",\"relay_gpio\":" + String(PLANT_LIGHT_RELAY_PIN);
+    stateJson += ",\"schedule_on\":\"22:00\"";
+    stateJson += ",\"schedule_off\":\"07:00\"";
+    stateJson += "}";
+
     stateJson += ",\"valves\":[";
 
     for (int i = 0; i < NUM_VALVES; i++) {

@@ -3,7 +3,7 @@
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump. Time-based learning, MQTT state publishing, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, PubSubClient 2.8, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel 1.15.2
-**Version**: 1.18.1 (config.h:10)
+**Version**: 1.18.2 (config.h:10)
 **Testing**: 30 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -227,8 +227,9 @@ Usage: `DebugHelper::debug()`, `debugImportant()`, `flushBuffer()`, `loop()`
 ### Web Interface
 
 **Files** (/data/web/): index.html, css/style.css, js/app.js
-**API**: /api/water?valve=N (N=1-6), /api/stop?valve=N|all, /api/status, /api/reset_calibration?valve=N|all (v1.15.2), /firmware (auth: admin/OTA_PASSWORD)
+**API**: /api/water?valve=N (N=1-6), /api/stop?valve=N|all, /api/status, /api/lamp?action=on|off|auto, /api/reset_calibration?valve=N|all, /firmware (auth: admin/OTA_PASSWORD)
 **Note**: API 1-indexed (1-6), internal 0-indexed (0-5)
+**Dashboard**: Shows pump, system, and plant lamp status; supports manual lamp ON/OFF/AUTO plus valve watering controls
 
 ### Config (secret.h, never commit)
 SSID, SSID_PASSWORD, YC_DEVICE_ID, MQTT_PASSWORD, OTA_USER, OTA_PASSWORD, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
@@ -259,13 +260,13 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 
 **API**: api_handlers.h (inline), register in main.cpp registerApiHandlers(), API 1-indexed→internal 0-indexed, access g_wateringSystem_ptr
 
-**Web**: Edit /data (NOT /web), buildfs then uploadfs
+**Web**: Edit `data/web/prod/` files, then `pio run -t buildfs -e esp32-s3-devkitc-1` and `pio run -t uploadfs -e esp32-s3-devkitc-1`
 
 **Config**: config.h (pins, timing, learning, MQTT), secret.h (creds, never commit)
 
 **Learning**: LearningAlgorithm.h (pure funcs), WateringSystem.h (processLearningData, smoothing 70/30), ValveController.h (shouldWaterNow), test_learning_algorithm.cpp
 
-**Persistence**: /learning_data_v1.15.2.json (active), /learning_data_v1.8.7.json (auto-deleted on boot), save after watering/reset, load on init(), swap filenames in WateringSystem.h:28-31 to reset all calibrations
+**Persistence**: `/learning_data_v1.17.4.json` active, `/learning_data_v1.16.2.json` auto-deleted on boot, save after watering/reset, load on init(), swap filenames in `WateringSystem.h` to reset all calibrations
 
 ## Program Flow
 
@@ -278,7 +279,7 @@ Timeout (25s), emergency cutoff (30s), pump in PHASE_WATERING only, MQTT isolati
 ## Gotchas
 
 1. Baud 115200, --raw if gibberish
-2. buildfs before uploadfs, files→/web/ not /data/web/
+2. For UI changes, edit `data/web/prod/` then run `buildfs` before `uploadfs`
 3. API 1-6, internal 0-5
 4. **CRITICAL**: Sensors need TWO power: valve pin HIGH + GPIO 18 HIGH. Fixed v1.14.2: GPIO 18 stays HIGH continuously during PHASE_WATERING (not pulsed). Previous bug: GPIO 18 turned off after each read → sensors blind 90% of time. Fixed v1.13.4: readRainSensor() powers both. Test mode: powers all valves+GPIO18 continuously
 5. setWateringSystemRef() BEFORE setupOta() or API fails

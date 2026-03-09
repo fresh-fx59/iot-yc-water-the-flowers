@@ -1,14 +1,15 @@
 # Description
 
-This code manages ESP32 device. It responsible for watering the flowers. The system consist of 6 valves, 6 rain sensors, 1 water pump, 1 water level sensor, and 1 master overflow sensor.
+This code manages an ESP32 device for plant care. The system includes 6 watering valves, 6 rain sensors, 1 water pump, 1 water level sensor, 1 master overflow sensor, and 1 relay-controlled plant lamp with automatic night schedule support.
 
 [Wiring diagram](https://app.cirkitdesigner.com/project/f27de802-dcdb-4096-ad3f-eae88aea3c3f)
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.1** - Plant Light Relay Polarity Fix & Dashboard Control!
+**Version 1.18.2** - Documentation Refresh For Plant Lamp And Web Workflow!
 
 **Recent Updates:**
+- **v1.18.2**: Updated project documentation to reflect the active-low plant lamp relay, Telegram/API lamp controls, dashboard behavior, filesystem upload workflow, and current data file/version details.
 - **v1.18.1**: Fixed plant light relay polarity (active-low), so Telegram/manual commands and the 22:00 -> 07:00 schedule now match physical ON/OFF behavior. Added dashboard controls via `/api/lamp`.
 - **v1.18.0**: Added plant light relay control on a free ESP32 GPIO with automatic overnight schedule (22:00 -> 07:00), Telegram commands (`/lamp`, `/lamp_on`, `/lamp_off`, `/lamp_auto`), and MQTT/web status reporting.
 - **v1.16.2**: Added GPIO hardware reinitialization to fix stuck relay modules after emergency events. New `/reinit_gpio` command (Telegram/MQTT). Automatic GPIO reset after overflow/water level recovery. Learning algorithm threshold adjusted from 95% to 85% for better calibration.
@@ -906,6 +907,7 @@ Once fully deployed and connected:
 
 3. **Check status via API:**
    - `http://esp32-watering.local/api/status`
+   - `http://esp32-watering.local/api/lamp?action=on`
 
 ## 📝 Common Commands Cheat Sheet
 
@@ -938,6 +940,7 @@ Expected signs of success:
 - ✅ MQTT connects
 - ✅ Web interface loads at `http://esp32-watering.local/`
 - ✅ Can start/stop watering from web UI
+- ✅ Can control plant lamp from web UI (`ON`, `OFF`, `AUTO`)
 - ✅ Status updates in real-time
 - ✅ Activity log shows commands
 - ✅ Learning algorithm adapting watering frequency
@@ -957,7 +960,8 @@ mosquitto_pub -h mqtt.cloud.yandex.net -p 8883 --capath /etc/ssl/certs/ \
 
 ### Via Web Interface:
 - Open `http://esp32-watering.local/`
-- Click "Water All Valves"
+- Use the watering controls for valves
+- Use the plant lamp card for `Lamp ON`, `Lamp OFF`, or `Lamp AUTO`
 
 **What happens during first watering:**
 - Each tray fills from "empty" to full
@@ -1101,6 +1105,31 @@ mosquitto_pub -t '$devices/DEVICE_ID/commands' -m 'reinit_gpio'
 
 **Note:** `/reset_overflow` and water level recovery now automatically reinitialize GPIO hardware. Manual `/reinit_gpio` is useful if relays get stuck without triggering these events.
 
+## Plant Lamp Commands (v1.18.0+)
+
+**Via Telegram:**
+- `/lamp` or `/lamp_status` - show lamp state, mode, GPIO, and schedule
+- `/lamp_on` - force lamp on manually
+- `/lamp_off` - force lamp off manually
+- `/lamp_auto` - return lamp to automatic schedule (`22:00 -> 07:00`)
+
+**Via Web/API:**
+```bash
+# Force lamp ON
+curl 'http://esp32-watering.local/api/lamp?action=on'
+
+# Force lamp OFF
+curl 'http://esp32-watering.local/api/lamp?action=off'
+
+# Return lamp to automatic schedule
+curl 'http://esp32-watering.local/api/lamp?action=auto'
+```
+
+**Behavior:**
+- Relay is active-low (`PLANT_LIGHT_ACTIVE_HIGH = false` in `include/config.h`)
+- Automatic schedule uses local RTC/system time
+- MQTT/web state includes `plant_light.state`, `plant_light.mode`, `plant_light.relay_gpio`, `plant_light.schedule_on`, `plant_light.schedule_off`
+
 **Sensor Diagnostics:**
 ```bash
 # Test all 6 sensors and generate diagnostic report
@@ -1200,9 +1229,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.16.2
+**Version:** 1.18.2
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection
-**Testing:** 20 native tests (no hardware required)
-**New in v1.16.2:** GPIO hardware reinitialization to fix stuck relay modules, `/reinit_gpio` command, learning algorithm threshold improved (95% → 85%)
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection, Plant Lamp Auto Schedule, Telegram Lamp Control, Web Lamp Dashboard Control
+**Testing:** 30+ native tests (no hardware required)
+**New in v1.18.2:** Documentation refreshed to match current plant lamp controls, API endpoints, dashboard behavior, and deployment/update workflow

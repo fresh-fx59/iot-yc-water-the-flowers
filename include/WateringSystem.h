@@ -2249,17 +2249,18 @@ inline void WateringSystem::queueTelegramNotification(const String& message) {
 
 // Process pending notifications from Core 0 (networkTask) - sends via Telegram
 inline void WateringSystem::processPendingNotifications() {
-  while (notificationQueueCount > 0) {
-    String message = notificationQueue[notificationQueueHead];
-    notificationQueue[notificationQueueHead] = ""; // Free memory
-    notificationQueueHead = (notificationQueueHead + 1) % NOTIFICATION_QUEUE_SIZE;
-    notificationQueueCount--;
-
-    // Send via Telegram (blocking call is safe on Core 0)
-    if (WiFi.isConnected()) {
-      sendTelegramDebug(message);
-    }
+  // Process only one message per network task iteration.
+  // This prevents long Telegram outages from starving local web/API handling.
+  if (notificationQueueCount <= 0 || !WiFi.isConnected()) {
+    return;
   }
+
+  String message = notificationQueue[notificationQueueHead];
+  notificationQueue[notificationQueueHead] = ""; // Free memory
+  notificationQueueHead = (notificationQueueHead + 1) % NOTIFICATION_QUEUE_SIZE;
+  notificationQueueCount--;
+
+  sendTelegramDebug(message);
 }
 
 // ============================================

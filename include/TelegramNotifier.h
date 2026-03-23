@@ -15,6 +15,31 @@
 // ============================================ 
 class TelegramNotifier {
 private:
+    static unsigned long &telegramCooldownUntilMs() {
+        static unsigned long value = 0;
+        return value;
+    }
+
+    static unsigned long &telegramFailureBackoffMs() {
+        static unsigned long value = TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS;
+        return value;
+    }
+
+    static bool isInCooldown() {
+        return millis() < telegramCooldownUntilMs();
+    }
+
+    static void onTelegramSuccess() {
+        telegramCooldownUntilMs() = 0;
+        telegramFailureBackoffMs() = TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS;
+    }
+
+    static void onTelegramFailure() {
+        unsigned long currentBackoff = telegramFailureBackoffMs();
+        telegramCooldownUntilMs() = millis() + currentBackoff;
+        telegramFailureBackoffMs() = min(currentBackoff * 2, TELEGRAM_FAILURE_COOLDOWN_MAX_MS);
+    }
+
     static String urlEncode(const String& str) {
         String encoded = "";
         char c;
@@ -39,6 +64,9 @@ private:
             DebugHelper::debug("❌ Cannot send Telegram: WiFi not connected");
             return false;
         }
+        if (isInCooldown()) {
+            return false;
+        }
 
         HTTPClient http;
         WiFiClientSecure client;
@@ -50,14 +78,16 @@ private:
                      "&parse_mode=HTML";
 
         http.begin(client, url);
-        http.setTimeout(10000);  // 10 second timeout
+        http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
 
         int httpCode = http.GET();
         bool success = (httpCode == 200);
 
         if (success) {
+            onTelegramSuccess();
             DebugHelper::debug("✓ Telegram message sent");
         } else {
+            onTelegramFailure();
             DebugHelper::debug("❌ Telegram send failed, HTTP code: " + String(httpCode));
             if (httpCode > 0) {
                 DebugHelper::debug("Response: " + http.getString());
@@ -95,6 +125,10 @@ public:
 
         DebugHelper::debug("\n📱 Sending Telegram online notification...");
         sendMessage(message);
+    }
+
+    static bool sendDebugMessage(const String& message) {
+        return sendMessage(message);
     }
 
     // Format watering start notification (no network call)
@@ -199,6 +233,9 @@ public:
         if (!WiFi.isConnected()) {
             return "";
         }
+        if (isInCooldown()) {
+            return "";
+        }
 
         HTTPClient http;
         WiFiClientSecure client;
@@ -212,10 +249,15 @@ public:
 
         http.begin(client, url);
         // HTTP timeout must be slightly longer than the Telegram long poll timeout
-        http.setTimeout((timeoutSeconds + 2) * 1000); 
+        if (timeoutSeconds > 0) {
+            http.setTimeout((timeoutSeconds + 1) * 1000);
+        } else {
+            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+        }
         int httpCode = http.GET();
 
         if (httpCode == 200) {
+            onTelegramSuccess();
             String payload = http.getString();
 
             // Parse JSON response manually (simple parsing for commands only)
@@ -246,6 +288,8 @@ public:
                     }
                 }
             }
+        } else {
+            onTelegramFailure();
         }
 
         http.end();
@@ -257,45 +301,7 @@ public:
 // Global Function for DebugHelper
 // ============================================ 
 inline bool sendTelegramDebug(const String& message) {
-    if (!WiFi.isConnected()) {
-        return false; // Fail if no WiFi
-    }
-
-    // Use the private sendMessage method
-    // Create a simple wrapper that calls the Telegram API directly
-    HTTPClient http;
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                 "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                 "&text=";
-
-    // URL encode the message
-    String encoded = "";
-    for (size_t i = 0; i < message.length(); i++) {
-        char c = message.charAt(i);
-        if (c == ' ') {
-            encoded += "+";
-        } else if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded += c;
-        } else {
-            encoded += '%';
-            char hex[3];
-            sprintf(hex, "%02X", c);
-            encoded += hex;
-        }
-    }
-
-    url += encoded + "&parse_mode=HTML";
-
-    http.begin(client, url);
-    http.setTimeout(10000);
-    int httpCode = http.GET();
-    bool success = (httpCode == 200);
-    http.end();
-
-    return success;
+    return TelegramNotifier::sendDebugMessage(message);
 }
 
 #endif // TELEGRAM_NOTIFIER_H

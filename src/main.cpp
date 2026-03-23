@@ -58,39 +58,28 @@ void networkTask(void* parameter) {
     DebugHelper::debug("🧵 Network task started on Core " + String(xPortGetCoreID()));
 
     while (true) {
-        // CRITICAL: Only run network operations if NOT in halt mode
-        // In halt mode, main loop handles Telegram commands to ensure /resume works
-        if (!wateringSystem.isHaltMode()) {
-            // WiFi reconnection with exponential backoff (v1.17.3)
-            // loopWiFi() handles cleanup, backoff, and recovery notifications
-            NetworkManager::loopWiFi();
-            if (!NetworkManager::isWiFiConnected()) {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                continue;
-            }
+        // Always serve local web/API requests first. This must stay responsive even
+        // when internet services (Telegram/MQTT) are unavailable.
+        loopOta();
 
-            // Handle MQTT (can block)
-            NetworkManager::loopMQTT();
+        // Keep WiFi state machine running regardless of halt mode.
+        NetworkManager::loopWiFi();
 
-            // Publish pending MQTT state from Core 0 (thread-safe)
-            wateringSystem.publishPendingMQTTState();
-
-            // Send pending Telegram notifications from Core 0 (thread-safe)
-            wateringSystem.processPendingNotifications();
-
-            // Check Telegram commands (non-blocking)
+        if (NetworkManager::isWiFiConnected()) {
+            // Keep Telegram command handling available in both normal and halt mode.
             checkTelegramCommands(0);
-
-            // Flush debug messages to Telegram (can block)
+            wateringSystem.processPendingNotifications();
             DebugHelper::loop();
 
-            // Handle OTA updates (can block)
-            loopOta();
+            // MQTT traffic is disabled during halt mode, but local HTTP stays active.
+            if (!wateringSystem.isHaltMode()) {
+                NetworkManager::loopMQTT();
+                wateringSystem.publishPendingMQTTState();
+            }
         }
 
-        // Run every 500ms to avoid overwhelming network
-        // Watering runs every 10ms on Core 1, so this is plenty fast for commands
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        // Poll quickly so local API/UI and OTA remain responsive.
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
 
@@ -578,11 +567,14 @@ bool firstLoop = true;
 // Telegram commands, especially during halt mode.
 // ============================================ 
 void loop() {
-    // If in halt mode, check for telegram commands (to allow /resume)
-    // Network task is paused during halt mode, so we check here
+    // Halt mode blocks watering logic, but network task continues handling
+    // OTA/local web and Telegram command checks.
     if (wateringSystem.isHaltMode()) {
-        checkTelegramCommands(0);  // Non-blocking check
-        delay(1000); // Check for commands every second
+        // Fallback path if network task failed to start.
+        if (networkTaskHandle == NULL) {
+            checkTelegramCommands(0);
+        }
+        delay(100);
         return;
     }
 

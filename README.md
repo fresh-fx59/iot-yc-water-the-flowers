@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.3** - Documentation Refresh For Plant Lamp And Web Workflow!
+**Version 1.18.3** - Local-First Resilience During Internet/Telegram Outages
 
 **Recent Updates:**
+- **v1.18.3**: Made network task local-first so OTA/web API remain responsive during internet outages or Telegram restrictions. Added Telegram fast timeout + exponential cooldown to avoid repeated blocking. Limited queued Telegram notification processing to one per cycle so watering/lamp logic stays responsive even when Telegram/MQTT fail.
 - **v1.18.2**: Updated project documentation to reflect the active-low plant lamp relay, Telegram/API lamp controls, dashboard behavior, filesystem upload workflow, and current data file/version details.
 - **v1.18.1**: Fixed plant light relay polarity (active-low), so Telegram/manual commands and the 22:00 -> 07:00 schedule now match physical ON/OFF behavior. Added dashboard controls via `/api/lamp`.
 - **v1.18.0**: Added plant light relay control on a free ESP32 GPIO with automatic overnight schedule (22:00 -> 07:00), Telegram commands (`/lamp`, `/lamp_on`, `/lamp_off`, `/lamp_auto`), and MQTT/web status reporting.

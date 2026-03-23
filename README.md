@@ -6,7 +6,7 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.2** - Documentation Refresh For Plant Lamp And Web Workflow!
+**Version 1.18.3** - Documentation Refresh For Plant Lamp And Web Workflow!
 
 **Recent Updates:**
 - **v1.18.2**: Updated project documentation to reflect the active-low plant lamp relay, Telegram/API lamp controls, dashboard behavior, filesystem upload workflow, and current data file/version details.

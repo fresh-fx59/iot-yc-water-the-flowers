@@ -25,9 +25,9 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.17.4.json"; // ACTIVE: Current learning data (v1.17.4 reset - 30% threshold)
+    "/learning_data_v1.18.3.json"; // ACTIVE: Current learning data (v1.18.3 reset - 35% threshold)
 const char *LEARNING_DATA_FILE_OLD =
-    "/learning_data_v1.16.2.json"; // OLD: Will be deleted on boot (previous version)
+    "/learning_data_v1.17.4.json"; // OLD: Will be deleted on boot (previous version)
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)
@@ -1369,7 +1369,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   // Algorithm constants (extracted for easy tuning)
   const unsigned long BASE_INTERVAL_MS = 86400000; // 24 hours
   const float BASELINE_TOLERANCE =
-      0.70; // 70% - threshold for "tray not fully empty" (lowered from 85% in v1.17.4 to reduce interval growth)
+      0.65; // 65% - threshold for "tray not fully empty" (lowered from 70% in v1.18.2 to reduce interval growth)
   const long FILL_STABLE_TOLERANCE_MS =
       500; // ±0.5s - threshold for "same fill time"
   const float MIN_INTERVAL_MULTIPLIER = 1.0; // Never go below 24h

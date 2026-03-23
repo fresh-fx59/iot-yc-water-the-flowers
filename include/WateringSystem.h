@@ -25,7 +25,7 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.18.3.json"; // ACTIVE: Current learning data (v1.18.3 reset - 35% threshold)
+    "/learning_data_v1.18.4.json"; // ACTIVE: Current learning data (v1.18.4 reset - 35% threshold)
 const char *LEARNING_DATA_FILE_OLD =
     "/learning_data_v1.17.4.json"; // OLD: Will be deleted on boot (previous version)
 

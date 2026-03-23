@@ -6,7 +6,7 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.3** - Local-First Resilience During Internet/Telegram Outages
+**Version 1.18.4** - just version up
 
 **Recent Updates:**
 - **v1.18.3**: Made network task local-first so OTA/web API remain responsive during internet outages or Telegram restrictions. Added Telegram fast timeout + exponential cooldown to avoid repeated blocking. Limited queued Telegram notification processing to one per cycle so watering/lamp logic stays responsive even when Telegram/MQTT fail.

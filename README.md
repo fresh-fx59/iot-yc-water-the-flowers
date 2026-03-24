@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.8** - reduced proxy TLS timeout errors by increasing proxy-mode HTTP timeout
+**Version 1.18.9** - nginx TLS termination for proxy to reduce ESP32 SSL read noise
 
 **Recent Updates:**
+- **v1.18.9**: Switched recommended monitoring deployment to nginx TLS termination on `:16443` with Python proxy on localhost `127.0.0.1:18085`. This avoids direct Python TLS serving and reduces ESP32 TLS-close noise (`ssl_client -76`) while keeping auth/token logic in proxy.
 - **v1.18.8**: Added separate proxy-mode HTTP timeout (`TELEGRAM_PROXY_HTTP_TIMEOUT_MS=4000`) while keeping direct Telegram timeout at `1500ms`. Fixes repeated ESP32 SSL read timeouts when proxy->Telegram responses take longer than 1.5 seconds.
 - **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.aiengineerhelper.com:16443/health`.
 - **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.aiengineerhelper.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
@@ -709,11 +710,11 @@ python3 tools/telegram_bot_api_proxy.py
 
 Optional env:
 ```bash
-export TELEGRAM_PROXY_HOST=0.0.0.0
-export TELEGRAM_PROXY_PORT=16443
+export TELEGRAM_PROXY_HOST=127.0.0.1
+export TELEGRAM_PROXY_PORT=18085
 export TELEGRAM_PROXY_AUTH_TOKEN=change_me
-export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/telegram-bot-api-proxy/fullchain.pem
-export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/telegram-bot-api-proxy/privkey.pem
+export TELEGRAM_PROXY_TLS_CERT_FILE=
+export TELEGRAM_PROXY_TLS_KEY_FILE=
 python3 tools/telegram_bot_api_proxy.py
 ```
 
@@ -733,10 +734,11 @@ sudo cp /opt/iot-yc-water-the-flowers/deploy/systemd/telegram-bot-api-proxy.env.
 ```
 
 2. Edit `/etc/default/telegram-bot-api-proxy`:
-- set `TELEGRAM_PROXY_PORT=16443`
+- set `TELEGRAM_PROXY_HOST=127.0.0.1`
+- set `TELEGRAM_PROXY_PORT=18085`
 - set `TELEGRAM_PROXY_AUTH_TOKEN` (long random token)
-- set `TELEGRAM_PROXY_TLS_CERT_FILE=/etc/telegram-bot-api-proxy/fullchain.pem`
-- set `TELEGRAM_PROXY_TLS_KEY_FILE=/etc/telegram-bot-api-proxy/privkey.pem`
+- set `TELEGRAM_PROXY_TLS_CERT_FILE=` (empty)
+- set `TELEGRAM_PROXY_TLS_KEY_FILE=` (empty)
 
 3. Start and enable:
 ```bash
@@ -746,25 +748,45 @@ sudo systemctl status telegram-bot-api-proxy.service --no-pager
 sudo systemctl is-enabled telegram-bot-api-proxy.service
 ```
 
-4. Open firewall for custom SSL port:
+4. Add nginx TLS termination on public `16443`:
+```nginx
+server {
+    listen 16443 ssl http2;
+    server_name water-the-flowers-proxy.aiengineerhelper.com;
+
+    ssl_certificate /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:18085;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Apply nginx config:
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. Open firewall for custom SSL port:
 ```bash
 sudo ufw allow 16443/tcp
 ```
 
-5. Reboot protection verification:
+6. Reboot protection verification:
 ```bash
 sudo reboot
 # after host is back:
 systemctl status telegram-bot-api-proxy.service --no-pager
 curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
-```
-
-6. TLS key permission fix (required when service runs as non-root):
-```bash
-sudo install -d -m 0750 -o root -g user1 /etc/telegram-bot-api-proxy
-sudo install -m 0640 -o root -g user1 /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem /etc/telegram-bot-api-proxy/fullchain.pem
-sudo install -m 0640 -o root -g user1 /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem /etc/telegram-bot-api-proxy/privkey.pem
-sudo systemctl restart telegram-bot-api-proxy.service
 ```
 
 ## 🚀 Step-by-Step Deployment

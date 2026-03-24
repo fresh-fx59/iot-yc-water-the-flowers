@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.7** - monitoring proxy service setup fixed and verified live on monitoring host
+**Version 1.18.8** - reduced proxy TLS timeout errors by increasing proxy-mode HTTP timeout
 
 **Recent Updates:**
+- **v1.18.8**: Added separate proxy-mode HTTP timeout (`TELEGRAM_PROXY_HTTP_TIMEOUT_MS=4000`) while keeping direct Telegram timeout at `1500ms`. Fixes repeated ESP32 SSL read timeouts when proxy->Telegram responses take longer than 1.5 seconds.
 - **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.aiengineerhelper.com:16443/health`.
 - **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.aiengineerhelper.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
 - **v1.18.5**: Added Telegram Bot API proxy mode for ESP32 (`sendMessage` + `getUpdates`) with optional bearer auth, custom HTTPS port configuration, and monitoring-host systemd deployment files. Updated defaults/docs to avoid VPN relay conflict by using `16443` (not `15443`).

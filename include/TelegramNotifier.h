@@ -70,6 +70,10 @@ private:
         return http.begin(plainClient, url);
     }
 
+    static unsigned long httpTimeoutMs(bool usingProxy) {
+        return usingProxy ? TELEGRAM_PROXY_HTTP_TIMEOUT_MS : TELEGRAM_HTTP_TIMEOUT_MS;
+    }
+
     static String urlEncode(const String& str) {
         String encoded = "";
         char c;
@@ -117,7 +121,7 @@ private:
                           "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
                           "&text=" + urlEncode(message) +
                           "&parse_mode=HTML";
-            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.POST(body);
         } else {
             String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
@@ -130,7 +134,7 @@ private:
                 DebugHelper::debug("❌ Telegram send begin failed");
                 return false;
             }
-            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.GET();
         }
 
@@ -323,7 +327,7 @@ public:
         if (timeoutSeconds > 0) {
             http.setTimeout((timeoutSeconds + 1) * 1000);
         } else {
-            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            http.setTimeout(httpTimeoutMs(usingProxy));
         }
         int httpCode = http.GET();
 

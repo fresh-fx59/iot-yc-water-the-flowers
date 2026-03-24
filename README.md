@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.5** - Telegram monitoring proxy via custom HTTPS port + systemd setup
+**Version 1.18.6** - monitoring proxy service docs updated for domain + reboot verification
 
 **Recent Updates:**
+- **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.aiengineerhelper.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
 - **v1.18.5**: Added Telegram Bot API proxy mode for ESP32 (`sendMessage` + `getUpdates`) with optional bearer auth, custom HTTPS port configuration, and monitoring-host systemd deployment files. Updated defaults/docs to avoid VPN relay conflict by using `16443` (not `15443`).
 - **v1.18.4**: just version up
 - **v1.18.3**: Made network task local-first so OTA/web API remain responsive during internet outages or Telegram restrictions. Added Telegram fast timeout + exponential cooldown to avoid repeated blocking. Limited queued Telegram notification processing to one per cycle so watering/lamp logic stays responsive even when Telegram/MQTT fail.
@@ -709,14 +710,14 @@ Optional env:
 export TELEGRAM_PROXY_HOST=0.0.0.0
 export TELEGRAM_PROXY_PORT=16443
 export TELEGRAM_PROXY_AUTH_TOKEN=change_me
-export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/letsencrypt/live/monitoring.example.com/fullchain.pem
-export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/letsencrypt/live/monitoring.example.com/privkey.pem
+export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem
+export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem
 python3 tools/telegram_bot_api_proxy.py
 ```
 
 Health check:
 ```bash
-curl -sk https://<monitoring-host>:16443/health
+curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
 ```
 
 ### systemd Setup (Custom HTTPS Port, no 443)
@@ -739,11 +740,20 @@ sudo cp /opt/iot-yc-water-the-flowers/deploy/systemd/telegram-bot-api-proxy.env.
 sudo systemctl daemon-reload
 sudo systemctl enable --now telegram-bot-api-proxy.service
 sudo systemctl status telegram-bot-api-proxy.service --no-pager
+sudo systemctl is-enabled telegram-bot-api-proxy.service
 ```
 
 4. Open firewall for custom SSL port:
 ```bash
 sudo ufw allow 16443/tcp
+```
+
+5. Reboot protection verification:
+```bash
+sudo reboot
+# after host is back:
+systemctl status telegram-bot-api-proxy.service --no-pager
+curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
 ```
 
 ## 🚀 Step-by-Step Deployment

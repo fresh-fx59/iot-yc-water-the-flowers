@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.6** - monitoring proxy service docs updated for domain + reboot verification
+**Version 1.18.7** - monitoring proxy service setup fixed and verified live on monitoring host
 
 **Recent Updates:**
+- **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.aiengineerhelper.com:16443/health`.
 - **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.aiengineerhelper.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
 - **v1.18.5**: Added Telegram Bot API proxy mode for ESP32 (`sendMessage` + `getUpdates`) with optional bearer auth, custom HTTPS port configuration, and monitoring-host systemd deployment files. Updated defaults/docs to avoid VPN relay conflict by using `16443` (not `15443`).
 - **v1.18.4**: just version up
@@ -710,8 +711,8 @@ Optional env:
 export TELEGRAM_PROXY_HOST=0.0.0.0
 export TELEGRAM_PROXY_PORT=16443
 export TELEGRAM_PROXY_AUTH_TOKEN=change_me
-export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem
-export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem
+export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/telegram-bot-api-proxy/fullchain.pem
+export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/telegram-bot-api-proxy/privkey.pem
 python3 tools/telegram_bot_api_proxy.py
 ```
 
@@ -733,7 +734,8 @@ sudo cp /opt/iot-yc-water-the-flowers/deploy/systemd/telegram-bot-api-proxy.env.
 2. Edit `/etc/default/telegram-bot-api-proxy`:
 - set `TELEGRAM_PROXY_PORT=16443`
 - set `TELEGRAM_PROXY_AUTH_TOKEN` (long random token)
-- set `TELEGRAM_PROXY_TLS_CERT_FILE` and `TELEGRAM_PROXY_TLS_KEY_FILE`
+- set `TELEGRAM_PROXY_TLS_CERT_FILE=/etc/telegram-bot-api-proxy/fullchain.pem`
+- set `TELEGRAM_PROXY_TLS_KEY_FILE=/etc/telegram-bot-api-proxy/privkey.pem`
 
 3. Start and enable:
 ```bash
@@ -754,6 +756,14 @@ sudo reboot
 # after host is back:
 systemctl status telegram-bot-api-proxy.service --no-pager
 curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
+```
+
+6. TLS key permission fix (required when service runs as non-root):
+```bash
+sudo install -d -m 0750 -o root -g user1 /etc/telegram-bot-api-proxy
+sudo install -m 0640 -o root -g user1 /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem /etc/telegram-bot-api-proxy/fullchain.pem
+sudo install -m 0640 -o root -g user1 /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem /etc/telegram-bot-api-proxy/privkey.pem
+sudo systemctl restart telegram-bot-api-proxy.service
 ```
 
 ## 🚀 Step-by-Step Deployment

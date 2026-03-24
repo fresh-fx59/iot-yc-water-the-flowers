@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.9** - nginx TLS termination for proxy to reduce ESP32 SSL read noise
+**Version 1.19.0** - throttle Telegram polling to stop continuous ESP32 TLS socket churn logs
 
 **Recent Updates:**
+- **v1.19.0**: Added Telegram command polling throttle (`TELEGRAM_COMMAND_POLL_INTERVAL_MS=1000`) so `getUpdates(timeout=0)` is not called every 100ms network loop tick. Reduces continuous `ssl_client (-76)` and `WiFiClient ERR:9` noise caused by rapid TLS reconnect churn while keeping command checks responsive.
 - **v1.18.9**: Switched recommended monitoring deployment to nginx TLS termination on `:16443` with Python proxy on localhost `127.0.0.1:18085`. This avoids direct Python TLS serving and reduces ESP32 TLS-close noise (`ssl_client -76`) while keeping auth/token logic in proxy.
 - **v1.18.8**: Added separate proxy-mode HTTP timeout (`TELEGRAM_PROXY_HTTP_TIMEOUT_MS=4000`) while keeping direct Telegram timeout at `1500ms`. Fixes repeated ESP32 SSL read timeouts when proxy->Telegram responses take longer than 1.5 seconds.
 - **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.aiengineerhelper.com:16443/health`.

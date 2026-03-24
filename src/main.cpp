@@ -135,6 +135,17 @@ void checkTelegramCommands(int timeout) {
     if (!NetworkManager::isWiFiConnected()) {
         return;
     }
+    // networkTask runs every 100ms; polling Telegram each tick causes excessive
+    // TLS reconnect churn and noisy ssl_client ERR:9/(-76) logs on ESP32.
+    // Keep command responsiveness while limiting connection churn.
+    static unsigned long lastTelegramPollMs = 0;
+    if (timeout <= 0) {
+        unsigned long now = millis();
+        if (now - lastTelegramPollMs < TELEGRAM_COMMAND_POLL_INTERVAL_MS) {
+            return;
+        }
+        lastTelegramPollMs = now;
+    }
 
     String command = TelegramNotifier::checkForCommands(lastUpdateId, timeout);
 

@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.18.9";
+const char *VERSION = "watering_system_1.19.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -173,6 +173,7 @@ const int TELEGRAM_MAX_RETRY_ATTEMPTS = 5; // Retry attempts per message
 const unsigned long TELEGRAM_RETRY_DELAY_MS = 2000; // Wait 2s between retries
 const unsigned long TELEGRAM_HTTP_TIMEOUT_MS = 1500; // Keep Telegram failures from blocking local web/API
 const unsigned long TELEGRAM_PROXY_HTTP_TIMEOUT_MS = 4000; // Proxy mode needs extra time for proxy->Telegram roundtrip
+const unsigned long TELEGRAM_COMMAND_POLL_INTERVAL_MS = 1000; // Avoid high-rate TLS reconnect churn from 100ms network loop
 const unsigned long TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS = 5000;   // Pause Telegram for 5s after failure
 const unsigned long TELEGRAM_FAILURE_COOLDOWN_MAX_MS = 300000;     // Cap Telegram failure backoff at 5 minutes
 const unsigned long MESSAGE_GROUP_INTERVAL_MS =

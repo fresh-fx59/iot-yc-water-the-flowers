@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.19.2** - reset watering cycle by rotating learning data file names
+**Version 1.19.3** - increased Tray 2 watering timeout to 35 seconds
 
 **Recent Updates:**
+- **v1.19.3**: Increased Tray 2 timeout from 30s to 35s after observed timeout at ~30.7s. Emergency timeout for Tray 2 was increased from 35s to 40s to keep the +5s safety margin.
 - **v1.19.2**: Reset watering cycle by rotating learning-data filenames. Active file is now `learning_data_v1.19.2.json`, and previous `learning_data_v1.18.4.json` is marked as OLD for one-time cleanup on boot.
 - **v1.19.1**: Fixed Telegram debug feedback loop where internal transport logs (e.g. `✓ Telegram message sent`) were routed back into Telegram debug queue, causing periodic self-generated spam every few seconds. Transport-layer logs are now serial-only.
 - **v1.19.0**: Added Telegram command polling throttle (`TELEGRAM_COMMAND_POLL_INTERVAL_MS=1000`) so `getUpdates(timeout=0)` is not called every 100ms network loop tick. Reduces continuous `ssl_client (-76)` and `WiFiClient ERR:9` noise caused by rapid TLS reconnect churn while keeping command checks responsive.

@@ -418,6 +418,10 @@ tray | duration(sec) | status
 ```cpp
 #define TELEGRAM_BOT_TOKEN "your_bot_token"
 #define TELEGRAM_CHAT_ID "your_chat_id"
+// Optional: route Telegram through monitoring server proxy
+// Leave empty ("") to use direct https://api.telegram.org.
+#define TELEGRAM_PROXY_BASE_URL "https://monitoring.example.com:16443"
+#define TELEGRAM_PROXY_AUTH_TOKEN "your_proxy_api_token"
 ```
 
 **Features**:
@@ -672,6 +676,72 @@ Edit `include/secret.h`:
 #define OTA_PASSWORD "your_ota_password"
 #define TELEGRAM_BOT_TOKEN "your_bot_token"
 #define TELEGRAM_CHAT_ID "your_chat_id"
+// Optional monitoring-server proxy for Telegram (send + getUpdates)
+// Keep TELEGRAM_PROXY_BASE_URL empty for direct Telegram access.
+#define TELEGRAM_PROXY_BASE_URL "https://monitoring.example.com:16443"
+#define TELEGRAM_PROXY_AUTH_TOKEN "your_proxy_api_token"
+```
+
+### Telegram Proxy Mode (Monitoring Server)
+
+When `TELEGRAM_PROXY_BASE_URL` is not empty, firmware routes both:
+- outgoing messages (`sendMessage`)
+- incoming commands (`getUpdates`)
+
+through monitoring server endpoints:
+- `POST /v1/telegram/sendMessage`
+- `GET /v1/telegram/getUpdates`
+
+Expected behavior:
+- Proxy returns raw Telegram Bot API JSON body.
+- HTTP `200` means success.
+- Optional auth header: `Authorization: Bearer <TELEGRAM_PROXY_AUTH_TOKEN>`.
+
+Quick start on monitoring server:
+```bash
+python3 tools/telegram_bot_api_proxy.py
+```
+
+Optional env:
+```bash
+export TELEGRAM_PROXY_HOST=0.0.0.0
+export TELEGRAM_PROXY_PORT=16443
+export TELEGRAM_PROXY_AUTH_TOKEN=change_me
+export TELEGRAM_PROXY_TLS_CERT_FILE=/etc/letsencrypt/live/monitoring.example.com/fullchain.pem
+export TELEGRAM_PROXY_TLS_KEY_FILE=/etc/letsencrypt/live/monitoring.example.com/privkey.pem
+python3 tools/telegram_bot_api_proxy.py
+```
+
+Health check:
+```bash
+curl -sk https://<monitoring-host>:16443/health
+```
+
+### systemd Setup (Custom HTTPS Port, no 443)
+
+1. Install files on monitoring server:
+```bash
+sudo mkdir -p /opt/iot-yc-water-the-flowers
+sudo rsync -av ./ /opt/iot-yc-water-the-flowers/
+sudo cp /opt/iot-yc-water-the-flowers/deploy/systemd/telegram-bot-api-proxy.service /etc/systemd/system/
+sudo cp /opt/iot-yc-water-the-flowers/deploy/systemd/telegram-bot-api-proxy.env.example /etc/default/telegram-bot-api-proxy
+```
+
+2. Edit `/etc/default/telegram-bot-api-proxy`:
+- set `TELEGRAM_PROXY_PORT=16443`
+- set `TELEGRAM_PROXY_AUTH_TOKEN` (long random token)
+- set `TELEGRAM_PROXY_TLS_CERT_FILE` and `TELEGRAM_PROXY_TLS_KEY_FILE`
+
+3. Start and enable:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now telegram-bot-api-proxy.service
+sudo systemctl status telegram-bot-api-proxy.service --no-pager
+```
+
+4. Open firewall for custom SSL port:
+```bash
+sudo ufw allow 16443/tcp
 ```
 
 ## 🚀 Step-by-Step Deployment

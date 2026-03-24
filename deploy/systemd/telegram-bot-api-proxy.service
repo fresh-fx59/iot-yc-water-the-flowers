@@ -1,0 +1,22 @@
+[Unit]
+Description=Watering Telegram Bot API Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user1
+Group=user1
+WorkingDirectory=/opt/iot-yc-water-the-flowers
+EnvironmentFile=/etc/default/telegram-bot-api-proxy
+ExecStart=/usr/bin/python3 /opt/iot-yc-water-the-flowers/tools/telegram_bot_api_proxy.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/log
+
+[Install]
+WantedBy=multi-user.target

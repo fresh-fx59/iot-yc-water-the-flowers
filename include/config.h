@@ -179,6 +179,19 @@ const unsigned long MESSAGE_GROUP_INTERVAL_MS =
 const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
     180000; // Flush after 3 min max (safety limit)
 
+// Optional monitoring-server Telegram proxy.
+// Keep TELEGRAM_PROXY_BASE_URL empty to use direct api.telegram.org access.
+// Example:
+//   #define TELEGRAM_PROXY_BASE_URL "https://monitoring.example.com"
+//   #define TELEGRAM_PROXY_AUTH_TOKEN "your_proxy_api_token"
+#ifndef TELEGRAM_PROXY_BASE_URL
+#define TELEGRAM_PROXY_BASE_URL ""
+#endif
+
+#ifndef TELEGRAM_PROXY_AUTH_TOKEN
+#define TELEGRAM_PROXY_AUTH_TOKEN ""
+#endif
+
 // ============================================
 // Serial Configuration
 // ============================================

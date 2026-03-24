@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include "config.h"
 #include "secret.h"
@@ -40,6 +41,35 @@ private:
         telegramFailureBackoffMs() = min(currentBackoff * 2, TELEGRAM_FAILURE_COOLDOWN_MAX_MS);
     }
 
+    static bool useMonitoringProxy() {
+        return String(TELEGRAM_PROXY_BASE_URL).length() > 0;
+    }
+
+    static String monitoringProxyBaseUrl() {
+        String base = String(TELEGRAM_PROXY_BASE_URL);
+        while (base.endsWith("/")) {
+            base.remove(base.length() - 1);
+        }
+        return base;
+    }
+
+    static void applyProxyAuthHeader(HTTPClient& http) {
+        String token = String(TELEGRAM_PROXY_AUTH_TOKEN);
+        token.trim();
+        if (token.length() > 0) {
+            http.addHeader("Authorization", "Bearer " + token);
+        }
+    }
+
+    static bool beginHttpClient(HTTPClient& http, const String& url, WiFiClientSecure& secureClient, WiFiClient& plainClient) {
+        if (url.startsWith("https://")) {
+            secureClient.setInsecure();  // For simplicity - use proper cert verification in production
+            return http.begin(secureClient, url);
+        }
+
+        return http.begin(plainClient, url);
+    }
+
     static String urlEncode(const String& str) {
         String encoded = "";
         char c;
@@ -70,17 +100,40 @@ private:
 
         HTTPClient http;
         WiFiClientSecure client;
-        client.setInsecure();  // For simplicity - use proper cert verification in production
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
 
-        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                     "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
-                     "&text=" + urlEncode(message) +
-                     "&parse_mode=HTML";
+        int httpCode = -1;
+        if (usingProxy) {
+            String url = monitoringProxyBaseUrl() + "/v1/telegram/sendMessage";
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                onTelegramFailure();
+                DebugHelper::debug("❌ Telegram proxy send begin failed");
+                return false;
+            }
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            applyProxyAuthHeader(http);
+            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                          "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
+                          "&text=" + urlEncode(message) +
+                          "&parse_mode=HTML";
+            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            httpCode = http.POST(body);
+        } else {
+            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                         "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                         "&text=" + urlEncode(message) +
+                         "&parse_mode=HTML";
 
-        http.begin(client, url);
-        http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                onTelegramFailure();
+                DebugHelper::debug("❌ Telegram send begin failed");
+                return false;
+            }
+            http.setTimeout(TELEGRAM_HTTP_TIMEOUT_MS);
+            httpCode = http.GET();
+        }
 
-        int httpCode = http.GET();
         bool success = (httpCode == 200);
 
         if (success) {
@@ -88,7 +141,7 @@ private:
             DebugHelper::debug("✓ Telegram message sent");
         } else {
             onTelegramFailure();
-            DebugHelper::debug("❌ Telegram send failed, HTTP code: " + String(httpCode));
+            DebugHelper::debug("❌ Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
             if (httpCode > 0) {
                 DebugHelper::debug("Response: " + http.getString());
             }
@@ -239,15 +292,33 @@ public:
 
         HTTPClient http;
         WiFiClientSecure client;
-        client.setInsecure();
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
 
-        // Build getUpdates URL with specified long polling timeout
-        String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
-                     "/getUpdates?offset=" + String(lastUpdateId) +
-                     "&timeout=" + String(timeoutSeconds) + 
-                     "&allowed_updates=[\"message\"]";
+        String url;
+        if (usingProxy) {
+            url = monitoringProxyBaseUrl() + "/v1/telegram/getUpdates" +
+                  String("?bot_token=") + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                  "&offset=" + String(lastUpdateId) +
+                  "&timeout=" + String(timeoutSeconds) +
+                  "&allowed_updates=" + urlEncode("[\"message\"]");
+        } else {
+            // Build getUpdates URL with specified long polling timeout
+            url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                  "/getUpdates?offset=" + String(lastUpdateId) +
+                  "&timeout=" + String(timeoutSeconds) +
+                  "&allowed_updates=[\"message\"]";
+        }
 
-        http.begin(client, url);
+        if (!beginHttpClient(http, url, client, plainClient)) {
+            onTelegramFailure();
+            DebugHelper::debug("❌ Telegram getUpdates begin failed (" + String(usingProxy ? "proxy" : "direct") + ")");
+            return "";
+        }
+        if (usingProxy) {
+            applyProxyAuthHeader(http);
+        }
+
         // HTTP timeout must be slightly longer than the Telegram long poll timeout
         if (timeoutSeconds > 0) {
             http.setTimeout((timeoutSeconds + 1) * 1000);
@@ -290,6 +361,7 @@ public:
             }
         } else {
             onTelegramFailure();
+            DebugHelper::debug("❌ Telegram getUpdates failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
         }
 
         http.end();

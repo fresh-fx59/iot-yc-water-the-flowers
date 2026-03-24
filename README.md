@@ -6,9 +6,11 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.18.4** - just version up
+**Version 1.18.5** - Telegram monitoring proxy via custom HTTPS port + systemd setup
 
 **Recent Updates:**
+- **v1.18.5**: Added Telegram Bot API proxy mode for ESP32 (`sendMessage` + `getUpdates`) with optional bearer auth, custom HTTPS port configuration, and monitoring-host systemd deployment files. Updated defaults/docs to avoid VPN relay conflict by using `16443` (not `15443`).
+- **v1.18.4**: just version up
 - **v1.18.3**: Made network task local-first so OTA/web API remain responsive during internet outages or Telegram restrictions. Added Telegram fast timeout + exponential cooldown to avoid repeated blocking. Limited queued Telegram notification processing to one per cycle so watering/lamp logic stays responsive even when Telegram/MQTT fail.
 - **v1.18.2**: Updated project documentation to reflect the active-low plant lamp relay, Telegram/API lamp controls, dashboard behavior, filesystem upload workflow, and current data file/version details.
 - **v1.18.1**: Fixed plant light relay polarity (active-low), so Telegram/manual commands and the 22:00 -> 07:00 schedule now match physical ON/OFF behavior. Added dashboard controls via `/api/lamp`.

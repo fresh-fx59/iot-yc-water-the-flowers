@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.19.1** - stop Telegram debug feedback-loop spam from transport success logs
+**Version 1.19.2** - reset watering cycle by rotating learning data file names
 
 **Recent Updates:**
+- **v1.19.2**: Reset watering cycle by rotating learning-data filenames. Active file is now `learning_data_v1.19.2.json`, and previous `learning_data_v1.18.4.json` is marked as OLD for one-time cleanup on boot.
 - **v1.19.1**: Fixed Telegram debug feedback loop where internal transport logs (e.g. `✓ Telegram message sent`) were routed back into Telegram debug queue, causing periodic self-generated spam every few seconds. Transport-layer logs are now serial-only.
 - **v1.19.0**: Added Telegram command polling throttle (`TELEGRAM_COMMAND_POLL_INTERVAL_MS=1000`) so `getUpdates(timeout=0)` is not called every 100ms network loop tick. Reduces continuous `ssl_client (-76)` and `WiFiClient ERR:9` noise caused by rapid TLS reconnect churn while keeping command checks responsive.
 - **v1.18.9**: Switched recommended monitoring deployment to nginx TLS termination on `:16443` with Python proxy on localhost `127.0.0.1:18085`. This avoids direct Python TLS serving and reduces ESP32 TLS-close noise (`ssl_client -76`) while keeping auth/token logic in proxy.

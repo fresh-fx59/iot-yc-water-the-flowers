@@ -74,6 +74,12 @@ private:
         return usingProxy ? TELEGRAM_PROXY_HTTP_TIMEOUT_MS : TELEGRAM_HTTP_TIMEOUT_MS;
     }
 
+    static void logTransportLocalOnly(const String& message) {
+        #if IS_DEBUG_TO_SERIAL_ENABLED
+        DEBUG_SERIAL.println(message);
+        #endif
+    }
+
     static String urlEncode(const String& str) {
         String encoded = "";
         char c;
@@ -95,7 +101,7 @@ private:
 
     static bool sendMessage(const String& message) {
         if (!WiFi.isConnected()) {
-            DebugHelper::debug("❌ Cannot send Telegram: WiFi not connected");
+            logTransportLocalOnly("❌ Cannot send Telegram: WiFi not connected");
             return false;
         }
         if (isInCooldown()) {
@@ -112,7 +118,7 @@ private:
             String url = monitoringProxyBaseUrl() + "/v1/telegram/sendMessage";
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onTelegramFailure();
-                DebugHelper::debug("❌ Telegram proxy send begin failed");
+                logTransportLocalOnly("❌ Telegram proxy send begin failed");
                 return false;
             }
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -131,7 +137,7 @@ private:
 
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onTelegramFailure();
-                DebugHelper::debug("❌ Telegram send begin failed");
+                logTransportLocalOnly("❌ Telegram send begin failed");
                 return false;
             }
             http.setTimeout(httpTimeoutMs(usingProxy));
@@ -142,12 +148,12 @@ private:
 
         if (success) {
             onTelegramSuccess();
-            DebugHelper::debug("✓ Telegram message sent");
+            logTransportLocalOnly("✓ Telegram message sent");
         } else {
             onTelegramFailure();
-            DebugHelper::debug("❌ Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            logTransportLocalOnly("❌ Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
             if (httpCode > 0) {
-                DebugHelper::debug("Response: " + http.getString());
+                logTransportLocalOnly("Response: " + http.getString());
             }
         }
 
@@ -170,7 +176,7 @@ public:
     // Send device online notification
     static void sendDeviceOnline(const String& version, const String& deviceType) {
         if (!WiFi.isConnected()) {
-            DebugHelper::debug("❌ Cannot send Telegram: WiFi not connected");
+            logTransportLocalOnly("❌ Cannot send Telegram: WiFi not connected");
             return;
         }
 
@@ -316,7 +322,7 @@ public:
 
         if (!beginHttpClient(http, url, client, plainClient)) {
             onTelegramFailure();
-            DebugHelper::debug("❌ Telegram getUpdates begin failed (" + String(usingProxy ? "proxy" : "direct") + ")");
+            logTransportLocalOnly("❌ Telegram getUpdates begin failed (" + String(usingProxy ? "proxy" : "direct") + ")");
             return "";
         }
         if (usingProxy) {
@@ -365,7 +371,7 @@ public:
             }
         } else {
             onTelegramFailure();
-            DebugHelper::debug("❌ Telegram getUpdates failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            logTransportLocalOnly("❌ Telegram getUpdates failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
         }
 
         http.end();

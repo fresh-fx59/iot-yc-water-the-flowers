@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.19.4** - show fallback schedule duration during retry/calibration
+**Version 1.19.5** - retry Telegram watering notifications until delivery succeeds
 
 **Recent Updates:**
+- **v1.19.5**: Fixed Telegram notification queue delivery so completion and updated schedule messages are retried instead of being dropped on transient Telegram/proxy send failures or cooldown windows.
 - **v1.19.4**: Watering schedule output now shows an expected runtime during retry or calibration-in-progress states by falling back to the per-valve normal timeout when baseline fill time is not available yet.
 - **v1.19.3**: Increased Tray 2 timeout from 30s to 35s after observed timeout at ~30.7s. Emergency timeout for Tray 2 was increased from 35s to 40s to keep the +5s safety margin.
 - **v1.19.2**: Reset watering cycle by rotating learning-data filenames. Active file is now `learning_data_v1.19.2.json`, and previous `learning_data_v1.18.4.json` is marked as OLD for one-time cleanup on boot.

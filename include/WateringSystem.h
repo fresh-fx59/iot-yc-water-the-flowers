@@ -2261,11 +2261,13 @@ inline void WateringSystem::processPendingNotifications() {
   }
 
   String message = notificationQueue[notificationQueueHead];
-  notificationQueue[notificationQueueHead] = ""; // Free memory
+  if (!sendTelegramDebug(message)) {
+    return;
+  }
+
+  notificationQueue[notificationQueueHead] = ""; // Free memory after confirmed send
   notificationQueueHead = (notificationQueueHead + 1) % NOTIFICATION_QUEUE_SIZE;
   notificationQueueCount--;
-
-  sendTelegramDebug(message);
 }
 
 // ============================================

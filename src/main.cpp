@@ -612,6 +612,8 @@ void loop() {
         // Send watering schedule (best-effort, doesn't block watering)
         if (NetworkManager::isWiFiConnected()) {
             wateringSystem.sendWateringSchedule("Startup Schedule");
+            wateringSystem.queueTelegramNotification(
+                wateringSystem.getPlantLightStatusMessage());
         }
 
         // Smart boot watering: only water if needed (NO network dependency)

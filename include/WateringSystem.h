@@ -330,6 +330,7 @@ inline bool WateringSystem::saveLearningData() {
   // Create JSON document
   StaticJsonDocument<2048> doc;
   JsonArray valvesArray = doc.createNestedArray("valves");
+  unsigned long currentMillis = millis();
 
   for (int i = 0; i < NUM_VALVES; i++) {
     ValveController *valve = valves[i];
@@ -340,6 +341,14 @@ inline bool WateringSystem::saveLearningData() {
         (unsigned long)valve->lastWateringCompleteTime;
     valveObj["lastWateringAttemptTime"] =
         (unsigned long)valve->lastWateringAttemptTime;
+    valveObj["lastWateringCompleteAgeMs"] =
+        hasLastWateringReference(valve)
+            ? getTimeSinceLastWatering(valve, currentMillis)
+            : 0;
+    valveObj["lastWateringAttemptAgeMs"] =
+        hasLastWateringAttemptReference(valve)
+            ? getTimeSinceLastWateringAttempt(valve, currentMillis)
+            : 0;
     valveObj["emptyToFullDuration"] = (unsigned long)valve->emptyToFullDuration;
     valveObj["baselineFillDuration"] =
         (unsigned long)valve->baselineFillDuration;
@@ -354,7 +363,7 @@ inline bool WateringSystem::saveLearningData() {
   }
 
   // Save current millis() and DS3231 RTC time as reference points
-  doc["savedAtMillis"] = millis();
+  doc["savedAtMillis"] = currentMillis;
   time_t now;
   time(&now);
   doc["savedAtRealTime"] = (unsigned long)now;
@@ -452,6 +461,8 @@ inline bool WateringSystem::loadLearningData() {
     ValveController *valve = valves[index];
     unsigned long savedCompleteTime = valveObj["lastWateringCompleteTime"] | 0;
     unsigned long savedAttemptTime = valveObj["lastWateringAttemptTime"] | 0;
+    unsigned long savedCompleteAgeMs = valveObj["lastWateringCompleteAgeMs"] | 0;
+    unsigned long savedAttemptAgeMs = valveObj["lastWateringAttemptAgeMs"] | 0;
 
     valve->emptyToFullDuration = valveObj["emptyToFullDuration"] | 0;
     valve->baselineFillDuration = valveObj["baselineFillDuration"] | 0;
@@ -462,17 +473,29 @@ inline bool WateringSystem::loadLearningData() {
     valve->totalWateringCycles = valveObj["totalWateringCycles"] | 0;
     valve->autoWateringEnabled = valveObj["autoWateringEnabled"] | true;
     valve->intervalMultiplier = valveObj["intervalMultiplier"] | 1.0;
+    valve->lastWateringCompleteTime = 0;
+    valve->lastWateringAttemptTime = 0;
+    valve->realTimeSinceLastWatering = 0;
+    valve->realTimeSinceLastWateringAttempt = 0;
 
     // Convert saved timestamps to current millis() epoch
     // New timestamp = current_millis - (time_elapsed_since_save -
     // time_from_save_to_watering) Simplified: New timestamp = current_millis -
     // time_since_watering
-    if (savedCompleteTime > 0 && savedAtMillis > 0) {
-      // Time from watering to save
+    unsigned long timeSinceWatering = 0;
+    bool hasSavedWateringReference = false;
+    if (savedCompleteAgeMs > 0) {
+      timeSinceWatering = savedCompleteAgeMs + timeOffsetMs;
+      hasSavedWateringReference = true;
+    } else if (savedCompleteTime > 0 && savedAtMillis > 0) {
+      // Backward-compatible path for older files that only stored millis()
+      // timestamps.
       unsigned long timeFromWateringToSave = savedAtMillis - savedCompleteTime;
-      // Time from watering to now = time_from_watering_to_save +
-      // time_since_save
-      unsigned long timeSinceWatering = timeFromWateringToSave + timeOffsetMs;
+      timeSinceWatering = timeFromWateringToSave + timeOffsetMs;
+      hasSavedWateringReference = true;
+    }
+
+    if (hasSavedWateringReference) {
       // New timestamp in current epoch
       if (currentMillis >= timeSinceWatering) {
         valve->lastWateringCompleteTime = currentMillis - timeSinceWatering;
@@ -485,13 +508,24 @@ inline bool WateringSystem::loadLearningData() {
       }
     }
 
-    if (savedAttemptTime > 0 && savedAtMillis > 0) {
+    unsigned long timeSinceAttempt = 0;
+    bool hasSavedAttemptReference = false;
+    if (savedAttemptAgeMs > 0) {
+      timeSinceAttempt = savedAttemptAgeMs + timeOffsetMs;
+      hasSavedAttemptReference = true;
+    } else if (savedAttemptTime > 0 && savedAtMillis > 0) {
       unsigned long timeFromAttemptToSave = savedAtMillis - savedAttemptTime;
-      unsigned long timeSinceAttempt = timeFromAttemptToSave + timeOffsetMs;
+      timeSinceAttempt = timeFromAttemptToSave + timeOffsetMs;
+      hasSavedAttemptReference = true;
+    }
+
+    if (hasSavedAttemptReference) {
       if (currentMillis >= timeSinceAttempt) {
         valve->lastWateringAttemptTime = currentMillis - timeSinceAttempt;
+        valve->realTimeSinceLastWateringAttempt = 0;
       } else {
         valve->lastWateringAttemptTime = 0;
+        valve->realTimeSinceLastWateringAttempt = timeSinceAttempt;
       }
     }
 
@@ -1088,6 +1122,7 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
 
   // CRITICAL: Record watering attempt time (prevents auto-watering retry loops)
   valve->lastWateringAttemptTime = currentTime;
+  valve->realTimeSinceLastWateringAttempt = 0;
 
   publishStateChange("valve" + String(valveIndex), "cycle_started");
 
@@ -1475,6 +1510,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
 
       // Set up minimal learning data to enable auto-watering retry
       valve->lastWateringAttemptTime = currentTime;
+      valve->realTimeSinceLastWateringAttempt = 0;
       valve->emptyToFullDuration = BASE_INTERVAL_MS; // 24 hours
       valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER; // 1.0x
       // Keep isCalibrated = false so next successful watering establishes baseline
@@ -1522,6 +1558,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         // Don't modify interval - just skip this cycle
         // Update attempt time to prevent auto-watering retry loops
         valve->lastWateringAttemptTime = currentTime;
+        valve->realTimeSinceLastWateringAttempt = 0;
         saveLearningData();
         return;
       }
@@ -1553,6 +1590,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         // Don't modify interval - just skip this cycle
         // Update attempt time to prevent auto-watering retry loops
         valve->lastWateringAttemptTime = currentTime;
+        valve->realTimeSinceLastWateringAttempt = 0;
         saveLearningData();
         return;
       }
@@ -1603,6 +1641,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     valve->emptyToFullDuration = BASE_INTERVAL_MS; // Start with 24h interval
     valve->lastWateringCompleteTime = currentTime;
     valve->realTimeSinceLastWatering = 0; // Clear outage duration
+    valve->realTimeSinceLastWateringAttempt = 0;
     valve->lastWaterLevelPercent = 0.0;
 
     DebugHelper::debugImportant(
@@ -1691,6 +1730,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
   valve->lastWateringCompleteTime = currentTime;
   valve->realTimeSinceLastWatering = 0; // Clear outage duration
+  valve->realTimeSinceLastWateringAttempt = 0;
 
   // Calculate water level before this watering (for logging)
   float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(
@@ -1767,6 +1807,8 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
   valve->emptyToFullDuration = 0;
   valve->lastWateringCompleteTime = 0;
   valve->lastWateringAttemptTime = 0;
+  valve->realTimeSinceLastWatering = 0;
+  valve->realTimeSinceLastWateringAttempt = 0;
   valve->lastWaterLevelPercent = 0.0;
   valve->totalWateringCycles = 0;
   valve->intervalMultiplier = 1.0; // CRITICAL: Reset interval multiplier
@@ -1793,6 +1835,8 @@ inline void WateringSystem::resetAllCalibrations() {
     valves[i]->emptyToFullDuration = 0;
     valves[i]->lastWateringCompleteTime = 0;
     valves[i]->lastWateringAttemptTime = 0;
+    valves[i]->realTimeSinceLastWatering = 0;
+    valves[i]->realTimeSinceLastWateringAttempt = 0;
     valves[i]->lastWaterLevelPercent = 0.0;
     valves[i]->totalWateringCycles = 0;
     valves[i]->intervalMultiplier = 1.0; // CRITICAL: Reset interval multiplier
@@ -2012,14 +2056,11 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     } else if (!valve->isCalibrated && valve->emptyToFullDuration > 0) {
       // Not calibrated but has temporary 24h retry duration (tray was found
       // full)
-      unsigned long timeSinceWatering;
-
-      // Handle post-reboot case (add elapsed millis to frozen boot snapshot)
-      if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
-        timeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
-      } else {
-        timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
-      }
+      unsigned long timeSinceWatering = hasLastWateringAttemptReference(valve)
+                                            ? getTimeSinceLastWateringAttempt(
+                                                  valve, currentTime)
+                                            : getTimeSinceLastWatering(
+                                                  valve, currentTime);
 
       if (timeSinceWatering >= valve->emptyToFullDuration) {
         scheduleData[i][1] = "Now (retry)";
@@ -2037,12 +2078,13 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
       scheduleData[i][1] = "Auto disbld";
     } else if (valve->emptyToFullDuration == 0) {
       // Learning mode - use minimum interval (24h) from last attempt
-      unsigned long referenceTime = valve->lastWateringAttemptTime;
-      if (referenceTime == 0)
-        referenceTime = valve->lastWateringCompleteTime;
-
-      if (referenceTime > 0) {
-        unsigned long timeSinceAttempt = currentTime - referenceTime;
+      if (hasLastWateringAttemptReference(valve) ||
+          hasLastWateringReference(valve)) {
+        unsigned long timeSinceAttempt = hasLastWateringAttemptReference(valve)
+                                             ? getTimeSinceLastWateringAttempt(
+                                                   valve, currentTime)
+                                             : getTimeSinceLastWatering(
+                                                   valve, currentTime);
         if (timeSinceAttempt >= AUTO_WATERING_MIN_INTERVAL_MS) {
           scheduleData[i][1] = "Now (learn)";
         } else {
@@ -2060,25 +2102,15 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
       }
     } else {
       // Calculate planned watering time based on learned consumption
-      unsigned long timeSinceWatering;
-
-      // Handle post-reboot case where millis() can't represent the timestamp
-      // (occurs when watering happened longer ago than current millis() value)
-      if (valve->lastWateringCompleteTime == 0 && valve->realTimeSinceLastWatering > 0) {
-        // Add elapsed millis() to frozen boot snapshot
-        timeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
-      } else {
-        // Normal case: calculate from millis() timestamp
-        timeSinceWatering = currentTime - valve->lastWateringCompleteTime;
-      }
+      unsigned long timeSinceWatering =
+          getTimeSinceLastWatering(valve, currentTime);
 
       // Calculate effective watering interval considering 24h minimum safety check
       // This matches the logic in shouldWaterNow() (ValveController.h:160-192)
-      unsigned long effectiveInterval = valve->emptyToFullDuration;
-
       // Apply 24h minimum interval if we have lastWateringAttemptTime
-      if (valve->lastWateringAttemptTime > 0) {
-        unsigned long timeSinceAttempt = currentTime - valve->lastWateringAttemptTime;
+      if (hasLastWateringAttemptReference(valve)) {
+        unsigned long timeSinceAttempt =
+            getTimeSinceLastWateringAttempt(valve, currentTime);
         unsigned long timeUntilMinInterval = 0;
 
         if (timeSinceAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
@@ -2169,14 +2201,9 @@ inline int WateringSystem::getOverdueValveIndices(int *valveIndices, int maxCoun
     if (valve->emptyToFullDuration > 0) {
       bool isOverdue = false;
 
-      if (valve->lastWateringCompleteTime > 0) {
-        // Normal case: Use millis() timestamp
-        unsigned long nextWateringTime =
-            valve->lastWateringCompleteTime + valve->emptyToFullDuration;
-        isOverdue = (currentTime >= nextWateringTime);
-      } else if (valve->realTimeSinceLastWatering > 0) {
-        // Long outage case: add elapsed millis() to frozen boot snapshot
-        unsigned long totalTimeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
+      if (hasLastWateringReference(valve)) {
+        unsigned long totalTimeSinceWatering =
+            getTimeSinceLastWatering(valve, currentTime);
         isOverdue = (totalTimeSinceWatering >= valve->emptyToFullDuration);
       }
 

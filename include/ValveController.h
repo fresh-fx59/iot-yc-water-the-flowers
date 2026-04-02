@@ -68,6 +68,7 @@ struct ValveController {
   // Long outage recovery: Real time since last watering when millis() can't represent timestamp
   unsigned long realTimeSinceLastWatering; // Duration in ms, calculated during load
                                            // Used when lastWateringCompleteTime == 0 after long outage
+  unsigned long realTimeSinceLastWateringAttempt; // Same recovery path for attempt timestamps
 
   // Constructor
   ValveController(int idx)
@@ -78,7 +79,8 @@ struct ValveController {
         emptyToFullDuration(0), baselineFillDuration(0), lastFillDuration(0),
         previousFillDuration(0), lastWaterLevelPercent(0.0),
         isCalibrated(false), totalWateringCycles(0), autoWateringEnabled(true),
-        intervalMultiplier(1.0), realTimeSinceLastWatering(0) {}
+        intervalMultiplier(1.0), realTimeSinceLastWatering(0),
+        realTimeSinceLastWateringAttempt(0) {}
 };
 
 // ============================================
@@ -107,15 +109,52 @@ inline const char *phaseToString(WateringPhase phase) {
   }
 }
 
+inline bool hasLastWateringReference(const ValveController *valve) {
+  return valve->lastWateringCompleteTime > 0 ||
+         valve->realTimeSinceLastWatering > 0;
+}
+
+inline unsigned long getTimeSinceLastWatering(const ValveController *valve,
+                                              unsigned long currentTime) {
+  if (valve->lastWateringCompleteTime > 0) {
+    return currentTime - valve->lastWateringCompleteTime;
+  }
+
+  if (valve->realTimeSinceLastWatering > 0) {
+    return valve->realTimeSinceLastWatering + currentTime;
+  }
+
+  return 0;
+}
+
+inline bool hasLastWateringAttemptReference(const ValveController *valve) {
+  return valve->lastWateringAttemptTime > 0 ||
+         valve->realTimeSinceLastWateringAttempt > 0;
+}
+
+inline unsigned long getTimeSinceLastWateringAttempt(
+    const ValveController *valve, unsigned long currentTime) {
+  if (valve->lastWateringAttemptTime > 0) {
+    return currentTime - valve->lastWateringAttemptTime;
+  }
+
+  if (valve->realTimeSinceLastWateringAttempt > 0) {
+    return valve->realTimeSinceLastWateringAttempt + currentTime;
+  }
+
+  return 0;
+}
+
 // Calculate current water level percentage based on time elapsed
 inline float calculateCurrentWaterLevel(const ValveController *valve,
                                         unsigned long currentTime) {
-  if (!valve->isCalibrated || valve->emptyToFullDuration == 0) {
+  if (!valve->isCalibrated || valve->emptyToFullDuration == 0 ||
+      !hasLastWateringReference(valve)) {
     return 0.0; // Unknown
   }
 
   unsigned long timeSinceLastWatering =
-      currentTime - valve->lastWateringCompleteTime;
+      getTimeSinceLastWatering(valve, currentTime);
 
   if (timeSinceLastWatering >= valve->emptyToFullDuration) {
     return 0.0; // Empty
@@ -157,9 +196,9 @@ inline bool shouldWaterNow(const ValveController *valve,
 
   // SAFETY 1: Minimum 24-hour interval between ANY watering attempts
   // Prevents excessive watering even if learning data suggests shorter interval
-  if (valve->lastWateringAttemptTime > 0) {
+  if (hasLastWateringAttemptReference(valve)) {
     unsigned long timeSinceLastAttempt =
-        currentTime - valve->lastWateringAttemptTime;
+        getTimeSinceLastWateringAttempt(valve, currentTime);
     if (timeSinceLastAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
       return false; // Minimum interval not reached (prevents retry loops and
                     // over-watering)
@@ -177,7 +216,7 @@ inline bool shouldWaterNow(const ValveController *valve,
   // Has emptyToFullDuration set but no lastWateringCompleteTime (never succeeded)
   // Relies on lastWateringAttemptTime 24h check above
   if (!valve->isCalibrated && valve->lastWateringCompleteTime == 0 &&
-      valve->lastWateringAttemptTime > 0) {
+      hasLastWateringAttemptReference(valve)) {
     // Already passed 24h minimum interval check above (line 160-166)
     // Safe to retry watering attempt
     return true;
@@ -186,17 +225,10 @@ inline bool shouldWaterNow(const ValveController *valve,
   // SAFETY 2: Check if tray is empty based on learned consumption rate
   // If tray was last filled 3 days ago and consumption takes 3 days, tray
   // should be empty now
-  if (valve->lastWateringCompleteTime > 0) {
+  if (hasLastWateringReference(valve)) {
     unsigned long timeSinceLastWatering =
-        currentTime - valve->lastWateringCompleteTime;
+        getTimeSinceLastWatering(valve, currentTime);
     return timeSinceLastWatering >= valve->emptyToFullDuration;
-  }
-
-  // Long outage case: millis() can't represent timestamp at boot
-  // realTimeSinceLastWatering is a frozen snapshot from boot - add elapsed millis()
-  if (valve->realTimeSinceLastWatering > 0) {
-    unsigned long totalTimeSinceWatering = valve->realTimeSinceLastWatering + currentTime;
-    return totalTimeSinceWatering >= valve->emptyToFullDuration;
   }
 
   // If no timestamp data at all, don't water (safety)

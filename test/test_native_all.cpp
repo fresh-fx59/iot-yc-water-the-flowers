@@ -5,6 +5,7 @@
 #include "LearningAlgorithm.h"
 #include "PlantLightController.h"
 #include "StateMachineLogic.h"
+#include "ValveController.h"
 #include "TestConfig.h"
 
 using namespace fakeit;
@@ -104,6 +105,28 @@ void test_plant_light_schedule_is_off_during_day(void) {
     timeInfo.tm_min = 0;
 
     TEST_ASSERT_FALSE(PlantLightController::isScheduleActive(timeInfo));
+}
+
+void test_get_time_since_last_attempt_uses_realtime_fallback(void) {
+    ValveController valve(0);
+    valve.realTimeSinceLastWateringAttempt = 23UL * 3600UL * 1000UL;
+
+    unsigned long currentTime = 15UL * 60UL * 1000UL;
+    unsigned long expected = (23UL * 3600UL * 1000UL) + currentTime;
+
+    TEST_ASSERT_EQUAL_UINT32(expected, getTimeSinceLastWateringAttempt(&valve, currentTime));
+}
+
+void test_should_water_now_blocks_retry_until_realtime_min_interval_passes(void) {
+    ValveController valve(0);
+    valve.autoWateringEnabled = true;
+    valve.isCalibrated = false;
+    valve.emptyToFullDuration = 24UL * 3600UL * 1000UL;
+    valve.realTimeSinceLastWateringAttempt = 23UL * 3600UL * 1000UL;
+
+    unsigned long currentTime = 30UL * 60UL * 1000UL;
+
+    TEST_ASSERT_FALSE(shouldWaterNow(&valve, currentTime));
 }
 
 // ========== PHASE_IDLE Tests ==========
@@ -684,6 +707,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_plant_light_schedule_stays_on_after_midnight);
     RUN_TEST(test_plant_light_schedule_turns_off_at_07_00);
     RUN_TEST(test_plant_light_schedule_is_off_during_day);
+    RUN_TEST(test_get_time_since_last_attempt_uses_realtime_fallback);
+    RUN_TEST(test_should_water_now_blocks_retry_until_realtime_min_interval_passes);
 
     // State Machine Tests - PHASE_IDLE
     RUN_TEST(test_idle_phase_does_nothing);

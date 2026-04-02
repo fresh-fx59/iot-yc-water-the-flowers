@@ -318,6 +318,11 @@ void checkTelegramCommands(int timeout) {
 
         DebugHelper::flushBuffer();
         sendTelegramDebug(message);
+    } else if (command == "/overflow_status" || command == "overflow_status" ||
+               command == "/overflow_sensor" || command == "overflow_sensor") {
+        DebugHelper::debugImportant("🔍 OVERFLOW STATUS command received!");
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(wateringSystem.getOverflowStatusMessage());
     } else if (command == "/lamp" || command == "lamp" ||
                command == "/lamp_status" || command == "lamp_status") {
         sendTelegramDebug(wateringSystem.getPlantLightStatusMessage());

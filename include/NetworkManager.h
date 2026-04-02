@@ -289,6 +289,11 @@ private:
             DebugHelper::debugImportant("📡 MQTT Command: Reinitializing GPIO hardware");
             wateringSystem->reinitializeGPIOHardware();
         }
+        else if (command == "overflow_status" || command == "/overflow_status" ||
+                 command == "overflow_sensor" || command == "/overflow_sensor") {
+            DebugHelper::debugImportant("📡 MQTT Command: Reading overflow sensor status");
+            sendTelegramDebug(wateringSystem->getOverflowStatusMessage());
+        }
         else {
             DebugHelper::debug("Unknown MQTT command: " + command);
         }

@@ -176,6 +176,9 @@ public:
   // Sensor diagnostics
   void testSensor(int valveIndex);  // Test a specific sensor and log results
   void testAllSensors();  // Test all sensors and report
+  int getMasterOverflowRawReading();
+  int getMasterOverflowLowReadings();
+  String getOverflowStatusMessage();
 
   // Halt mode control (for emergency firmware updates)
   void setHaltMode(bool enabled);
@@ -637,6 +640,47 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
       DebugHelper::debugImportant("📱 Overflow notification queued for Telegram");
     }
   }
+}
+
+inline int WateringSystem::getMasterOverflowRawReading() {
+  return digitalRead(MASTER_OVERFLOW_SENSOR_PIN);
+}
+
+inline int WateringSystem::getMasterOverflowLowReadings() {
+  int lowReadings = 0;
+
+  for (int i = 0; i < OVERFLOW_DEBOUNCE_SAMPLES; i++) {
+    if (digitalRead(MASTER_OVERFLOW_SENSOR_PIN) == LOW) {
+      lowReadings++;
+    }
+
+    if (i < OVERFLOW_DEBOUNCE_SAMPLES - 1) {
+      delay(OVERFLOW_DEBOUNCE_DELAY_MS);
+    }
+  }
+
+  return lowReadings;
+}
+
+inline String WateringSystem::getOverflowStatusMessage() {
+  int rawReading = getMasterOverflowRawReading();
+  int lowReadings = getMasterOverflowLowReadings();
+  bool debouncedDetected = (lowReadings >= OVERFLOW_DEBOUNCE_THRESHOLD);
+
+  String message = "🚨 <b>OVERFLOW SENSOR STATUS</b>\n\n";
+  message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+  message += "🔌 GPIO: " + String(MASTER_OVERFLOW_SENSOR_PIN) + "\n";
+  message += "🔒 Latched overflow flag: " + String(overflowDetected ? "ON" : "OFF") + "\n";
+  message += "📍 Raw reading: " + String(rawReading) + " (" +
+             String(rawReading == LOW ? "LOW / triggered" : "HIGH / dry") + ")\n";
+  message += "🧪 Debounced reading: " + String(lowReadings) + "/" +
+             String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples\n";
+  message += "🚦 Debounced result: " +
+             String(debouncedDetected ? "OVERFLOW DETECTED" : "NORMAL") + "\n\n";
+  message += "Threshold: " + String(OVERFLOW_DEBOUNCE_THRESHOLD) + "/" +
+             String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples required";
+
+  return message;
 }
 
 // ========== EMERGENCY STOP ALL ==========

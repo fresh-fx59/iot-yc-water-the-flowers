@@ -284,6 +284,15 @@ inline void WateringSystem::publishCurrentState() {
     stateJson += ",\"blocked\":" + String(waterLevelLow ? "true" : "false");
     stateJson += "}";
 
+    int overflowRawReading = getMasterOverflowRawReading();
+    stateJson += ",\"overflow\":{";
+    stateJson += "\"detected\":" + String(overflowDetected ? "true" : "false");
+    stateJson += ",\"sensor_gpio\":" + String(MASTER_OVERFLOW_SENSOR_PIN);
+    stateJson += ",\"raw_value\":" + String(overflowRawReading);
+    stateJson += ",\"raw_state\":\"" +
+                 String(overflowRawReading == LOW ? "triggered" : "dry") + "\"";
+    stateJson += "}";
+
     stateJson += ",\"plant_light\":{";
     stateJson += "\"state\":\"" + String(plantLight.isOn() ? "on" : "off") + "\"";
     stateJson += ",\"mode\":\"" + String(plantLight.getModeName()) + "\"";

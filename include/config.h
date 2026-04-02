@@ -128,6 +128,7 @@ const int PLANT_LIGHT_SCHEDULE_OFF_MINUTE = 0;
 const int OVERFLOW_DEBOUNCE_SAMPLES = 7;        // Number of readings to take
 const int OVERFLOW_DEBOUNCE_THRESHOLD = 5;      // Minimum LOW readings to declare overflow (5 out of 7)
 const unsigned long OVERFLOW_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5ms)
+const int OVERFLOW_CONFIRMATION_CHECKS = 3;     // Require 3 consecutive debounced detections (~300ms sustained LOW)
 
 // ============================================
 // Learning Algorithm Constants

@@ -78,6 +78,7 @@ private:
   bool overflowDetected; // If true, water overflow detected - block all watering
   unsigned long lastOverflowCheck; // Last time overflow sensor was checked
   unsigned long lastOverflowResetTime; // When overflow was last reset (for learning algorithm)
+  int overflowDetectionStreak; // Consecutive debounced detections before emergency latch
 
   // Water level sensor tracking
   bool waterLevelLow; // If true, water tank is empty - block all watering
@@ -105,7 +106,8 @@ public:
         lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
         sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
-        lastOverflowCheck(0), lastOverflowResetTime(0), waterLevelLow(false),
+        lastOverflowCheck(0), lastOverflowResetTime(0), overflowDetectionStreak(0),
+        waterLevelLow(false),
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
         waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
         lastPlantLightScheduleCheck(0),
@@ -178,6 +180,7 @@ public:
   void testAllSensors();  // Test all sensors and report
   int getMasterOverflowRawReading();
   int getMasterOverflowLowReadings();
+  int getOverflowDetectionStreak() { return overflowDetectionStreak; }
   String getOverflowStatusMessage();
 
   // Halt mode control (for emergency firmware updates)
@@ -611,14 +614,24 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
     }
   }
 
-  // Require threshold number of LOW readings to declare overflow
-  // Example: 5 out of 7 readings must be LOW to trigger
-  if (lowReadings >= OVERFLOW_DEBOUNCE_THRESHOLD) {
-    if (!overflowDetected) {
-      // First detection - trigger emergency stop
+  bool debouncedDetected = (lowReadings >= OVERFLOW_DEBOUNCE_THRESHOLD);
+
+  // Require multiple consecutive debounced detections to avoid latching on a
+  // single noisy burst. This makes the line effectively need to stay bad for
+  // several 100ms checks rather than one 35ms sampling window.
+  if (debouncedDetected) {
+    if (overflowDetectionStreak < OVERFLOW_CONFIRMATION_CHECKS) {
+      overflowDetectionStreak++;
+    }
+
+    if (!overflowDetected &&
+        overflowDetectionStreak >= OVERFLOW_CONFIRMATION_CHECKS) {
+      // Confirmed sustained detection - trigger emergency stop
       DebugHelper::debugImportant("🚨🚨🚨 MASTER OVERFLOW SENSOR TRIGGERED! 🚨🚨🚨");
       DebugHelper::debugImportant("Water overflow detected on GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) +
-                                  " (" + String(lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW readings)");
+                                  " (" + String(lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES) +
+                                  " LOW readings, streak " + String(overflowDetectionStreak) +
+                                  "/" + String(OVERFLOW_CONFIRMATION_CHECKS) + ")");
       overflowDetected = true;
 
       // Emergency stop everything
@@ -639,6 +652,8 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
       queueTelegramNotification(message);
       DebugHelper::debugImportant("📱 Overflow notification queued for Telegram");
     }
+  } else {
+    overflowDetectionStreak = 0;
   }
 }
 
@@ -675,10 +690,14 @@ inline String WateringSystem::getOverflowStatusMessage() {
              String(rawReading == LOW ? "LOW / triggered" : "HIGH / dry") + ")\n";
   message += "🧪 Debounced reading: " + String(lowReadings) + "/" +
              String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples\n";
+  message += "📈 Trigger streak: " + String(overflowDetectionStreak) + "/" +
+             String(OVERFLOW_CONFIRMATION_CHECKS) + "\n";
   message += "🚦 Debounced result: " +
              String(debouncedDetected ? "OVERFLOW DETECTED" : "NORMAL") + "\n\n";
   message += "Threshold: " + String(OVERFLOW_DEBOUNCE_THRESHOLD) + "/" +
-             String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples required";
+             String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples required\n";
+  message += "Latch rule: " + String(OVERFLOW_CONFIRMATION_CHECKS) +
+             " consecutive debounced detections required";
 
   return message;
 }
@@ -715,6 +734,7 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
 // ========== RESET OVERFLOW FLAG ==========
 inline void WateringSystem::resetOverflowFlag() {
   overflowDetected = false;
+  overflowDetectionStreak = 0;
   lastOverflowResetTime = millis(); // Track when overflow was reset (for learning algorithm)
 
   // Reinitialize GPIO hardware to unstick relay modules

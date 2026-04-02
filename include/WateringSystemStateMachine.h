@@ -291,6 +291,8 @@ inline void WateringSystem::publishCurrentState() {
     stateJson += ",\"raw_value\":" + String(overflowRawReading);
     stateJson += ",\"raw_state\":\"" +
                  String(overflowRawReading == LOW ? "triggered" : "dry") + "\"";
+    stateJson += ",\"trigger_streak\":" + String(overflowDetectionStreak);
+    stateJson += ",\"trigger_streak_required\":" + String(OVERFLOW_CONFIRMATION_CHECKS);
     stateJson += "}";
 
     stateJson += ",\"plant_light\":{";

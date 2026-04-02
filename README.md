@@ -6,9 +6,10 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.19.6** - boot catch-up waters only overdue trays and reports correct trigger
+**Version 1.19.10** - fixes Telegram menu registration, startup notification retry, and lamp boot sync
 
 **Recent Updates:**
+- **v1.19.10**: Fixed Telegram bot menu registration when using the monitoring proxy by adding `setMyCommands` support to the proxy, retried startup `Device Online` notification through the queue when the first send fails, and initialized the plant light to the current auto-schedule state without emitting a duplicate boot-time `PLANT LIGHT ON` transition.
 - **v1.19.6**: Fixed critical boot catch-up safety bug where reboot recovery watered all trays when any tray was overdue. Boot catch-up now targets only overdue trays and Telegram shows `Boot Catch-up` / `Boot Calibration` instead of misleading `MQTT`.
 - **v1.19.5**: Fixed Telegram notification queue delivery so completion and updated schedule messages are retried instead of being dropped on transient Telegram/proxy send failures or cooldown windows.
 - **v1.19.4**: Watering schedule output now shows an expected runtime during retry or calibration-in-progress states by falling back to the per-valve normal timeout when baseline fill time is not available yet.

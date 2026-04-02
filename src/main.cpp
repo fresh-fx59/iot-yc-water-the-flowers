@@ -446,7 +446,10 @@ void bootCountdown() {
     message += "Send /halt to prevent operations and enter firmware update mode";
 
     DebugHelper::debug("📱 Sending countdown notification...");
-    sendTelegramDebug(message);
+    if (!sendTelegramDebug(message)) {
+        DebugHelper::debug("⚠️ Countdown notification send failed - queuing retry");
+        wateringSystem.queueTelegramNotification(message);
+    }
 
     // 10-second countdown loop
     unsigned long countdownStart = millis();
@@ -537,6 +540,7 @@ void setup() {
     // Connect to MQTT (if WiFi available)
     if (NetworkManager::isWiFiConnected()) {
         NetworkManager::connectMQTT();
+        TelegramNotifier::ensureBotCommandsRegistered();
     }
 
     // CRITICAL: Set watering system reference for web API

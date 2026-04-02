@@ -274,6 +274,9 @@ inline void WateringSystem::init() {
   DebugHelper::debugImportant("Water level sensor: GPIO " + String(WATER_LEVEL_SENSOR_PIN));
 
   plantLight.init();
+  time_t now;
+  time(&now);
+  plantLight.syncAutoStateSilently(now);
   DebugHelper::debugImportant("Plant light relay: GPIO " + String(PLANT_LIGHT_RELAY_PIN) +
                               " (auto 22:00-07:00)");
 

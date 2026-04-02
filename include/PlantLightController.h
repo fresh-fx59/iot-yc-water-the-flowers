@@ -17,15 +17,19 @@ private:
   bool lampOn;
   PlantLightMode mode;
 
+  bool writeRelayState(bool enabled) {
+    lampOn = enabled;
+    digitalWrite(PLANT_LIGHT_RELAY_PIN,
+                 enabled == PLANT_LIGHT_ACTIVE_HIGH ? HIGH : LOW);
+    return true;
+  }
+
   bool applyRelayState(bool enabled) {
     if (lampOn == enabled) {
       return false;
     }
 
-    lampOn = enabled;
-    digitalWrite(PLANT_LIGHT_RELAY_PIN,
-                 enabled == PLANT_LIGHT_ACTIVE_HIGH ? HIGH : LOW);
-    return true;
+    return writeRelayState(enabled);
   }
 
 public:
@@ -33,9 +37,7 @@ public:
 
   void init() {
     pinMode(PLANT_LIGHT_RELAY_PIN, OUTPUT);
-    digitalWrite(PLANT_LIGHT_RELAY_PIN,
-                 PLANT_LIGHT_ACTIVE_HIGH ? LOW : HIGH);
-    lampOn = false;
+    writeRelayState(false);
   }
 
   static bool isScheduleActive(const tm &timeInfo) {
@@ -83,6 +85,11 @@ public:
   bool setAuto(time_t now) {
     mode = PLANT_LIGHT_MODE_AUTO;
     return applyRelayState(shouldBeOnNow(now));
+  }
+
+  void syncAutoStateSilently(time_t now) {
+    mode = PLANT_LIGHT_MODE_AUTO;
+    writeRelayState(shouldBeOnNow(now));
   }
 
   bool isOn() const { return lampOn; }

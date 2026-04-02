@@ -4,6 +4,7 @@ Minimal Telegram Bot API proxy for monitoring server.
 
 Exposes:
   POST /v1/telegram/sendMessage
+  POST /v1/telegram/setMyCommands
   GET  /v1/telegram/getUpdates
 
 Optional auth:
@@ -65,7 +66,7 @@ def _telegram_request(bot_token: str, method: str, params: dict[str, str]) -> tu
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/v1/telegram/sendMessage":
+        if self.path not in ("/v1/telegram/sendMessage", "/v1/telegram/setMyCommands"):
             _json_response(self, 404, {"ok": False, "error": "Not found"})
             return
         if not _require_auth(self):
@@ -75,20 +76,29 @@ class Handler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", "0"))
         form = _parse_form(self.rfile.read(content_length))
         bot_token = form.get("bot_token", "").strip()
-        chat_id = form.get("chat_id", "").strip()
-        text = form.get("text", "")
-        parse_mode = form.get("parse_mode", "HTML")
+        method = "sendMessage" if self.path.endswith("/sendMessage") else "setMyCommands"
 
-        if not bot_token or not chat_id:
-            _json_response(self, 400, {"ok": False, "error": "Missing bot_token/chat_id"})
-            return
+        if method == "sendMessage":
+            chat_id = form.get("chat_id", "").strip()
+            text = form.get("text", "")
+            parse_mode = form.get("parse_mode", "HTML")
+
+            if not bot_token or not chat_id:
+                _json_response(self, 400, {"ok": False, "error": "Missing bot_token/chat_id"})
+                return
+
+            params = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+        else:
+            commands = form.get("commands", "").strip()
+
+            if not bot_token or not commands:
+                _json_response(self, 400, {"ok": False, "error": "Missing bot_token/commands"})
+                return
+
+            params = {"commands": commands}
 
         try:
-            status, raw = _telegram_request(
-                bot_token,
-                "sendMessage",
-                {"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
-            )
+            status, raw = _telegram_request(bot_token, method, params)
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))

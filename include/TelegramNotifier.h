@@ -16,6 +16,16 @@
 // ============================================ 
 class TelegramNotifier {
 private:
+    static bool &botCommandsConfigured() {
+        static bool value = false;
+        return value;
+    }
+
+    static unsigned long &lastBotCommandsAttemptMs() {
+        static unsigned long value = 0;
+        return value;
+    }
+
     static unsigned long &telegramCooldownUntilMs() {
         static unsigned long value = 0;
         return value;
@@ -72,6 +82,23 @@ private:
 
     static unsigned long httpTimeoutMs(bool usingProxy) {
         return usingProxy ? TELEGRAM_PROXY_HTTP_TIMEOUT_MS : TELEGRAM_HTTP_TIMEOUT_MS;
+    }
+
+    static String getBotCommandsJson() {
+        return String("[") +
+               "{\"command\":\"help\",\"description\":\"Show command reference\"}," +
+               "{\"command\":\"halt\",\"description\":\"Block watering for firmware updates\"}," +
+               "{\"command\":\"resume\",\"description\":\"Resume normal operation\"}," +
+               "{\"command\":\"time\",\"description\":\"Show RTC time and battery\"}," +
+               "{\"command\":\"settime\",\"description\":\"Sync or set device time\"}," +
+               "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow lock\"}," +
+               "{\"command\":\"reinit_gpio\",\"description\":\"Reinitialize relay GPIOs\"}," +
+               "{\"command\":\"overflow_status\",\"description\":\"Show raw and debounced overflow sensor\"}," +
+               "{\"command\":\"lamp_status\",\"description\":\"Show plant light status\"}," +
+               "{\"command\":\"lamp_on\",\"description\":\"Turn plant light on manually\"}," +
+               "{\"command\":\"lamp_off\",\"description\":\"Turn plant light off manually\"}," +
+               "{\"command\":\"lamp_auto\",\"description\":\"Return plant light to schedule\"}" +
+               "]";
     }
 
     static void logTransportLocalOnly(const String& message) {
@@ -192,6 +219,85 @@ public:
 
     static bool sendDebugMessage(const String& message) {
         return sendMessage(message);
+    }
+
+    static String getHelpMessage() {
+        String message = "📘 <b>AVAILABLE COMMANDS</b>\n\n";
+        message += "/help - Show this help menu\n";
+        message += "/halt - Block watering and keep OTA/web access available\n";
+        message += "/resume - Exit halt mode and resume normal operation\n";
+        message += "/time - Show current RTC time, battery, and lamp status\n";
+        message += "/settime - Sync time from NTP\n";
+        message += "/settime YYYY-MM-DD HH:MM:SS - Set time manually\n";
+        message += "/reset_overflow - Clear the overflow lock after inspection\n";
+        message += "/reinit_gpio - Reinitialize relay and pump GPIO outputs\n";
+        message += "/overflow_status - Show raw and debounced GPIO 42 overflow readings\n";
+        message += "/lamp_status - Show plant light mode and state\n";
+        message += "/lamp_on - Force plant light on\n";
+        message += "/lamp_off - Force plant light off\n";
+        message += "/lamp_auto - Return plant light to automatic schedule";
+
+        return message;
+    }
+
+    static void ensureBotCommandsRegistered() {
+        if (!WiFi.isConnected() || botCommandsConfigured()) {
+            return;
+        }
+
+        unsigned long now = millis();
+        if (lastBotCommandsAttemptMs() != 0 &&
+            now - lastBotCommandsAttemptMs() < 60000) {
+            return;
+        }
+        lastBotCommandsAttemptMs() = now;
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
+
+        int httpCode = -1;
+        if (usingProxy) {
+            String url = monitoringProxyBaseUrl() + "/v1/telegram/setMyCommands";
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                logTransportLocalOnly("❌ Telegram setMyCommands begin failed (proxy)");
+                return;
+            }
+
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            applyProxyAuthHeader(http);
+            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                          "&commands=" + urlEncode(getBotCommandsJson());
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            httpCode = http.POST(body);
+        } else {
+            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                         "/setMyCommands";
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                logTransportLocalOnly("❌ Telegram setMyCommands begin failed");
+                return;
+            }
+
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            String body = "commands=" + urlEncode(getBotCommandsJson());
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            httpCode = http.POST(body);
+        }
+
+        if (httpCode == 200) {
+            botCommandsConfigured() = true;
+            logTransportLocalOnly("✓ Telegram bot commands configured");
+        } else {
+            logTransportLocalOnly("❌ Telegram setMyCommands failed (" +
+                                  String(usingProxy ? "proxy" : "direct") +
+                                  "), HTTP code: " + String(httpCode));
+            if (httpCode > 0) {
+                logTransportLocalOnly("Response: " + http.getString());
+            }
+        }
+
+        http.end();
     }
 
     // Format watering start notification (no network call)

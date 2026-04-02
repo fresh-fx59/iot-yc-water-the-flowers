@@ -66,6 +66,8 @@ void networkTask(void* parameter) {
         NetworkManager::loopWiFi();
 
         if (NetworkManager::isWiFiConnected()) {
+            TelegramNotifier::ensureBotCommandsRegistered();
+
             // Keep Telegram command handling available in both normal and halt mode.
             checkTelegramCommands(0);
             wateringSystem.processPendingNotifications();
@@ -149,7 +151,12 @@ void checkTelegramCommands(int timeout) {
 
     String command = TelegramNotifier::checkForCommands(lastUpdateId, timeout);
 
-    if (command == "/halt" || command == "halt") {
+    if (command == "/help" || command == "help" ||
+        command == "/start" || command == "start") {
+        DebugHelper::debugImportant("📘 HELP command received!");
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(TelegramNotifier::getHelpMessage());
+    } else if (command == "/halt" || command == "halt") {
         if (!wateringSystem.isHaltMode()) {
             DebugHelper::debugImportant("🛑 HALT command received!");
             wateringSystem.setHaltMode(true);

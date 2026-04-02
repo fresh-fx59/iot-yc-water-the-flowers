@@ -604,10 +604,13 @@ void loop() {
         // This prevents over-watering during frequent power cycles
         if (wateringSystem.isFirstBoot()) {
             DebugHelper::debugImportant("🚿 First boot detected - starting initial calibration watering");
-            wateringSystem.startSequentialWatering();
+            wateringSystem.startSequentialWatering("Boot Calibration");
         } else if (wateringSystem.hasOverdueValves()) {
-            DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering");
-            wateringSystem.startSequentialWatering();
+            int overdueValves[NUM_VALVES];
+            int overdueCount = wateringSystem.getOverdueValveIndices(overdueValves, NUM_VALVES);
+
+            DebugHelper::debugImportant("🚿 Overdue valves detected - starting catch-up watering for " + String(overdueCount) + " tray(s)");
+            wateringSystem.startSequentialWateringCustom(overdueValves, overdueCount, "Boot Catch-up");
         } else {
             DebugHelper::debug("✓ All valves on schedule - auto-watering will handle it");
         }

@@ -134,8 +134,9 @@ public:
   // Watering control
   void startWatering(int valveIndex, bool forceWatering = false);
   void stopWatering(int valveIndex);
-  void startSequentialWatering();
-  void startSequentialWateringCustom(int *valveIndices, int count);
+  void startSequentialWatering(const String &triggerType = "MQTT");
+  void startSequentialWateringCustom(int *valveIndices, int count,
+                                     const String &triggerType = "");
   void stopSequentialWatering();
 
   // Time-based learning algorithm
@@ -170,6 +171,7 @@ public:
                       // watering)
   bool
   hasOverdueValves(); // Check if any valve's next watering time is in the past
+  int getOverdueValveIndices(int *valveIndices, int maxCount);
 
   // Sensor diagnostics
   void testSensor(int valveIndex);  // Test a specific sensor and log results
@@ -1058,7 +1060,7 @@ inline void WateringSystem::stopWatering(int valveIndex) {
   }
 }
 
-inline void WateringSystem::startSequentialWatering() {
+inline void WateringSystem::startSequentialWatering(const String &triggerType) {
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
     DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
@@ -1097,7 +1099,7 @@ inline void WateringSystem::startSequentialWatering() {
   publishStateChange("system", "sequential_started");
 
   // Start Telegram session and send start notification
-  startTelegramSession("MQTT");
+  startTelegramSession(triggerType);
 
   // Build tray numbers list
   String trayNumbers;
@@ -1119,7 +1121,8 @@ inline void WateringSystem::startSequentialWatering() {
 }
 
 inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
-                                                          int count) {
+                                                          int count,
+                                                          const String &triggerType) {
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
     DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
@@ -1164,6 +1167,22 @@ inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
   sequentialMode = true;
   currentSequenceIndex = 0;
   publishStateChange("system", "sequential_started");
+
+  if (triggerType.length() > 0) {
+    startTelegramSession(triggerType);
+
+    String trayNumbers;
+    for (int i = 0; i < sequenceLength; i++) {
+      trayNumbers += String(sequenceValves[i] + 1); // Convert to 1-indexed
+      if (i < sequenceLength - 1) {
+        trayNumbers += ", ";
+      }
+    }
+
+    queueTelegramNotification(
+        TelegramNotifier::formatWateringStarted(sessionTriggerType, trayNumbers));
+  }
+
   startNextInSequence();
 }
 
@@ -2059,7 +2078,12 @@ inline bool WateringSystem::isFirstBoot() {
 }
 
 inline bool WateringSystem::hasOverdueValves() {
+  return getOverdueValveIndices(nullptr, 0) > 0;
+}
+
+inline int WateringSystem::getOverdueValveIndices(int *valveIndices, int maxCount) {
   unsigned long currentTime = millis();
+  int overdueCount = 0;
 
   for (int i = 0; i < NUM_VALVES; i++) {
     ValveController *valve = valves[i];
@@ -2093,12 +2117,15 @@ inline bool WateringSystem::hasOverdueValves() {
         DebugHelper::debug(
             "Valve " + String(i) + " is overdue (interval: " +
             LearningAlgorithm::formatDuration(valve->emptyToFullDuration) + ")");
-        return true;
+        if (valveIndices && overdueCount < maxCount) {
+          valveIndices[overdueCount] = i;
+        }
+        overdueCount++;
       }
     }
   }
 
-  return false; // No overdue valves
+  return overdueCount;
 }
 
 // ========== Halt Mode Control ==========

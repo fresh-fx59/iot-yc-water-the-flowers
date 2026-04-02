@@ -1902,10 +1902,15 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
     // Column 0: Tray number (1-indexed)
     scheduleData[i][0] = String(i + 1);
 
-    // Column 2: Duration (baseline fill time in seconds)
+    // Column 2: Duration (expected watering runtime in seconds)
     if (valve->baselineFillDuration > 0) {
       float durationSec = valve->baselineFillDuration / 1000.0;
       scheduleData[i][2] = String(durationSec, 1);
+    } else if (valve->emptyToFullDuration > 0 || valve->isCalibrated) {
+      // Retry/calibration-in-progress path: baseline is unknown yet, but valve can
+      // still water using per-valve timeout safeguards.
+      float fallbackDurationSec = getValveNormalTimeout(i) / 1000.0;
+      scheduleData[i][2] = String(fallbackDurationSec, 1);
     } else {
       scheduleData[i][2] = "-";
     }

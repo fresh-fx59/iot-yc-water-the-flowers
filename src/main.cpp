@@ -12,13 +12,11 @@
  *
  * ARCHITECTURE:
  * - Core 1 (main loop): Watering control @ 100Hz (time-critical, never blocks)
- * - Core 0 (network task): WiFi/MQTT/Telegram/OTA @ 2Hz (can timeout without affecting watering)
+ * - Core 0 (network task): WiFi/Telegram/OTA (can timeout without affecting watering)
  * - Network issues cannot cause sensor monitoring failures or overflow
  */
 
 #include <WiFi.h>
-#include <PubSubClient.h>
-#include <WiFiClientSecure.h>
 #include <LittleFS.h>
 #include <Wire.h>
 #include <time.h>
@@ -37,8 +35,6 @@
 // ============================================
 // Global Objects
 // ============================================
-WiFiClientSecure wifiClient;
-PubSubClient mqttClient(wifiClient);
 WateringSystem wateringSystem;
 int lastUpdateId = 0; // Tracks the last processed Telegram update ID to avoid reprocessing old messages.
 
@@ -72,12 +68,6 @@ void networkTask(void* parameter) {
             checkTelegramCommands(0);
             wateringSystem.processPendingNotifications();
             DebugHelper::loop();
-
-            // MQTT traffic is disabled during halt mode, but local HTTP stays active.
-            if (!wateringSystem.isHaltMode()) {
-                NetworkManager::loopMQTT();
-                wateringSystem.publishPendingMQTTState();
-            }
         }
 
         // Poll quickly so local API/UI and OTA remain responsive.
@@ -156,6 +146,31 @@ void checkTelegramCommands(int timeout) {
         DebugHelper::debugImportant("📘 HELP command received!");
         DebugHelper::flushBuffer();
         sendTelegramDebug(TelegramNotifier::getHelpMessage());
+    } else if (command == "/start_all" || command == "start_all") {
+        DebugHelper::debugImportant("🚿 START ALL command received!");
+        wateringSystem.startSequentialWatering("Telegram");
+
+        String message = "🚿 <b>SEQUENTIAL WATERING STARTED</b>\n\n";
+        message += "• Watering all trays (5→0)\n";
+        message += "• Send /halt to stop";
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(message);
+    } else if (command == "/test_sensors" || command == "test_sensors") {
+        DebugHelper::debugImportant("🔍 TEST ALL SENSORS command received!");
+        wateringSystem.testAllSensors();
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug("🔍 <b>Testing all sensors</b>\n\nResults will appear in debug log.");
+    } else if (command.startsWith("/test_sensor_") || command.startsWith("test_sensor_")) {
+        String indexStr = command;
+        indexStr.replace("/test_sensor_", "");
+        indexStr.replace("test_sensor_", "");
+        int valveIndex = indexStr.toInt();
+        DebugHelper::debugImportant("🔍 TEST SENSOR " + String(valveIndex) + " command received!");
+        wateringSystem.testSensor(valveIndex);
+
+        DebugHelper::flushBuffer();
+        sendTelegramDebug("🔍 <b>Testing sensor " + String(valveIndex) + "</b>\n\nResults will appear in debug log.");
     } else if (command == "/halt" || command == "halt") {
         if (!wateringSystem.isHaltMode()) {
             DebugHelper::debugImportant("🛑 HALT command received!");
@@ -415,6 +430,8 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/water");
     httpServer.on("/api/stop", HTTP_GET, handleStopApi);
     Serial.println("  ✓ Registered /api/stop");
+    httpServer.on("/api/start_all", HTTP_GET, handleStartAllApi);
+    Serial.println("  ✓ Registered /api/start_all");
     httpServer.on("/api/status", HTTP_GET, handleStatusApi);
     Serial.println("  ✓ Registered /api/status");
     httpServer.on("/api/lamp", HTTP_GET, handlePlantLightApi);
@@ -486,7 +503,6 @@ void setup() {
     DebugHelper::debug("Smart Watering System");
     DebugHelper::debug("Platform: ESP32-S3-N8R2");
     DebugHelper::debug("Version: " + String(VERSION));
-    DebugHelper::debug("Device ID: " + DebugHelper::maskCredential(String(YC_DEVICE_ID)));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
 
@@ -537,9 +553,7 @@ void setup() {
     // Connect to WiFi
     NetworkManager::connectWiFi();
 
-    // Connect to MQTT (if WiFi available)
     if (NetworkManager::isWiFiConnected()) {
-        NetworkManager::connectMQTT();
         TelegramNotifier::ensureBotCommandsRegistered();
     }
 
@@ -558,7 +572,7 @@ void setup() {
     // Create Network Task on Core 0
     // ============================================
     // This separates time-critical watering operations (Core 1) from
-    // network I/O (Core 0) to prevent WiFi/Telegram/MQTT issues from
+    // network I/O (Core 0) to prevent WiFi/Telegram issues from
     // blocking sensor monitoring and causing overflows.
     DebugHelper::debug("Creating network task on Core 0...");
 

@@ -12,11 +12,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
-#include <PubSubClient.h>
 #include <WiFi.h>
-
-// External MQTT client (defined in main.cpp)
-extern PubSubClient mqttClient;
 
 // NeoPixel LED (1 pixel on GPIO 48)
 Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
@@ -89,9 +85,6 @@ private:
   PlantLightController plantLight;
   unsigned long lastPlantLightScheduleCheck;
 
-  // Thread-safe MQTT publishing flag (Core 1 sets, Core 0 publishes)
-  volatile bool mqttPublishPending;
-
   // Thread-safe Telegram notification queue (Core 1 queues, Core 0 sends)
   // Uses FreeRTOS queue for safe cross-core access without manual synchronization.
   static const int NOTIFICATION_QUEUE_SIZE = 16;
@@ -109,7 +102,6 @@ public:
         lastWaterLevelCheck(0), waterLevelLowNotificationSent(false),
         waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
         lastPlantLightScheduleCheck(0),
-        mqttPublishPending(false),
         notificationQueue(nullptr) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
@@ -133,7 +125,7 @@ public:
   // Watering control
   void startWatering(int valveIndex, bool forceWatering = false);
   void stopWatering(int valveIndex);
-  void startSequentialWatering(const String &triggerType = "MQTT");
+  void startSequentialWatering(const String &triggerType = "Manual");
   void startSequentialWateringCustom(int *valveIndices, int count,
                                      const String &triggerType = "");
   void stopSequentialWatering();
@@ -151,7 +143,6 @@ public:
 
   // State management
   void publishCurrentState();
-  void publishPendingMQTTState();  // Called from Core 0 (networkTask) to publish cached state via MQTT
   void queueTelegramNotification(const String& message);  // Queue notification from Core 1 (non-blocking)
   void processPendingNotifications();  // Called from Core 0 (networkTask) to send queued Telegram messages
   void clearTimeoutFlag(int valveIndex);
@@ -294,7 +285,7 @@ inline void WateringSystem::init() {
 // Call this after events that may leave relays in stuck state:
 // - Overflow sensor recovery
 // - Water level sensor recovery
-// - WiFi/MQTT reconnection after long disconnection
+// - WiFi reconnection after long disconnection
 // - Any situation where physical power cycle would normally be needed
 inline void WateringSystem::reinitializeGPIOHardware() {
   DebugHelper::debugImportant("🔧 Reinitializing GPIO hardware to unstick relay modules...");
@@ -1051,7 +1042,7 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
   unsigned long currentTime = millis();
 
   // Check if we should skip this watering (time-based learning algorithm)
-  // ONLY skip for auto-watering, NOT for manual/MQTT commands
+  // ONLY skip for auto-watering, NOT for manual/Telegram/API commands
   if (!forceWatering && valve->isCalibrated && valve->emptyToFullDuration > 0 &&
       valve->lastWateringCompleteTime > 0) {
     // Safety check for future timestamps (e.g. clock drift)

@@ -42,10 +42,6 @@ private:
     static unsigned long lastGroupMessageTime;
     static unsigned long firstGroupMessageTime;  // Track when group started (for max age)
 
-    // Cached device ID strings for performance
-    static String cachedDeviceId;
-    static String cachedMaskedDeviceId;
-
 public:
     // Get current timestamp with milliseconds (using system time)
     static String getCurrentTimestamp() {
@@ -78,29 +74,8 @@ public:
         return first + "****" + last;
     }
 
-    // Mask device ID in message: are3tumc1rl90r7kflvl -> are3****flvl (cached for performance)
     static String maskDeviceId(const String& message) {
-        // Initialize cache on first use
-        if (cachedDeviceId.length() == 0) {
-            cachedDeviceId = String(YC_DEVICE_ID);
-            if (cachedDeviceId.length() >= 8) {
-                String first4 = cachedDeviceId.substring(0, 4);
-                String last4 = cachedDeviceId.substring(cachedDeviceId.length() - 4);
-                cachedMaskedDeviceId = first4 + "****" + last4;
-            } else {
-                cachedMaskedDeviceId = cachedDeviceId;  // Too short to mask
-            }
-        }
-
-        // Quick check if device ID is in message
-        if (message.indexOf(cachedDeviceId) == -1) {
-            return message;  // Device ID not found, return as-is
-        }
-
-        // Replace all occurrences using cached values
-        String result = message;
-        result.replace(cachedDeviceId, cachedMaskedDeviceId);
-        return result;
+        return message;
     }
 
     // Queue a message for Telegram delivery with grouping
@@ -354,7 +329,5 @@ unsigned long DebugHelper::lastProcessTime = 0;
 String DebugHelper::groupingBuffer = "";
 unsigned long DebugHelper::lastGroupMessageTime = 0;
 unsigned long DebugHelper::firstGroupMessageTime = 0;
-String DebugHelper::cachedDeviceId = "";
-String DebugHelper::cachedMaskedDeviceId = "";
 
 #endif // DEBUG_HELPER_H

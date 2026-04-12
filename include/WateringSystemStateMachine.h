@@ -367,27 +367,13 @@ inline void WateringSystem::publishCurrentState() {
 
     stateJson += "]}";
 
-    // Cache state for web interface
+    // Cache state for web API (/api/status)
     lastStateJson = stateJson;
-
-    // Signal Core 0 (networkTask) to publish via MQTT
-    // NOTE: mqttClient is NOT accessed here - it's not thread-safe
-    mqttPublishPending = true;
-}
-
-// Called from Core 0 (networkTask) to publish cached state via MQTT
-inline void WateringSystem::publishPendingMQTTState() {
-    if (mqttPublishPending && mqttClient.connected()) {
-        mqttClient.publish(STATE_TOPIC.c_str(), lastStateJson.c_str());
-        mqttPublishPending = false;
-    }
 }
 
 inline void WateringSystem::publishStateChange(const String& component, const String& state) {
-    // NOTE: This is called from Core 1 (watering loop).
-    // Do NOT access mqttClient here - it's not thread-safe.
     // State changes are captured in periodic publishCurrentState() updates
-    // which Core 0 publishes via publishPendingMQTTState().
+    // and served via /api/status from the cached lastStateJson.
     (void)component;
     (void)state;
 }

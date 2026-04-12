@@ -107,6 +107,17 @@ inline void handlePlantLightApi() {
     httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid action (use on, off, or auto)\"}");
 }
 
+inline void handleStartAllApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+
+    Serial.println("✓ API: Starting sequential watering (all valves)");
+    g_wateringSystem_ptr->startSequentialWatering("Web API");
+    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Sequential watering started\"}");
+}
+
 inline void handleResetCalibrationApi() {
     if (!g_wateringSystem_ptr) {
         httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");

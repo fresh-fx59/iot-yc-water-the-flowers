@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.19.13";
+const char *VERSION = "watering_system_1.20.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -200,24 +200,6 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 // ============================================
 #define DEBUG_SERIAL Serial
 #define DEBUG_SERIAL_BAUDRATE 115200
-
-// ============================================
-// MQTT Configuration
-// ============================================
-const unsigned long MQTT_OUTAGE_NOTIFY_THRESHOLD_MS = 600000;  // 10 minutes - only notify Telegram for outages longer than this
-const unsigned long MQTT_RECONNECT_BACKOFF_INITIAL_MS = 5000;  // Start with 5s between attempts
-const unsigned long MQTT_RECONNECT_BACKOFF_MAX_MS = 300000;    // Cap at 5 minutes
-const char *MQTT_SERVER = "mqtt.cloud.yandex.net";
-const int MQTT_PORT = 8883;
-const int MQTT_BUFFER_SIZE = 1024;
-const int MQTT_KEEP_ALIVE = 15;
-
-// MQTT Topics
-const String DEVICE_TOPIC_PREFIX =
-    String("$devices/") + YC_DEVICE_ID + String("/");
-const String COMMAND_TOPIC = DEVICE_TOPIC_PREFIX + String("commands");
-const String EVENT_TOPIC = DEVICE_TOPIC_PREFIX + String("events");
-const String STATE_TOPIC = DEVICE_TOPIC_PREFIX + String("state");
 
 // ============================================
 // WiFi Configuration

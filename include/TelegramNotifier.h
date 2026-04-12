@@ -114,13 +114,15 @@ private:
     static String getBotCommandsJson() {
         return String("[") +
                "{\"command\":\"help\",\"description\":\"Show command reference\"}," +
+               "{\"command\":\"start_all\",\"description\":\"Water all trays sequentially\"}," +
                "{\"command\":\"halt\",\"description\":\"Block watering for firmware updates\"}," +
                "{\"command\":\"resume\",\"description\":\"Resume normal operation\"}," +
                "{\"command\":\"time\",\"description\":\"Show RTC time and battery\"}," +
                "{\"command\":\"settime\",\"description\":\"Sync or set device time\"}," +
+               "{\"command\":\"test_sensors\",\"description\":\"Test all rain sensors\"}," +
                "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow lock\"}," +
                "{\"command\":\"reinit_gpio\",\"description\":\"Reinitialize relay GPIOs\"}," +
-               "{\"command\":\"overflow_status\",\"description\":\"Show raw and debounced overflow sensor\"}," +
+               "{\"command\":\"overflow_status\",\"description\":\"Show overflow sensor readings\"}," +
                "{\"command\":\"lamp_status\",\"description\":\"Show plant light status\"}," +
                "{\"command\":\"lamp_on\",\"description\":\"Turn plant light on manually\"}," +
                "{\"command\":\"lamp_off\",\"description\":\"Turn plant light off manually\"}," +
@@ -313,19 +315,22 @@ public:
 
     static String getHelpMessage() {
         String message = "📘 <b>AVAILABLE COMMANDS</b>\n\n";
-        message += "/help - Show this help menu\n";
-        message += "/halt - Block watering and keep OTA/web access available\n";
-        message += "/resume - Exit halt mode and resume normal operation\n";
-        message += "/time - Show current RTC time, battery, and lamp status\n";
-        message += "/settime - Sync time from NTP\n";
-        message += "/settime YYYY-MM-DD HH:MM:SS - Set time manually\n";
-        message += "/reset_overflow - Clear the overflow lock after inspection\n";
-        message += "/reinit_gpio - Reinitialize relay and pump GPIO outputs\n";
-        message += "/overflow_status - Show raw and debounced GPIO 42 overflow readings\n";
-        message += "/lamp_status - Show plant light mode and state\n";
-        message += "/lamp_on - Force plant light on\n";
-        message += "/lamp_off - Force plant light off\n";
-        message += "/lamp_auto - Return plant light to automatic schedule";
+        message += "<b>Watering</b>\n";
+        message += "/start_all - Water all trays sequentially\n";
+        message += "/halt - Block watering (OTA/web stay active)\n";
+        message += "/resume - Exit halt mode\n\n";
+        message += "<b>Diagnostics</b>\n";
+        message += "/time - RTC time, battery, lamp status\n";
+        message += "/settime - Sync from NTP\n";
+        message += "/test_sensors - Test all rain sensors\n";
+        message += "/test_sensor_N - Test sensor N (0-5)\n";
+        message += "/overflow_status - Overflow sensor readings\n\n";
+        message += "<b>Safety</b>\n";
+        message += "/reset_overflow - Clear overflow lock\n";
+        message += "/reinit_gpio - Reinitialize relay GPIOs\n\n";
+        message += "<b>Plant Light</b>\n";
+        message += "/lamp_status - Show light status\n";
+        message += "/lamp_on /lamp_off /lamp_auto";
 
         return message;
     }

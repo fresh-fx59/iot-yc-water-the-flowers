@@ -26,6 +26,7 @@ private:
         return value;
     }
 
+    // --- Debug/command cooldown (shared by DebugHelper and checkForCommands) ---
     static unsigned long &telegramCooldownUntilMs() {
         static unsigned long value = 0;
         return value;
@@ -49,6 +50,32 @@ private:
         unsigned long currentBackoff = telegramFailureBackoffMs();
         telegramCooldownUntilMs() = millis() + currentBackoff;
         telegramFailureBackoffMs() = min(currentBackoff * 2, TELEGRAM_FAILURE_COOLDOWN_MAX_MS);
+    }
+
+    // --- Notification cooldown (independent, so debug failures don't block notifications) ---
+    static unsigned long &notifCooldownUntilMs() {
+        static unsigned long value = 0;
+        return value;
+    }
+
+    static unsigned long &notifFailureBackoffMs() {
+        static unsigned long value = TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS;
+        return value;
+    }
+
+    static bool isNotifInCooldown() {
+        return millis() < notifCooldownUntilMs();
+    }
+
+    static void onNotifSuccess() {
+        notifCooldownUntilMs() = 0;
+        notifFailureBackoffMs() = TELEGRAM_FAILURE_COOLDOWN_INITIAL_MS;
+    }
+
+    static void onNotifFailure() {
+        unsigned long currentBackoff = notifFailureBackoffMs();
+        notifCooldownUntilMs() = millis() + currentBackoff;
+        notifFailureBackoffMs() = min(currentBackoff * 2, TELEGRAM_FAILURE_COOLDOWN_MAX_MS);
     }
 
     static bool useMonitoringProxy() {
@@ -219,6 +246,69 @@ public:
 
     static bool sendDebugMessage(const String& message) {
         return sendMessage(message);
+    }
+
+    // Send a watering notification with its own independent cooldown.
+    // Debug/command failures won't block notification delivery.
+    static bool sendNotificationMessage(const String& message) {
+        if (!WiFi.isConnected()) {
+            return false;
+        }
+        if (isNotifInCooldown()) {
+            return false;
+        }
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
+
+        int httpCode = -1;
+        if (usingProxy) {
+            String url = monitoringProxyBaseUrl() + "/v1/telegram/sendMessage";
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                onNotifFailure();
+                logTransportLocalOnly("❌ Telegram notification send begin failed (proxy)");
+                return false;
+            }
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            applyProxyAuthHeader(http);
+            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                          "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
+                          "&text=" + urlEncode(message) +
+                          "&parse_mode=HTML";
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            httpCode = http.POST(body);
+        } else {
+            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                         "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
+                         "&text=" + urlEncode(message) +
+                         "&parse_mode=HTML";
+
+            if (!beginHttpClient(http, url, client, plainClient)) {
+                onNotifFailure();
+                logTransportLocalOnly("❌ Telegram notification send begin failed");
+                return false;
+            }
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            httpCode = http.GET();
+        }
+
+        bool success = (httpCode == 200);
+
+        if (success) {
+            onNotifSuccess();
+            logTransportLocalOnly("✓ Telegram notification sent");
+        } else {
+            onNotifFailure();
+            logTransportLocalOnly("❌ Telegram notification send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            if (httpCode > 0) {
+                logTransportLocalOnly("Response: " + http.getString());
+            }
+        }
+
+        http.end();
+        return success;
     }
 
     static String getHelpMessage() {

@@ -93,11 +93,9 @@ private:
   volatile bool mqttPublishPending;
 
   // Thread-safe Telegram notification queue (Core 1 queues, Core 0 sends)
-  static const int NOTIFICATION_QUEUE_SIZE = 8;
-  String notificationQueue[NOTIFICATION_QUEUE_SIZE];
-  volatile int notificationQueueHead;
-  volatile int notificationQueueTail;
-  volatile int notificationQueueCount;
+  // Uses FreeRTOS queue for safe cross-core access without manual synchronization.
+  static const int NOTIFICATION_QUEUE_SIZE = 16;
+  QueueHandle_t notificationQueue;
 
 public:
   // ========== Constructor ==========
@@ -112,8 +110,7 @@ public:
         waterLevelLowFirstDetectedTime(0), waterLevelLowWaitingLogged(false),
         lastPlantLightScheduleCheck(0),
         mqttPublishPending(false),
-        notificationQueueHead(0), notificationQueueTail(0),
-        notificationQueueCount(0) {
+        notificationQueue(nullptr) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
       sequenceValves[i] = 0;
@@ -237,6 +234,11 @@ private:
 
 // ========== Initialization ==========
 inline void WateringSystem::init() {
+  // Create FreeRTOS queue for thread-safe Telegram notifications between cores.
+  // Stores String* pointers; actual Strings are heap-allocated by producer (Core 1)
+  // and freed by consumer (Core 0) after successful send.
+  notificationQueue = xQueueCreate(NOTIFICATION_QUEUE_SIZE, sizeof(String*));
+
   // Initialize hardware pins
   pinMode(PUMP_PIN, OUTPUT);
   pinMode(RAIN_SENSOR_POWER_PIN, OUTPUT);
@@ -1560,6 +1562,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         valve->lastWateringAttemptTime = currentTime;
         valve->realTimeSinceLastWateringAttempt = 0;
         saveLearningData();
+        sendScheduleUpdateIfNeeded();
         return;
       }
     }
@@ -1592,6 +1595,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         valve->lastWateringAttemptTime = currentTime;
         valve->realTimeSinceLastWateringAttempt = 0;
         saveLearningData();
+        sendScheduleUpdateIfNeeded();
         return;
       }
     }
@@ -2366,32 +2370,34 @@ inline void WateringSystem::testAllSensors() {
 // ========== Telegram Notification Queue ==========
 // Queue a pre-formatted notification from Core 1 (non-blocking, no network calls)
 inline void WateringSystem::queueTelegramNotification(const String& message) {
-  if (notificationQueueCount >= NOTIFICATION_QUEUE_SIZE) {
+  String* msg = new String(message);
+  if (xQueueSend(notificationQueue, &msg, 0) != pdTRUE) {
     DebugHelper::debug("⚠️ Telegram notification queue full - dropping message");
-    return;
+    delete msg;
   }
-
-  notificationQueue[notificationQueueTail] = message;
-  notificationQueueTail = (notificationQueueTail + 1) % NOTIFICATION_QUEUE_SIZE;
-  notificationQueueCount++;
 }
 
 // Process pending notifications from Core 0 (networkTask) - sends via Telegram
 inline void WateringSystem::processPendingNotifications() {
   // Process only one message per network task iteration.
   // This prevents long Telegram outages from starving local web/API handling.
-  if (notificationQueueCount <= 0 || !WiFi.isConnected()) {
+  if (!WiFi.isConnected()) {
     return;
   }
 
-  String message = notificationQueue[notificationQueueHead];
-  if (!sendTelegramDebug(message)) {
-    return;
+  String* msg = nullptr;
+  if (xQueuePeek(notificationQueue, &msg, 0) != pdTRUE) {
+    return; // Queue empty
   }
 
-  notificationQueue[notificationQueueHead] = ""; // Free memory after confirmed send
-  notificationQueueHead = (notificationQueueHead + 1) % NOTIFICATION_QUEUE_SIZE;
-  notificationQueueCount--;
+  // Send using dedicated notification path that bypasses DebugHelper cooldown.
+  if (!TelegramNotifier::sendNotificationMessage(*msg)) {
+    return; // Send failed - leave message at head for retry
+  }
+
+  // Remove from queue only after confirmed send
+  xQueueReceive(notificationQueue, &msg, 0);
+  delete msg;
 }
 
 // ============================================

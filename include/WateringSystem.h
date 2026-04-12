@@ -25,9 +25,9 @@ Adafruit_NeoPixel statusLED(1, LED_PIN, NEO_GRB + NEO_KHZ800);
 // To reset learning data: swap the filenames below, old file auto-deletes on
 // boot
 const char *LEARNING_DATA_FILE =
-    "/learning_data_v1.19.2.json"; // ACTIVE: Current learning data (v1.19.2 reset)
+    "/learning_data_v1.19.12.json"; // ACTIVE: Current learning data (v1.19.12 reset - fixed interval growth bug)
 const char *LEARNING_DATA_FILE_OLD =
-    "/learning_data_v1.18.4.json"; // OLD: Will be deleted on boot (previous version)
+    "/learning_data_v1.19.2.json"; // OLD: Will be deleted on boot (previous version)
 
 // ============================================
 // Session Tracking Struct (for Telegram notifications)
@@ -1708,18 +1708,21 @@ inline void WateringSystem::processLearningData(ValveController *valve,
                                     String(valve->intervalMultiplier, 2) + "x");
       }
     } else if (fillDuration < valve->previousFillDuration) {
-      // Fill decreased from last time - interval was too long, fine-tune upward
+      // Fill decreased from last time - tray was less empty, interval too short
       valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
       DebugHelper::debugImportant(
           "  ⬆️  Fill decreased → Interval: " + String(oldMultiplier, 2) +
           "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
           String(INTERVAL_INCREMENT_FINE, 2) + ")");
     } else {
-      // Fill increased from last time - can try longer interval
-      valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
+      // Fill increased from last time - tray was emptier, interval too long
+      valve->intervalMultiplier -= INTERVAL_INCREMENT_FINE;
+      if (valve->intervalMultiplier < MIN_INTERVAL_MULTIPLIER) {
+        valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER;
+      }
       DebugHelper::debugImportant(
-          "  ⬆️  Fill increased → Interval: " + String(oldMultiplier, 2) +
-          "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
+          "  ⬇️  Fill increased → Interval: " + String(oldMultiplier, 2) +
+          "x → " + String(valve->intervalMultiplier, 2) + "x (-" +
           String(INTERVAL_INCREMENT_FINE, 2) + ")");
     }
   }

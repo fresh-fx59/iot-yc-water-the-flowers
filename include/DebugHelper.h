@@ -159,18 +159,17 @@ public:
         groupingBuffer = "";
     }
 
-    // Send debug message (buffered)
+    // Send debug message — routes to Loki (not Telegram)
     static void debug(const String& message) {
         #if IS_DEBUG_TO_SERIAL_ENABLED
         DEBUG_SERIAL.println(message);
         #endif
 
-        #if IS_DEBUG_TO_TELEGRAM_ENABLED
-        queueMessage(message, false);
-        #endif
+        // Route to Loki via MetricsPusher callback
+        if (g_metricsLog) g_metricsLog("debug", message);
     }
 
-    // Send important debug message (queued with priority handling)
+    // Send important debug message — routes to BOTH Telegram and Loki
     static void debugImportant(const String& message) {
         #if IS_DEBUG_TO_SERIAL_ENABLED
         DEBUG_SERIAL.println(message);
@@ -179,6 +178,9 @@ public:
         #if IS_DEBUG_TO_TELEGRAM_ENABLED
         queueMessage("🔴 " + message, true);
         #endif
+
+        // Also route to Loki for Grafana visibility
+        if (g_metricsLog) g_metricsLog("warn", message);
     }
 
     // Process queue - call this in main loop

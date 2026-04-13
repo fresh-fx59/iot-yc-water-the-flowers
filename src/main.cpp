@@ -507,7 +507,6 @@ void setup() {
     DebugHelper::debug("Version: " + String(VERSION));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
-    MetricsPusher::logInfo("Boot start, version: " + String(VERSION));
 
     // Initialize battery measurement pins
     pinMode(BATTERY_CONTROL_PIN, OUTPUT);
@@ -537,8 +536,9 @@ void setup() {
     // Initialize watering system (will load learning data from LittleFS)
     wateringSystem.init();
 
-    // Initialize metrics pusher
+    // Initialize metrics pusher (sets g_metricsLog callback for Loki routing)
     MetricsPusher::init();
+    MetricsPusher::logInfo("Boot start, version: " + String(VERSION));
 
     // Initialize network manager
     NetworkManager::setWateringSystem(&wateringSystem);

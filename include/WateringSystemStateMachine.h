@@ -20,9 +20,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             valve->valveOpenTime = currentTime;
             valve->phase = PHASE_WAITING_STABILIZATION;
             DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
-            #ifdef METRICS_PUSHER_H
-            MetricsPusher::logInfo("Valve " + String(valveIndex) + ": opened");
-            #endif
+            if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": opened");
             publishStateChange("valve" + String(valveIndex), "valve_opened");
             break;
 
@@ -43,9 +41,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 if (isRaining) {
                     // Sensor already wet = TRAY IS FULL - treat as successful fill
                     DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
-                    #ifdef METRICS_PUSHER_H
-                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": rain=WET");
-                    #endif
+                    if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=WET");
 
                     // SAFETY: Close valve immediately
                     closeValve(valveIndex);
@@ -71,10 +67,10 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 } else {
                     // Sensor dry - start watering
                     DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
-                    #ifdef METRICS_PUSHER_H
-                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": rain=DRY");
-                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": watering started");
-                    #endif
+                    if (g_metricsLog) {
+                        g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=DRY");
+                        g_metricsLog("info", "Valve " + String(valveIndex) + ": watering started");
+                    }
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
                     valve->phase = PHASE_WATERING;
@@ -232,9 +228,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             closeValve(valveIndex);
             {
                 unsigned long closeDuration = (valve->valveOpenTime > 0) ? (currentTime - valve->valveOpenTime) / 1000 : 0;
-                #ifdef METRICS_PUSHER_H
-                MetricsPusher::logInfo("Valve " + String(valveIndex) + ": closing, duration=" + String(closeDuration) + "s" + (valve->timeoutOccurred ? " TIMEOUT" : ""));
-                #endif
+                if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": closing, duration=" + String(closeDuration) + "s" + (valve->timeoutOccurred ? " TIMEOUT" : ""));
                 (void)closeDuration;
             }
             valve->phase = PHASE_IDLE;

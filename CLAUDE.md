@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.20.3 (config.h:10)
+**Version**: 1.20.4 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -69,7 +69,7 @@ All logic lives in `include/*.h` as inline headers. Source files (`src/main.cpp`
 - `api_handlers.h` — web API endpoints (inline, registered in main.cpp)
 - `DS3231RTC.h` — RTC time source (no NTP), battery voltage, temperature
 - `MetricsPusher.h` — Prometheus metrics + Loki log push (Core 0)
-- `DebugHelper.h` — circular buffer debug with Telegram relay
+- `DebugHelper.h` — debug logging: `debug()` routes to Loki via `g_metricsLog` callback, `debugImportant()` routes to both Telegram and Loki
 - `ota.h` — OTA firmware updates
 - `secret.h` — credentials (never commit)
 - `TestConfig.h` — test environment stubs
@@ -238,7 +238,7 @@ All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
 14. Overflow sensor uses software debouncing (5/7 readings must be LOW) to filter electrical noise
 15. Water level sensor has 11s continuation delay before blocking (allows active cycles to finish)
 16. MQTT outage notifications suppressed for < 10 min (`MQTT_OUTAGE_NOTIFY_THRESHOLD_MS`)
-17. MetricsPusher.h MUST be included LAST in main.cpp (depends on WateringSystem.h). Log calls in earlier headers use `#ifdef METRICS_PUSHER_H` guards.
+17. MetricsPusher.h MUST be included LAST in main.cpp (depends on WateringSystem.h). Log routing uses `g_metricsLog` function pointer callback (set in `MetricsPusher::init()`) so headers included before MetricsPusher.h can log without compile-time dependency.
 18. esp32_metrics_proxy.py must bind to 0.0.0.0 (not 127.0.0.1) — Prometheus runs in Docker and reaches it via `host.docker.internal`
 
 ## Testing & Debug

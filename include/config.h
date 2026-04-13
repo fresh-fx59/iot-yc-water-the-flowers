@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.20.3";
+const char *VERSION = "watering_system_1.20.4";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -199,6 +199,18 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 #ifndef METRICS_PROXY_BASE_URL
 #define METRICS_PROXY_BASE_URL TELEGRAM_PROXY_BASE_URL
 #endif
+
+// ============================================
+// Metrics Log Routing
+// ============================================
+// Global callback for routing log messages to MetricsPusher (Loki).
+// Set by MetricsPusher::init(). Allows headers included before MetricsPusher.h
+// to log without a compile-time dependency on MetricsPusher.
+typedef void (*MetricsLogFn)(const String& level, const String& msg);
+MetricsLogFn g_metricsLog = nullptr;
+
+// Global telegram failure counter (incremented by TelegramNotifier, read by MetricsPusher)
+int g_telegramFailures = 0;
 
 // ============================================
 // Metrics Push Configuration

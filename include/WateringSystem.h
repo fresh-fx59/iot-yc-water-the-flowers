@@ -595,9 +595,7 @@ inline void WateringSystem::globalSafetyWatchdog(unsigned long currentTime) {
         DebugHelper::debugImportant("Valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s!");
         DebugHelper::debugImportant("Duration: " + String(wateringDuration / 1000) + "s");
         DebugHelper::debugImportant("FORCING EMERGENCY SHUTDOWN!");
-        #ifdef METRICS_PUSHER_H
-        MetricsPusher::logError("Safety watchdog: valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s, forcing shutdown");
-        #endif
+        if (g_metricsLog) g_metricsLog("error", "Safety watchdog: valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s, forcing shutdown");
 
         // FORCE DIRECT GPIO CONTROL - BYPASS ALL STATE MACHINES
         digitalWrite(VALVE_PINS[i], LOW);
@@ -670,9 +668,7 @@ inline void WateringSystem::checkMasterOverflowSensor(unsigned long currentTime)
                                   " (" + String(lowReadings) + "/" + String(OVERFLOW_DEBOUNCE_SAMPLES) +
                                   " LOW readings, streak " + String(overflowDetectionStreak) +
                                   "/" + String(OVERFLOW_CONFIRMATION_CHECKS) + ")");
-      #ifdef METRICS_PUSHER_H
-      MetricsPusher::logError("Overflow detected! GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) + " streak=" + String(overflowDetectionStreak));
-      #endif
+      if (g_metricsLog) g_metricsLog("error", "Overflow detected! GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN) + " streak=" + String(overflowDetectionStreak));
       overflowDetected = true;
 
       // Emergency stop everything
@@ -817,9 +813,7 @@ inline void WateringSystem::checkWaterLevelSensor(unsigned long currentTime) {
         // First time blocking - trigger emergency stop and send notification
         DebugHelper::debugImportant("⚠️⚠️⚠️ WATER LEVEL LOW CONFIRMED (" + String(WATER_LEVEL_LOW_DELAY / 1000) + "s delay expired) ⚠️⚠️⚠️");
         DebugHelper::debugImportant("Water tank is empty - GPIO " + String(WATER_LEVEL_SENSOR_PIN));
-        #ifdef METRICS_PUSHER_H
-        MetricsPusher::logWarn("Water level low confirmed, GPIO " + String(WATER_LEVEL_SENSOR_PIN));
-        #endif
+        if (g_metricsLog) g_metricsLog("warn", "Water level low confirmed, GPIO " + String(WATER_LEVEL_SENSOR_PIN));
         waterLevelLow = true;
         waterLevelLowNotificationSent = false;
         waterLevelLowWaitingLogged = false; // Reset for next event
@@ -1006,9 +1000,7 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
       DebugHelper::debugImportant("⏰ AUTO-WATERING TRIGGERED: Valve " +
                                   String(i));
       DebugHelper::debug("  Tray is empty - starting automatic watering");
-      #ifdef METRICS_PUSHER_H
-      MetricsPusher::logInfo("Auto-watering triggered: valve " + String(i));
-      #endif
+      if (g_metricsLog) g_metricsLog("info", "Auto-watering triggered: valve " + String(i));
 
       // Start Telegram session for auto-watering
       startTelegramSession("Auto (Tray " + String(i + 1) + ")");
@@ -1626,9 +1618,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         "  Next attempt in: " +
         LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
 
-    #ifdef METRICS_PUSHER_H
-    MetricsPusher::logInfo("Valve " + String(valve->valveIndex) + ": learning: tray full, interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
-    #endif
+    if (g_metricsLog) g_metricsLog("info", "Valve " + String(valve->valveIndex) + ": learning: tray full, interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
     saveLearningData();
     sendScheduleUpdateIfNeeded();
     return;
@@ -1763,9 +1753,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
                      "% (" + String(getTrayState(waterLevelBefore)) + ")");
   DebugHelper::debug("  Total cycles: " + String(valve->totalWateringCycles));
 
-  #ifdef METRICS_PUSHER_H
-  MetricsPusher::logInfo("Valve " + String(valve->valveIndex) + ": learning: fill=" + String(fillDuration / 1000.0, 1) + "s interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
-  #endif
+  if (g_metricsLog) g_metricsLog("info", "Valve " + String(valve->valveIndex) + ": learning: fill=" + String(fillDuration / 1000.0, 1) + "s interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
   saveLearningData();
   sendScheduleUpdateIfNeeded();
 }

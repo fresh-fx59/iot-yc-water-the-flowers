@@ -36,7 +36,6 @@ private:
     static int logCount;
 
     static unsigned long lastPushTime;
-    static int telegramFailures;
 
     // HTTP helpers (same pattern as TelegramNotifier)
     static bool useProxy() {
@@ -94,12 +93,18 @@ private:
     static bool pushLogs(const String& json);
 
 public:
+    // Callback for g_metricsLog function pointer (set in init)
+    static void metricsLogCallback(const String& level, const String& msg) {
+        addLogEntry(level, msg);
+    }
+
     static void init() {
         logHead = 0;
         logTail = 0;
         logCount = 0;
         lastPushTime = 0;
-        telegramFailures = 0;
+        // Set global callback so all headers can route logs to Loki
+        g_metricsLog = metricsLogCallback;
     }
 
     static void loop();
@@ -114,7 +119,6 @@ public:
     static void logWarn(const String& msg) { addLogEntry("warn", msg); }
     static void logError(const String& msg) { addLogEntry("error", msg); }
 
-    static void recordTelegramFailure() { telegramFailures++; }
 };
 
 // ============================================
@@ -125,7 +129,6 @@ int MetricsPusher::logHead = 0;
 int MetricsPusher::logTail = 0;
 int MetricsPusher::logCount = 0;
 unsigned long MetricsPusher::lastPushTime = 0;
-int MetricsPusher::telegramFailures = 0;
 
 // ============================================
 // Include WateringSystem AFTER static member init to avoid circular deps
@@ -192,7 +195,7 @@ inline String MetricsPusher::buildMetricsJson() {
         json += ",\"plant_light\":" + String(g_wateringSystem_ptr->isPlantLightOn() ? 1 : 0);
 
         // Telegram failures
-        json += ",\"telegram_failures\":" + String(telegramFailures);
+        json += ",\"telegram_failures\":" + String(g_telegramFailures);
 
         // Valves
         unsigned long currentTime = millis();

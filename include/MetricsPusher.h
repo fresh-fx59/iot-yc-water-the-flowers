@@ -36,6 +36,9 @@ private:
     static int logCount;
 
     static unsigned long lastPushTime;
+    static int lastLogPushHttpCode;
+    static int logPushAttempts;
+    static int logPushSuccesses;
 
     // HTTP helpers (same pattern as TelegramNotifier)
     static bool useProxy() {
@@ -103,6 +106,9 @@ public:
         logTail = 0;
         logCount = 0;
         lastPushTime = 0;
+        lastLogPushHttpCode = 0;
+        logPushAttempts = 0;
+        logPushSuccesses = 0;
         // Set global callback so all headers can route logs to Loki
         g_metricsLog = metricsLogCallback;
     }
@@ -129,6 +135,9 @@ int MetricsPusher::logHead = 0;
 int MetricsPusher::logTail = 0;
 int MetricsPusher::logCount = 0;
 unsigned long MetricsPusher::lastPushTime = 0;
+int MetricsPusher::lastLogPushHttpCode = 0;
+int MetricsPusher::logPushAttempts = 0;
+int MetricsPusher::logPushSuccesses = 0;
 
 // ============================================
 // Include WateringSystem AFTER static member init to avoid circular deps
@@ -169,6 +178,8 @@ inline void MetricsPusher::loop() {
             logTail = logHead;
             logCount = 0;
         }
+    } else {
+        Serial.println("[MetricsPusher] Log buffer empty, nothing to push");
     }
 }
 
@@ -257,6 +268,12 @@ inline String MetricsPusher::buildMetricsJson() {
         }
         json += "]";
     }
+
+    // Log push diagnostics (visible in Prometheus for debugging)
+    json += ",\"log_buffer_count\":" + String(logCount);
+    json += ",\"log_push_last_code\":" + String(lastLogPushHttpCode);
+    json += ",\"log_push_attempts\":" + String(logPushAttempts);
+    json += ",\"log_push_successes\":" + String(logPushSuccesses);
 
     json += "}";
     return json;
@@ -348,12 +365,16 @@ inline bool MetricsPusher::pushMetrics(const String& json) {
 }
 
 inline bool MetricsPusher::pushLogs(const String& json) {
+    logPushAttempts++;
+
     HTTPClient http;
     WiFiClientSecure secureClient;
     WiFiClient plainClient;
 
     String url = proxyBaseUrl() + "/v1/logs/push";
     if (!beginHttp(http, url, secureClient, plainClient)) {
+        lastLogPushHttpCode = -1;
+        Serial.println("[MetricsPusher] Log push: beginHttp failed");
         return false;
     }
 
@@ -362,9 +383,17 @@ inline bool MetricsPusher::pushLogs(const String& json) {
     http.setTimeout(METRICS_HTTP_TIMEOUT_MS);
 
     int httpCode = http.POST(json);
+    lastLogPushHttpCode = httpCode;
     http.end();
 
-    return (httpCode >= 200 && httpCode < 300);
+    bool success = (httpCode >= 200 && httpCode < 300);
+    if (success) {
+        logPushSuccesses++;
+        Serial.println("[MetricsPusher] Log push OK (" + String(logCount) + " entries)");
+    } else {
+        Serial.println("[MetricsPusher] Log push FAILED, HTTP " + String(httpCode) + " (" + String(logCount) + " entries, " + String(json.length()) + " bytes)");
+    }
+    return success;
 }
 
 #endif // METRICS_PUSHER_H

@@ -134,6 +134,16 @@ def _build_prometheus_metrics() -> str:
     counter("esp32_telegram_failures_total", "Total number of Telegram send failures",
             data.get("telegram_failures", 0))
 
+    # --- Log push diagnostics ---
+    gauge("esp32_log_buffer_count", "Number of log entries in circular buffer",
+          data.get("log_buffer_count", 0))
+    gauge("esp32_log_push_last_code", "HTTP response code of last log push attempt",
+          data.get("log_push_last_code", 0))
+    counter("esp32_log_push_attempts_total", "Total log push attempts",
+            data.get("log_push_attempts", 0))
+    counter("esp32_log_push_successes_total", "Total successful log pushes",
+            data.get("log_push_successes", 0))
+
     # --- Per-valve metrics ---
     valves = data.get("valves", [])
     per_valve_defs = [
@@ -195,10 +205,13 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 200, {"ok": True})
 
         else:  # /v1/logs/push
+            print(f"[esp32-metrics-proxy] Received log push ({len(body)} bytes)")
             status, err = _forward_to_loki(body)
             if err:
+                print(f"[esp32-metrics-proxy] Loki forward FAILED: {status} {err}")
                 _json_response(self, status, {"ok": False, "error": f"Loki error: {err}"})
             else:
+                print(f"[esp32-metrics-proxy] Loki forward OK ({status})")
                 _json_response(self, 200, {"ok": True})
 
     def do_GET(self) -> None:  # noqa: N802

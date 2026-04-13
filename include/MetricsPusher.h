@@ -81,7 +81,7 @@ private:
 
         logBuffer[logHead].message = msg;
         logBuffer[logHead].level = level;
-        logBuffer[logHead].epochSeconds = (unsigned long)now;
+        logBuffer[logHead].epochSeconds = (unsigned long)now - RTC_TIMEZONE_OFFSET_SEC;
         logBuffer[logHead].millisFraction = millis() % 1000;
         logBuffer[logHead].valid = true;
 

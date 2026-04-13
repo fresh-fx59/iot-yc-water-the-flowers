@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.20.7";
+const char *VERSION = "watering_system_1.20.8";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -56,6 +56,10 @@ const bool PLANT_LIGHT_ACTIVE_HIGH = false;
 // ============================================
 // System Constants
 // ============================================
+// RTC timezone: DS3231 stores Moscow local time (UTC+3).
+// System time runs on local time; this offset converts to UTC for Loki/Prometheus.
+const long RTC_TIMEZONE_OFFSET_SEC = 3 * 3600;  // UTC+3
+
 const int NUM_VALVES = 6;
 const int VALVE_PINS[NUM_VALVES] = {VALVE1_PIN, VALVE2_PIN, VALVE3_PIN,
                                     VALVE4_PIN, VALVE5_PIN, VALVE6_PIN};

@@ -81,7 +81,13 @@ def _forward_to_loki(body: bytes) -> tuple[int, str]:
         with urlopen(req, timeout=LOKI_TIMEOUT_SEC) as resp:
             return resp.status, ""
     except URLError as exc:
-        return 502, str(exc)
+        err_body = ""
+        if hasattr(exc, "read"):
+            try:
+                err_body = exc.read().decode("utf-8", errors="replace")[:500]
+            except Exception:
+                pass
+        return 502, f"{exc} | {err_body}"
     except Exception as exc:  # pragma: no cover - runtime I/O path
         return 500, str(exc)
 

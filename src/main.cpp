@@ -464,11 +464,8 @@ void bootCountdown() {
     message += "⏱️ <b>Starting in 10 seconds...</b>\n";
     message += "Send /halt to prevent operations and enter firmware update mode";
 
-    DebugHelper::debug("📱 Sending countdown notification...");
-    if (!sendTelegramDebug(message)) {
-        DebugHelper::debug("⚠️ Countdown notification send failed - queuing retry");
-        wateringSystem.queueTelegramNotification(message);
-    }
+    DebugHelper::debug("📱 Sending boot notification (fire-and-forget, no retry)...");
+    sendTelegramDebug(message);
 
     // 10-second countdown loop
     unsigned long countdownStart = millis();

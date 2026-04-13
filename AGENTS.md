@@ -24,6 +24,13 @@ Follow the existing Arduino/C++ style: 4-space indentation, opening braces on th
 ## Testing Guidelines
 The repository uses Unity through PlatformIO native tests. Add or update tests in `test/` whenever state transitions, timeout rules, learning calculations, or safety logic change. Prefer extending `test_native_all.cpp` for active coverage; older focused test files are present but marked deprecated. Run `pio test -e native` before opening a PR.
 
+## Version Bumping
+Every code change MUST bump the version. Update ALL of these locations:
+1. `include/config.h:10` — `VERSION` string (e.g. `"watering_system_1.20.5"`)
+2. `CLAUDE.md:8` — `**Version**: 1.20.5 (config.h:10)`
+
+Use the new version in the commit message prefix (e.g. `v1.20.5: ...`). Patch version increments for fixes and small changes; minor version increments for new features.
+
 ## Commit & Pull Request Guidelines
 Recent history follows short, imperative, version-prefixed subjects such as `v1.19.3: increase tray 2 watering timeout to 35s`. Match that format for release-oriented changes; otherwise keep subjects concise and specific. PRs should describe behavioral impact, affected hardware or web flows, required filesystem upload steps, and the tests run. Include screenshots only for dashboard or OTA UI changes.
 

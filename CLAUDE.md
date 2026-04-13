@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.20.0 (config.h:10)
+**Version**: 1.20.3 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -67,12 +67,13 @@ All logic lives in `include/*.h` as inline headers. Source files (`src/main.cpp`
 - `PlantLightController.h` — relay control with auto schedule (22:00-07:00)
 - `api_handlers.h` — web API endpoints (inline, registered in main.cpp)
 - `DS3231RTC.h` — RTC time source (no NTP), battery voltage, temperature
+- `MetricsPusher.h` — Prometheus metrics + Loki log push (Core 0)
 - `DebugHelper.h` — circular buffer debug with Telegram relay
 - `ota.h` — OTA firmware updates
 - `secret.h` — credentials (never commit)
 - `TestConfig.h` — test environment stubs
 
-**Feature placement**: config.h (hw constants), StateMachineLogic.h (state transitions), LearningAlgorithm.h (learning math), WateringSystem.h (orchestration + learning policy), NetworkManager.h (network), api_handlers.h (API), test/ (tests)
+**Feature placement**: config.h (hw constants), StateMachineLogic.h (state transitions), LearningAlgorithm.h (learning math), WateringSystem.h (orchestration + learning policy), NetworkManager.h (network), api_handlers.h (API), MetricsPusher.h (monitoring), test/ (tests)
 
 ### Watering Flow
 
@@ -132,6 +133,29 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 6. Check logs: `sudo journalctl -u xray-client -n 20` and `sudo journalctl -u telegram-bot-api-proxy -n 20`
 7. If Contabo xray is down: `docker restart 3x-ui-proxy` on Contabo (31.220.78.216)
 8. No ESP32 firmware update needed — ESP32 connects to the same nginx endpoint regardless of backend routing
+
+## Monitoring (Prometheus + Loki + Grafana)
+
+**Architecture**: ESP32 pushes metrics JSON (10s active / 60s idle) and debug logs (only when buffer non-empty) to `esp32_metrics_proxy.py` on Cloud.ru via nginx TLS :16443. Proxy stores metrics for Prometheus scraping and forwards logs to Loki.
+
+**Proxy**: `tools/esp32_metrics_proxy.py`, systemd: `esp32-metrics-proxy.service`, env: `/etc/default/esp32-metrics-proxy`, port 18086. Nginx routes `/v1/metrics/` and `/v1/logs/` to this proxy.
+
+**ESP32 firmware**: `MetricsPusher.h` runs on Core 0 in networkTask. Log buffer: 64 entries circular. Push interval: 10s when any valve active, 60s idle. Uses same proxy URL and auth token as Telegram proxy.
+
+**Grafana dashboard**: "ESP32 Watering System" (uid: `esp32-watering`) -- 4 rows: Watering Intervals & Learning, Events & Sensors, System Health, Debug Logs. Dashboard JSON: `tools/grafana-dashboard-esp32.json`.
+
+**Metrics endpoint**: Prometheus scrapes `host.docker.internal:18086/metrics` every 15s (job: `esp32_watering`).
+
+**Log capture points**: State transitions, learning decisions, safety events (overflow/timeout/watchdog), auto-watering triggers, Telegram success/failure, WiFi connect/disconnect. Levels: debug/info/warn/error.
+
+**Monitoring not working? Checklist**:
+1. Check proxy: `sudo systemctl status esp32-metrics-proxy` → restart: `sudo systemctl restart esp32-metrics-proxy`
+2. Test proxy health: `curl -s http://127.0.0.1:18086/health`
+3. Test metrics endpoint: `curl -s http://127.0.0.1:18086/metrics`
+4. Check Prometheus targets: `curl -s http://localhost:9090/api/v1/targets | grep esp32`
+5. Check Loki: `curl -sG 'http://localhost:3100/loki/api/v1/query' --data-urlencode 'query={job="esp32"}' --data-urlencode 'limit=1'`
+6. Check nginx routing: `curl -sk https://localhost:16443/v1/metrics/push` (should return 401, not 404)
+7. Check ESP32 serial for `[MetricsPusher]` messages
 
 ## Web Interface
 

@@ -119,7 +119,19 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 
 **State JSON** (via `/api/status`): pump, sequential_mode, water_level{status,blocked}, overflow{detected,raw_value,trigger_streak}, plant_light{state,mode,schedule_on/off}, valves[]{id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}}
 
-**Proxy** (v1.18.5+): Optional Telegram Bot API proxy for monitoring. Deploy: `deploy/systemd/`, proxy script: `tools/telegram_bot_api_proxy.py`. Uses nginx TLS termination on :16443.
+**Proxy** (v1.18.5+): Telegram Bot API proxy on Cloud.ru VPS (45.151.30.146). Proxy script: `tools/telegram_bot_api_proxy.py`, systemd: `telegram-bot-api-proxy.service`, env: `/etc/default/telegram-bot-api-proxy`. Nginx TLS termination on :16443 → localhost:18085.
+
+**SOCKS5 routing** (v1.20.0+): Telegram API is ISP-blocked on Cloud.ru. Traffic routes through a VLESS tunnel: Cloud.ru xray client (SOCKS5 on 127.0.0.1:1080) → Contabo (31.220.78.216) xray/3x-ui VLESS inbound (:8443) → api.telegram.org. Env var `SOCKS5_PROXY=127.0.0.1:1080` in `/etc/default/telegram-bot-api-proxy`. Systemd: `xray-client.service` (auto-restart, enabled on boot). Xray config: `/etc/xray/config.json`, client UUID `cloudru-telegram-proxy` in 3x-ui.
+
+**Telegram not working? Checklist**:
+1. SSH to Cloud.ru: `ssh user1@45.151.30.146`
+2. Check xray client: `sudo systemctl status xray-client` → restart: `sudo systemctl restart xray-client`
+3. Check proxy: `sudo systemctl status telegram-bot-api-proxy` → restart: `sudo systemctl restart telegram-bot-api-proxy`
+4. Test SOCKS5: `curl -s --socks5-hostname 127.0.0.1:1080 https://api.telegram.org/` (should return HTML)
+5. Test proxy: `curl -s "http://127.0.0.1:18085/v1/telegram/getUpdates?bot_token=<TOKEN>&offset=0&timeout=0" -H "Authorization: Bearer <TOKEN>"` (should return `{"ok":true}`)
+6. Check logs: `sudo journalctl -u xray-client -n 20` and `sudo journalctl -u telegram-bot-api-proxy -n 20`
+7. If Contabo xray is down: `docker restart 3x-ui-proxy` on Contabo (31.220.78.216)
+8. No ESP32 firmware update needed — ESP32 connects to the same nginx endpoint regardless of backend routing
 
 ## Web Interface
 

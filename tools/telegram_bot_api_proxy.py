@@ -10,12 +10,17 @@ Exposes:
 Optional auth:
   TELEGRAM_PROXY_AUTH_TOKEN=<token>
   Header: Authorization: Bearer <token>
+
+Optional SOCKS5 proxy (for routing around ISP blocks):
+  SOCKS5_PROXY=127.0.0.1:1080
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import socket
 import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -28,6 +33,7 @@ AUTH_TOKEN = os.getenv("TELEGRAM_PROXY_AUTH_TOKEN", "").strip()
 UPSTREAM_TIMEOUT_SEC = float(os.getenv("TELEGRAM_PROXY_TIMEOUT_SEC", "20"))
 TLS_CERT_FILE = os.getenv("TELEGRAM_PROXY_TLS_CERT_FILE", "").strip()
 TLS_KEY_FILE = os.getenv("TELEGRAM_PROXY_TLS_KEY_FILE", "").strip()
+SOCKS5_PROXY = os.getenv("SOCKS5_PROXY", "").strip()  # e.g. "127.0.0.1:1080"
 
 
 def _parse_form(body: bytes) -> dict[str, str]:
@@ -51,9 +57,51 @@ def _require_auth(handler: BaseHTTPRequestHandler) -> bool:
     return auth == f"Bearer {AUTH_TOKEN}"
 
 
+def _socks5_connect(proxy_host: str, proxy_port: int, dest_host: str, dest_port: int) -> socket.socket:
+    """Open a TCP connection to dest_host:dest_port through a SOCKS5 proxy."""
+    sock = socket.create_connection((proxy_host, proxy_port), timeout=UPSTREAM_TIMEOUT_SEC)
+    # Greeting: version=5, 1 auth method, no-auth(0)
+    sock.sendall(b"\x05\x01\x00")
+    resp = sock.recv(2)
+    if len(resp) < 2 or resp[0] != 5 or resp[1] != 0:
+        sock.close()
+        raise ConnectionError(f"SOCKS5 auth failed: {resp!r}")
+    # Connect: version=5, cmd=connect(1), reserved=0, atype=domain(3)
+    host_bytes = dest_host.encode("utf-8")
+    sock.sendall(
+        b"\x05\x01\x00\x03"
+        + bytes([len(host_bytes)])
+        + host_bytes
+        + dest_port.to_bytes(2, "big")
+    )
+    # Response: at least 4 bytes header, then address
+    resp = sock.recv(256)
+    if len(resp) < 4 or resp[1] != 0:
+        sock.close()
+        raise ConnectionError(f"SOCKS5 connect failed: status={resp[1] if len(resp) > 1 else 'short'}")
+    return sock
+
+
 def _telegram_request(bot_token: str, method: str, params: dict[str, str]) -> tuple[int, bytes]:
-    upstream_url = f"https://api.telegram.org/bot{bot_token}/{method}"
+    upstream_host = "api.telegram.org"
+    upstream_path = f"/bot{bot_token}/{method}"
     payload = urlencode(params).encode("utf-8")
+
+    if SOCKS5_PROXY:
+        proxy_host, proxy_port = SOCKS5_PROXY.rsplit(":", 1)
+        sock = _socks5_connect(proxy_host, int(proxy_port), upstream_host, 443)
+        ctx = ssl.create_default_context()
+        ssl_sock = ctx.wrap_socket(sock, server_hostname=upstream_host)
+        conn = http.client.HTTPSConnection(upstream_host, 443, timeout=UPSTREAM_TIMEOUT_SEC)
+        conn.sock = ssl_sock
+        conn.request("POST", upstream_path, body=payload,
+                     headers={"Content-Type": "application/x-www-form-urlencoded"})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, data
+
+    upstream_url = f"https://{upstream_host}{upstream_path}"
     req = Request(
         upstream_url,
         method="POST",
@@ -158,7 +206,8 @@ def main() -> None:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=TLS_CERT_FILE, keyfile=TLS_KEY_FILE)
         server.socket = context.wrap_socket(server.socket, server_side=True)
-    print(f"Telegram proxy listening on {HOST}:{PORT} tls={str(tls_enabled).lower()}")
+    socks_info = f" socks5={SOCKS5_PROXY}" if SOCKS5_PROXY else ""
+    print(f"Telegram proxy listening on {HOST}:{PORT} tls={str(tls_enabled).lower()}{socks_info}")
     server.serve_forever()
 
 

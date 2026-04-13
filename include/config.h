@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.20.0";
+const char *VERSION = "watering_system_1.20.3";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -195,6 +195,19 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 #define TELEGRAM_PROXY_AUTH_TOKEN ""
 #endif
 
+// Metrics proxy uses same base URL and auth as Telegram proxy.
+#ifndef METRICS_PROXY_BASE_URL
+#define METRICS_PROXY_BASE_URL TELEGRAM_PROXY_BASE_URL
+#endif
+
+// ============================================
+// Metrics Push Configuration
+// ============================================
+const unsigned long METRICS_PUSH_INTERVAL_ACTIVE_MS = 10000;  // 10s when watering
+const unsigned long METRICS_PUSH_INTERVAL_IDLE_MS = 60000;    // 60s when idle
+const int METRICS_LOG_BUFFER_SIZE = 64;                        // Circular log buffer entries
+const unsigned long METRICS_HTTP_TIMEOUT_MS = 4000;            // HTTP timeout for proxy
+
 // ============================================
 // Serial Configuration
 // ============================================
@@ -222,6 +235,8 @@ const char *OTA_HOSTNAME = "esp32-watering";
 // Compile-time Timeout Validation
 // ============================================
 // Ensures safety invariants: emergency timeout must be at least 5s higher than normal
+// Skipped in native tests where TestConfig.h uses static const (not constexpr)
+#ifndef NATIVE_TEST
 #define VALIDATE_TIMEOUT(idx) \
     static_assert(VALVE_EMERGENCY_TIMEOUTS[idx] >= VALVE_NORMAL_TIMEOUTS[idx] + 5000, \
         "Emergency timeout must be at least 5s higher than normal for valve " #idx)
@@ -236,5 +251,6 @@ VALIDATE_TIMEOUT(5);
 #undef VALIDATE_TIMEOUT
 
 static_assert(NUM_VALVES == 6, "Timeout arrays must match NUM_VALVES");
+#endif // !NATIVE_TEST
 
 #endif // CONFIG_H

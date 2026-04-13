@@ -205,9 +205,16 @@ private:
         if (success) {
             onTelegramSuccess();
             logTransportLocalOnly("✓ Telegram message sent");
+            #ifdef METRICS_PUSHER_H
+            MetricsPusher::logDebug("Telegram sent OK");
+            #endif
         } else {
             onTelegramFailure();
             logTransportLocalOnly("❌ Telegram send failed (" + String(usingProxy ? "proxy" : "direct") + "), HTTP code: " + String(httpCode));
+            #ifdef METRICS_PUSHER_H
+            MetricsPusher::logWarn("Telegram failed HTTP " + String(httpCode));
+            MetricsPusher::recordTelegramFailure();
+            #endif
             if (httpCode > 0) {
                 logTransportLocalOnly("Response: " + http.getString());
             }

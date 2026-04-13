@@ -31,6 +31,7 @@
 #include <DebugHelper.h>
 #include <api_handlers.h>
 #include <ota.h>
+#include <MetricsPusher.h>
 
 // ============================================
 // Global Objects
@@ -68,6 +69,7 @@ void networkTask(void* parameter) {
             checkTelegramCommands(0);
             wateringSystem.processPendingNotifications();
             DebugHelper::loop();
+            MetricsPusher::loop();
         }
 
         // Poll quickly so local API/UI and OTA remain responsive.
@@ -505,6 +507,7 @@ void setup() {
     DebugHelper::debug("Version: " + String(VERSION));
     DebugHelper::debug("Valves: " + String(NUM_VALVES));
     DebugHelper::debug("=================================");
+    MetricsPusher::logInfo("Boot start, version: " + String(VERSION));
 
     // Initialize battery measurement pins
     pinMode(BATTERY_CONTROL_PIN, OUTPUT);
@@ -533,6 +536,9 @@ void setup() {
 
     // Initialize watering system (will load learning data from LittleFS)
     wateringSystem.init();
+
+    // Initialize metrics pusher
+    MetricsPusher::init();
 
     // Initialize network manager
     NetworkManager::setWateringSystem(&wateringSystem);
@@ -595,6 +601,7 @@ void setup() {
     }
 
     DebugHelper::debug("Setup completed - starting main loop");
+    MetricsPusher::logInfo("Setup completed, entering main loop");
 }
 
 // ============================================ 

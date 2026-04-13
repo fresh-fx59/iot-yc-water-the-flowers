@@ -55,6 +55,17 @@ static const int LEARNING_MAX_SKIP_CYCLES = 15;
 static const int LEARNING_FULL_SKIP_CYCLES = 10;
 static const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;
 static const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000;
+
+// ============================================
+// Plant Light Constants for Testing
+// ============================================
+#define PLANT_LIGHT_RELAY_PIN 41
+static const bool PLANT_LIGHT_ACTIVE_HIGH = false;
+static const int PLANT_LIGHT_SCHEDULE_ON_HOUR = 22;
+static const int PLANT_LIGHT_SCHEDULE_ON_MINUTE = 0;
+static const int PLANT_LIGHT_SCHEDULE_OFF_HOUR = 7;
+static const int PLANT_LIGHT_SCHEDULE_OFF_MINUTE = 0;
+static const unsigned long PLANT_LIGHT_SCHEDULE_CHECK_INTERVAL_MS = 1000;
 #endif
 
 #endif // TEST_CONFIG_H

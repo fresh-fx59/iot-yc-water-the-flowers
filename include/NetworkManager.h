@@ -66,6 +66,9 @@ public:
                 unsigned long minutes = outageDuration / 60000;
                 unsigned long seconds = (outageDuration / 1000) % 60;
                 DebugHelper::debugImportant("✓ WiFi reconnected after " + String(minutes) + "m " + String(seconds) + "s outage, IP: " + WiFi.localIP().toString() + ", RSSI: " + String(WiFi.RSSI()) + " dBm");
+                #ifdef METRICS_PUSHER_H
+                MetricsPusher::logInfo("WiFi connected RSSI=" + String(WiFi.RSSI()));
+                #endif
                 // Reset all tracking
                 wifiDisconnectedSince = 0;
                 wifiLongOutageNotified = false;
@@ -82,6 +85,9 @@ public:
             wifiDisconnectedSince = now;
             if (wifiDisconnectedSince == 0) wifiDisconnectedSince = 1;  // avoid 0 (means "connected")
             Serial.println("⚠️ WiFi disconnected, will attempt reconnect with backoff");
+            #ifdef METRICS_PUSHER_H
+            MetricsPusher::logWarn("WiFi disconnected");
+            #endif
         }
 
         // Check if we should notify about long outage

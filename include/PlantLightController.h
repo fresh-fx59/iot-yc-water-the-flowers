@@ -4,7 +4,11 @@
 #include <Arduino.h>
 #include <time.h>
 
+#ifdef NATIVE_TEST
+#include "TestConfig.h"
+#else
 #include "config.h"
+#endif
 
 enum PlantLightMode {
   PLANT_LIGHT_MODE_AUTO = 0,

@@ -20,6 +20,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             valve->valveOpenTime = currentTime;
             valve->phase = PHASE_WAITING_STABILIZATION;
             DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
+            #ifdef METRICS_PUSHER_H
+            MetricsPusher::logInfo("Valve " + String(valveIndex) + ": opened");
+            #endif
             publishStateChange("valve" + String(valveIndex), "valve_opened");
             break;
 
@@ -40,6 +43,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 if (isRaining) {
                     // Sensor already wet = TRAY IS FULL - treat as successful fill
                     DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
+                    #ifdef METRICS_PUSHER_H
+                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": rain=WET");
+                    #endif
 
                     // SAFETY: Close valve immediately
                     closeValve(valveIndex);
@@ -65,6 +71,10 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 } else {
                     // Sensor dry - start watering
                     DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
+                    #ifdef METRICS_PUSHER_H
+                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": rain=DRY");
+                    MetricsPusher::logInfo("Valve " + String(valveIndex) + ": watering started");
+                    #endif
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
                     valve->phase = PHASE_WATERING;
@@ -220,6 +230,13 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
             // Close valve and return to idle
             closeValve(valveIndex);
+            {
+                unsigned long closeDuration = (valve->valveOpenTime > 0) ? (currentTime - valve->valveOpenTime) / 1000 : 0;
+                #ifdef METRICS_PUSHER_H
+                MetricsPusher::logInfo("Valve " + String(valveIndex) + ": closing, duration=" + String(closeDuration) + "s" + (valve->timeoutOccurred ? " TIMEOUT" : ""));
+                #endif
+                (void)closeDuration;
+            }
             valve->phase = PHASE_IDLE;
             valve->wateringRequested = false;
             valve->wateringStartTime = 0;  // CRITICAL: Reset for next watering cycle

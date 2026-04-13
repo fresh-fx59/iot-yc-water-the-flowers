@@ -164,7 +164,11 @@ inline void MetricsPusher::loop() {
     // Push logs if buffer non-empty
     if (logCount > 0) {
         String logsJson = buildLogsJson();
-        pushLogs(logsJson);
+        if (pushLogs(logsJson)) {
+            // Clear buffer only after successful push
+            logTail = logHead;
+            logCount = 0;
+        }
     }
 }
 
@@ -306,9 +310,7 @@ inline String MetricsPusher::buildLogsJson() {
         idx = (idx + 1) % METRICS_LOG_BUFFER_SIZE;
     }
 
-    // Clear buffer after reading
-    logTail = logHead;
-    logCount = 0;
+    // NOTE: buffer is NOT cleared here — cleared in loop() only after successful push
 
     // Build JSON
     String json = "{\"streams\":[";

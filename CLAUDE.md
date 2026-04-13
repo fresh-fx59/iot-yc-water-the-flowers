@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.20.4 (config.h:10)
+**Version**: 1.20.5 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy

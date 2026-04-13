@@ -256,7 +256,7 @@ inline void WateringSystem::init() {
     pinMode(VALVE_PINS[i], OUTPUT);
     digitalWrite(VALVE_PINS[i], LOW);
   }
-  DebugHelper::debugImportant(valvePinsInfo);
+  DebugHelper::debug(valvePinsInfo);
 
   // Initialize rain sensor pins with internal pull-up
   for (int i = 0; i < NUM_VALVES; i++) {
@@ -265,20 +265,20 @@ inline void WateringSystem::init() {
 
   // Initialize master overflow sensor pin
   pinMode(MASTER_OVERFLOW_SENSOR_PIN, INPUT_PULLUP);
-  DebugHelper::debugImportant("Master overflow sensor: GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
+  DebugHelper::debug("Master overflow sensor: GPIO " + String(MASTER_OVERFLOW_SENSOR_PIN));
 
   // Initialize water level sensor pin
   pinMode(WATER_LEVEL_SENSOR_PIN, INPUT_PULLUP);
-  DebugHelper::debugImportant("Water level sensor: GPIO " + String(WATER_LEVEL_SENSOR_PIN));
+  DebugHelper::debug("Water level sensor: GPIO " + String(WATER_LEVEL_SENSOR_PIN));
 
   plantLight.init();
   time_t now;
   time(&now);
   plantLight.syncAutoStateSilently(now);
-  DebugHelper::debugImportant("Plant light relay: GPIO " + String(PLANT_LIGHT_RELAY_PIN) +
-                              " (auto 22:00-07:00)");
+  DebugHelper::debug("Plant light relay: GPIO " + String(PLANT_LIGHT_RELAY_PIN) +
+                     " (auto 22:00-07:00)");
 
-  DebugHelper::debugImportant("✓ WateringSystem initialized");
+  DebugHelper::debug("✓ WateringSystem initialized");
   publishStateChange("system", "initialized");
 
   // Note: loadLearningData() is called from main.cpp after DS3231 RTC init

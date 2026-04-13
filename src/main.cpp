@@ -147,7 +147,27 @@ void checkTelegramCommands(int timeout) {
         command == "/start" || command == "start") {
         DebugHelper::debugImportant("📘 HELP command received!");
         DebugHelper::flushBuffer();
-        sendTelegramDebug(TelegramNotifier::getHelpMessage());
+        TelegramNotifier::sendMessageWithKeyboard(TelegramNotifier::getHelpMessage(), TelegramNotifier::getMainMenuKeyboard());
+    } else if (command == "/menu" || command == "menu") {
+        TelegramNotifier::sendMessageWithKeyboard("🌱 <b>Watering System Control</b>", TelegramNotifier::getMainMenuKeyboard());
+    } else if (command.startsWith("/water_") || command.startsWith("water_") ||
+               command.startsWith("/water ") || command.startsWith("water ")) {
+        String numStr = command;
+        numStr.replace("/water_", "");
+        numStr.replace("/water ", "");
+        numStr.replace("water_", "");
+        numStr.replace("water ", "");
+        numStr.trim();
+        int valveNum = numStr.toInt();
+        if (valveNum >= 1 && valveNum <= 6) {
+            int valveIndex = valveNum - 1;
+            DebugHelper::debugImportant("🚿 WATER VALVE " + String(valveNum) + " command received!");
+            wateringSystem.startWatering(valveIndex);
+            DebugHelper::flushBuffer();
+            sendTelegramDebug("🚿 Watering tray " + String(valveNum) + " started");
+        } else {
+            sendTelegramDebug("❌ Invalid tray number. Use /water 1-6");
+        }
     } else if (command == "/start_all" || command == "start_all") {
         DebugHelper::debugImportant("🚿 START ALL command received!");
         wateringSystem.startSequentialWatering("Telegram");
@@ -384,9 +404,12 @@ void checkTelegramCommands(int timeout) {
         DebugHelper::flushBuffer();
         sendTelegramDebug(message);
     }
+
+    // Answer pending callback query (dismiss button loading spinner)
+    TelegramNotifier::answerCallbackQuery();
 }
 
-// ============================================ 
+// ============================================
 // DS3231 RTC Initialization
 // Professional approach: Set system time once at boot
 // ============================================ 

@@ -113,7 +113,9 @@ private:
 
     static String getBotCommandsJson() {
         return String("[") +
+               "{\"command\":\"menu\",\"description\":\"Quick-access button panel\"}," +
                "{\"command\":\"help\",\"description\":\"Show command reference\"}," +
+               "{\"command\":\"water\",\"description\":\"Water tray N (e.g. /water 2)\"}," +
                "{\"command\":\"start_all\",\"description\":\"Water all trays sequentially\"}," +
                "{\"command\":\"halt\",\"description\":\"Block watering for firmware updates\"}," +
                "{\"command\":\"resume\",\"description\":\"Resume normal operation\"}," +
@@ -155,7 +157,13 @@ private:
         return encoded;
     }
 
-    static bool sendMessage(const String& message) {
+    // Last callback query ID from button press (answered after command processing)
+    static String &pendingCallbackQueryId() {
+        static String value = "";
+        return value;
+    }
+
+    static bool sendMessage(const String& message, const String& replyMarkup = "") {
         if (!WiFi.isConnected()) {
             logTransportLocalOnly("❌ Cannot send Telegram: WiFi not connected");
             return false;
@@ -183,6 +191,9 @@ private:
                           "&chat_id=" + urlEncode(String(TELEGRAM_CHAT_ID)) +
                           "&text=" + urlEncode(message) +
                           "&parse_mode=HTML";
+            if (replyMarkup.length() > 0) {
+                body += "&reply_markup=" + urlEncode(replyMarkup);
+            }
             http.setTimeout(httpTimeoutMs(usingProxy));
             httpCode = http.POST(body);
         } else {
@@ -190,6 +201,9 @@ private:
                          "/sendMessage?chat_id=" + TELEGRAM_CHAT_ID +
                          "&text=" + urlEncode(message) +
                          "&parse_mode=HTML";
+            if (replyMarkup.length() > 0) {
+                url += "&reply_markup=" + urlEncode(replyMarkup);
+            }
 
             if (!beginHttpClient(http, url, client, plainClient)) {
                 onTelegramFailure();
@@ -251,6 +265,10 @@ public:
 
     static bool sendDebugMessage(const String& message) {
         return sendMessage(message);
+    }
+
+    static bool sendMessageWithKeyboard(const String& message, const String& replyMarkup) {
+        return sendMessage(message, replyMarkup);
     }
 
     // Send a watering notification with its own independent cooldown.
@@ -319,6 +337,7 @@ public:
     static String getHelpMessage() {
         String message = "📘 <b>AVAILABLE COMMANDS</b>\n\n";
         message += "<b>Watering</b>\n";
+        message += "/water N - Water tray N (1-6)\n";
         message += "/start_all - Water all trays sequentially\n";
         message += "/halt - Block watering (OTA/web stay active)\n";
         message += "/resume - Exit halt mode\n\n";
@@ -326,16 +345,63 @@ public:
         message += "/time - RTC time, battery, lamp status\n";
         message += "/settime - Sync from NTP\n";
         message += "/test_sensors - Test all rain sensors\n";
-        message += "/test_sensor_N - Test sensor N (0-5)\n";
         message += "/overflow_status - Overflow sensor readings\n\n";
         message += "<b>Safety</b>\n";
         message += "/reset_overflow - Clear overflow lock\n";
         message += "/reinit_gpio - Reinitialize relay GPIOs\n\n";
         message += "<b>Plant Light</b>\n";
         message += "/lamp_status - Show light status\n";
-        message += "/lamp_on /lamp_off /lamp_auto";
+        message += "/lamp_on /lamp_off /lamp_auto\n\n";
+        message += "💡 Use /menu for quick-access buttons";
 
         return message;
+    }
+
+    static String getMainMenuKeyboard() {
+        String kb = "{\"inline_keyboard\":[";
+        kb += "[{\"text\":\"💧 1\",\"callback_data\":\"water_1\"},{\"text\":\"💧 2\",\"callback_data\":\"water_2\"},{\"text\":\"💧 3\",\"callback_data\":\"water_3\"}],";
+        kb += "[{\"text\":\"💧 4\",\"callback_data\":\"water_4\"},{\"text\":\"💧 5\",\"callback_data\":\"water_5\"},{\"text\":\"💧 6\",\"callback_data\":\"water_6\"}],";
+        kb += "[{\"text\":\"🚿 Water All\",\"callback_data\":\"start_all\"}],";
+        kb += "[{\"text\":\"⏸ Halt\",\"callback_data\":\"halt\"},{\"text\":\"▶️ Resume\",\"callback_data\":\"resume\"}],";
+        kb += "[{\"text\":\"🕐 Time\",\"callback_data\":\"time\"},{\"text\":\"🔍 Sensors\",\"callback_data\":\"test_sensors\"}],";
+        kb += "[{\"text\":\"🌊 Overflow\",\"callback_data\":\"overflow_status\"},{\"text\":\"🔄 Reset\",\"callback_data\":\"reset_overflow\"}],";
+        kb += "[{\"text\":\"💡 On\",\"callback_data\":\"lamp_on\"},{\"text\":\"🔌 Off\",\"callback_data\":\"lamp_off\"},{\"text\":\"🔄 Auto\",\"callback_data\":\"lamp_auto\"}]";
+        kb += "]}";
+        return kb;
+    }
+
+    static void answerCallbackQuery() {
+        String& cbId = pendingCallbackQueryId();
+        if (cbId.isEmpty() || !WiFi.isConnected()) return;
+
+        HTTPClient http;
+        WiFiClientSecure client;
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
+
+        if (usingProxy) {
+            String url = monitoringProxyBaseUrl() + "/v1/telegram/answerCallbackQuery";
+            if (!beginHttpClient(http, url, client, plainClient)) { cbId = ""; return; }
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            applyProxyAuthHeader(http);
+            String body = "bot_token=" + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                          "&callback_query_id=" + urlEncode(cbId);
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            http.POST(body);
+        } else {
+            String url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                         "/answerCallbackQuery?callback_query_id=" + urlEncode(cbId);
+            if (!beginHttpClient(http, url, client, plainClient)) { cbId = ""; return; }
+            http.setTimeout(httpTimeoutMs(usingProxy));
+            http.GET();
+        }
+
+        http.end();
+        cbId = "";
+    }
+
+    static void resetBotCommandsFlag() {
+        botCommandsConfigured() = false;
     }
 
     static void ensureBotCommandsRegistered() {
@@ -495,6 +561,7 @@ public:
 
     // Check for Telegram commands using long polling.
     // Returns the command string or an empty string if no new command is found.
+    // Handles both text messages and inline keyboard callback queries.
     // timeoutSeconds: How long Telegram server should wait for a new message (0 = immediate return)
     static String checkForCommands(int &lastUpdateId, int timeoutSeconds = 10) {
         if (!WiFi.isConnected()) {
@@ -509,19 +576,19 @@ public:
         WiFiClient plainClient;
         bool usingProxy = useMonitoringProxy();
 
+        String allowedUpdates = "[\"message\",\"callback_query\"]";
         String url;
         if (usingProxy) {
             url = monitoringProxyBaseUrl() + "/v1/telegram/getUpdates" +
                   String("?bot_token=") + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
                   "&offset=" + String(lastUpdateId) +
                   "&timeout=" + String(timeoutSeconds) +
-                  "&allowed_updates=" + urlEncode("[\"message\"]");
+                  "&allowed_updates=" + urlEncode(allowedUpdates);
         } else {
-            // Build getUpdates URL with specified long polling timeout
             url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
                   "/getUpdates?offset=" + String(lastUpdateId) +
                   "&timeout=" + String(timeoutSeconds) +
-                  "&allowed_updates=[\"message\"]";
+                  "&allowed_updates=" + urlEncode(allowedUpdates);
         }
 
         if (!beginHttpClient(http, url, client, plainClient)) {
@@ -545,27 +612,47 @@ public:
             onTelegramSuccess();
             String payload = http.getString();
 
-            // Parse JSON response manually (simple parsing for commands only)
-            // Expected format: {"ok":true,"result":[{"update_id":123,"message":{"text":"/halt",...}},...]}
-
             int updateIdPos = payload.indexOf("\"update_id\":");
             if (updateIdPos > 0) {
-                // Extract update_id
                 int updateIdStart = updateIdPos + 12;
                 int updateIdEnd = payload.indexOf(",", updateIdStart);
                 if (updateIdEnd > updateIdStart) {
                     String updateIdStr = payload.substring(updateIdStart, updateIdEnd);
                     int newUpdateId = updateIdStr.toInt();
 
-                    // Extract command text
+                    // Check for callback_query (inline keyboard button press)
+                    int cbPos = payload.indexOf("\"callback_query\"", updateIdPos);
+                    if (cbPos > 0) {
+                        // Extract callback query ID (string value)
+                        int cbIdPos = payload.indexOf("\"id\":\"", cbPos);
+                        if (cbIdPos > 0) {
+                            int cbIdStart = cbIdPos + 6;
+                            int cbIdEnd = payload.indexOf("\"", cbIdStart);
+                            if (cbIdEnd > cbIdStart) {
+                                pendingCallbackQueryId() = payload.substring(cbIdStart, cbIdEnd);
+                            }
+                        }
+                        // Extract callback data (the command)
+                        int dataPos = payload.indexOf("\"data\":\"", cbPos);
+                        if (dataPos > 0) {
+                            int dataStart = dataPos + 8;
+                            int dataEnd = payload.indexOf("\"", dataStart);
+                            if (dataEnd > dataStart) {
+                                String command = payload.substring(dataStart, dataEnd);
+                                lastUpdateId = newUpdateId + 1;
+                                http.end();
+                                return command;
+                            }
+                        }
+                    }
+
+                    // Fall back to regular message text
                     int textPos = payload.indexOf("\"text\":\"", updateIdPos);
                     if (textPos > 0) {
                         int textStart = textPos + 8;
                         int textEnd = payload.indexOf("\"", textStart);
                         if (textEnd > textStart) {
                             String command = payload.substring(textStart, textEnd);
-                            
-                            // Update lastUpdateId to avoid processing same message again
                             lastUpdateId = newUpdateId + 1;
                             http.end();
                             return command;

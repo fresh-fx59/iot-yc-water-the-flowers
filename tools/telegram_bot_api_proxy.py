@@ -113,8 +113,11 @@ def _telegram_request(bot_token: str, method: str, params: dict[str, str]) -> tu
 
 
 class Handler(BaseHTTPRequestHandler):
+    ALLOWED_POST_METHODS = {"sendMessage", "setMyCommands", "answerCallbackQuery"}
+
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in ("/v1/telegram/sendMessage", "/v1/telegram/setMyCommands"):
+        method = self.path.rsplit("/", 1)[-1]
+        if method not in self.ALLOWED_POST_METHODS:
             _json_response(self, 404, {"ok": False, "error": "Not found"})
             return
         if not _require_auth(self):
@@ -124,7 +127,6 @@ class Handler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", "0"))
         form = _parse_form(self.rfile.read(content_length))
         bot_token = form.get("bot_token", "").strip()
-        method = "sendMessage" if self.path.endswith("/sendMessage") else "setMyCommands"
 
         if method == "sendMessage":
             chat_id = form.get("chat_id", "").strip()
@@ -135,7 +137,18 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, 400, {"ok": False, "error": "Missing bot_token/chat_id"})
                 return
 
-            params = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+            params: dict[str, str] = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+            reply_markup = form.get("reply_markup", "").strip()
+            if reply_markup:
+                params["reply_markup"] = reply_markup
+        elif method == "answerCallbackQuery":
+            callback_query_id = form.get("callback_query_id", "").strip()
+
+            if not bot_token or not callback_query_id:
+                _json_response(self, 400, {"ok": False, "error": "Missing bot_token/callback_query_id"})
+                return
+
+            params = {"callback_query_id": callback_query_id}
         else:
             commands = form.get("commands", "").strip()
 

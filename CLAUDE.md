@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.20.8 (config.h:10)
+**Version**: 1.21.0 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -147,7 +147,7 @@ All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
 
 ## Telegram
 
-**Commands**: `/help`, `/start_all`, `/halt`, `/resume`, `/time`, `/settime [YYYY-MM-DD HH:MM:SS]`, `/test_sensors`, `/test_sensor_N`, `/reset_overflow`, `/reinit_gpio`, `/overflow_status`, `/lamp_status`, `/lamp_on`, `/lamp_off`, `/lamp_auto`
+**Commands**: `/menu` (inline button panel), `/help`, `/water N` (water tray 1-6), `/start_all`, `/halt`, `/resume`, `/time`, `/settime [YYYY-MM-DD HH:MM:SS]`, `/test_sensors`, `/test_sensor_N`, `/reset_overflow`, `/reinit_gpio`, `/overflow_status`, `/lamp_status`, `/lamp_on`, `/lamp_off`, `/lamp_auto`
 
 **State JSON** (via `/api/status`): pump, sequential_mode, water_level{status,blocked}, overflow{detected,raw_value,trigger_streak}, plant_light{state,mode,schedule_on/off}, valves[]{id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}}
 

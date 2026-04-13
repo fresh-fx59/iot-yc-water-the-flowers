@@ -347,7 +347,7 @@ inline bool MetricsPusher::pushLogs(const String& json) {
     WiFiClientSecure secureClient;
     WiFiClient plainClient;
 
-    String url = proxyBaseUrl() + "/v1/metrics/logs";
+    String url = proxyBaseUrl() + "/v1/logs/push";
     if (!beginHttp(http, url, secureClient, plainClient)) {
         return false;
     }

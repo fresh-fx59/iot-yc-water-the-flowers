@@ -44,11 +44,12 @@ Version-prefixed, imperative, short: `v1.19.3: increase tray 2 watering timeout 
 
 The ESP32-S3 runs two tasks on separate cores with strict isolation:
 
-- **Core 0** (networkTask): WiFi, Telegram, OTA, web server. Owns all network I/O.
-- **Core 1** (loop): Watering state machine, sensor polling, safety watchdogs, auto-watering. NEVER touches network.
+- **Core 0** (networkTask, 8KB stack, 100ms loop): WiFi, Telegram, OTA, web server, MetricsPusher. Owns all network I/O.
+- **Core 1** (loop, 10ms loop): Watering state machine, sensor polling, safety watchdogs, auto-watering. NEVER touches network.
 
 **Thread-safety rules**:
-- NEVER make HTTP/Telegram calls from Core 1. Use `queueTelegramNotification(message)` which goes through a 16-slot FreeRTOS queue (`notificationQueue`). Core 0 drains it via `processPendingNotifications()`.
+- NEVER make HTTP/Telegram/metrics calls from Core 1. Use `queueTelegramNotification(message)` which goes through a 16-slot FreeRTOS queue (`notificationQueue`). Core 0 drains it via `processPendingNotifications()`.
+- `MetricsPusher::log()` is safe to call from Core 1 — it only writes to a circular buffer (no network).
 - Use `TelegramNotifier::formatWateringStarted/Complete/Schedule()` to build messages without network calls.
 
 ### Header-Only Design
@@ -108,11 +109,41 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 
 ### Program Flow
 
-**setup()**: Serial → RTC → LittleFS → wateringSystem.init() → NetworkManager init → connectWiFi → connectMQTT → setWateringSystemRef (MUST be before setupOta) → bootCountdown (10s /halt poll) → registerApiHandlers
+**setup()**: Serial → RTC → LittleFS → wateringSystem.init() → MetricsPusher::init() → NetworkManager init → connectWiFi → setWateringSystemRef (MUST be before setupOta) → bootCountdown (10s /halt poll) → create networkTask on Core 0
 
-**loop()**: First loop: schedule + smart boot watering (first boot | overdue) | Every loop: WiFi reconnect → loopMQTT → processWateringLoop (SM + auto, blocked if halt) → OTA → DebugHelper::loop → 10ms delay
+**Core 1 loop()**: First loop: schedule + smart boot watering (first boot | overdue) | Every loop: processWateringLoop (SM + auto, blocked if halt) → 10ms delay
+
+**Core 0 networkTask()**: loopOta → NetworkManager::loopWiFi → if WiFi connected: ensureBotCommands → checkTelegramCommands → processPendingNotifications → DebugHelper::loop → MetricsPusher::loop → 100ms delay
 
 **processWateringLoop()**: Watchdog → overflow/water-level checks → auto-water check → process each valve SM → sequential transitions → publish state (2s)
+
+## Cloud.ru VPS Infrastructure (45.151.30.146)
+
+All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
+
+**Nginx** (:16443, TLS) — single entry point for ESP32. Routes by URL path:
+- `/v1/telegram/*` → localhost:18085 (telegram_bot_api_proxy.py)
+- `/v1/metrics/*`, `/v1/logs/*` → localhost:18086 (esp32_metrics_proxy.py)
+- `/health` → localhost:18085
+- Config: `/etc/nginx/conf.d/water-the-flowers-proxy.conf`
+- Cert: Let's Encrypt for `water-the-flowers-proxy.aiengineerhelper.com`
+
+**Systemd services** (on host):
+- `telegram-bot-api-proxy.service` — Telegram API forwarder (port 18085)
+- `esp32-metrics-proxy.service` — metrics/logs receiver (port 18086)
+- `xray-client.service` — SOCKS5 proxy for Telegram API (127.0.0.1:1080)
+
+**Docker stack** (`/home/claude-developer/monitoring/docker-compose.yml`):
+- Prometheus (:9090) — scrapes metrics from esp32_metrics_proxy, node_exporter, cAdvisor
+- Loki (:3100) — receives logs from esp32_metrics_proxy
+- Grafana (:3000) — dashboards (admin/admin)
+- Tempo (:3200) — tracing (not used by ESP32)
+- OTel Collector (:14317/:14318) — not used by ESP32
+- node_exporter (:9100), cAdvisor (:8080)
+
+**Prometheus config**: `/home/claude-developer/monitoring/prometheus/prometheus.yml` (mounted read-only into container). Job `esp32_watering` scrapes `host.docker.internal:18086` every 15s.
+
+**Contabo VPS** (31.220.78.216) — runs 3x-ui with VLESS inbound (:8443) for Telegram API routing. Docker: `3x-ui-proxy`.
 
 ## Telegram
 
@@ -185,6 +216,8 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 
 **Persistence**: Save after watering/reset, load on init(). Swap filenames in WateringSystem.h:27-30 to reset all calibrations.
 
+**Monitoring**: MetricsPusher.h (ESP32 push logic), tools/esp32_metrics_proxy.py (server-side proxy). Add log capture with `MetricsPusher::logInfo/logWarn/logError()`. Metrics JSON format must match proxy's `_build_prometheus_metrics()`. Dashboard: edit `tools/grafana-dashboard-esp32.json` then re-import via Grafana API.
+
 **Config**: config.h (pins, timing), secret.h (credentials, never commit)
 
 ## Gotchas
@@ -205,6 +238,8 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 14. Overflow sensor uses software debouncing (5/7 readings must be LOW) to filter electrical noise
 15. Water level sensor has 11s continuation delay before blocking (allows active cycles to finish)
 16. MQTT outage notifications suppressed for < 10 min (`MQTT_OUTAGE_NOTIFY_THRESHOLD_MS`)
+17. MetricsPusher.h MUST be included LAST in main.cpp (depends on WateringSystem.h). Log calls in earlier headers use `#ifdef METRICS_PUSHER_H` guards.
+18. esp32_metrics_proxy.py must bind to 0.0.0.0 (not 127.0.0.1) — Prometheus runs in Docker and reaches it via `host.docker.internal`
 
 ## Testing & Debug
 

@@ -162,7 +162,7 @@ void checkTelegramCommands(int timeout) {
         if (valveNum >= 1 && valveNum <= 6) {
             int valveIndex = valveNum - 1;
             DebugHelper::debugImportant("🚿 WATER VALVE " + String(valveNum) + " command received!");
-            wateringSystem.startWatering(valveIndex);
+            wateringSystem.startWatering(valveIndex, true);
             DebugHelper::flushBuffer();
             sendTelegramDebug("🚿 Watering tray " + String(valveNum) + " started");
         } else {

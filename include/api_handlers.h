@@ -28,7 +28,7 @@ inline void handleWaterApi() {
     }
 
     Serial.printf("✓ API: Starting watering for valve %d\n", valve);
-    g_wateringSystem_ptr->startWatering(valve - 1);
+    g_wateringSystem_ptr->startWatering(valve - 1, true);
     httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Watering started\"}");
 }
 

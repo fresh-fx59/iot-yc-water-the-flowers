@@ -19,7 +19,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             openValve(valveIndex);
             valve->valveOpenTime = currentTime;
             valve->phase = PHASE_WAITING_STABILIZATION;
-            DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
+            DebugHelper::debug("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
             if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": opened");
             publishStateChange("valve" + String(valveIndex), "valve_opened");
             break;
@@ -40,7 +40,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
                 if (isRaining) {
                     // Sensor already wet = TRAY IS FULL - treat as successful fill
-                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
+                    DebugHelper::debug("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
                     if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=WET");
 
                     // SAFETY: Close valve immediately
@@ -66,7 +66,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->phase = PHASE_CLOSING_VALVE;
                 } else {
                     // Sensor dry - start watering
-                    DebugHelper::debugImportant("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
+                    DebugHelper::debug("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
                     if (g_metricsLog) {
                         g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=DRY");
                         g_metricsLog("info", "Valve " + String(valveIndex) + ": watering started");
@@ -130,7 +130,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     // Calculate FULL cycle time: from valve open to valve close
                     int totalTime = (currentTime - valve->valveOpenTime) / 1000;
                     int pumpTime = (currentTime - valve->wateringStartTime) / 1000;
-                    DebugHelper::debugImportant("✓ Valve " + String(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
+                    DebugHelper::debug("✓ Valve " + String(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
 
                     // Count how many valves are watering
                     int wateringCount = 0;
@@ -142,7 +142,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
                     // New logic for single valve watering
                     if (wateringCount == 1) {
-                        DebugHelper::debugImportant("✓ Single valve watering complete. Stopping pump and closing valve.");
+                        DebugHelper::debug("✓ Single valve watering complete. Stopping pump and closing valve.");
                         // SAFETY: Stop pump immediately and close valve
                         digitalWrite(PUMP_PIN, LOW);
                         pumpState = PUMP_OFF;
@@ -160,7 +160,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->phase = PHASE_CLOSING_VALVE;  // Go to cleanup phase for learning data
                 } else if (!valve->wateringRequested) {
                     // Manual stop requested - immediately close valve and stop pump
-                    DebugHelper::debugImportant("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
+                    DebugHelper::debug("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
 
                     // SAFETY: Immediately close valve and stop pump
                     closeValve(valveIndex);

@@ -997,7 +997,7 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
 
     // Check if tray is empty and should be watered
     if (shouldWaterNow(valve, currentTime)) {
-      DebugHelper::debugImportant("⏰ AUTO-WATERING TRIGGERED: Valve " +
+      DebugHelper::debug("⏰ AUTO-WATERING TRIGGERED: Valve " +
                                   String(i));
       DebugHelper::debug("  Tray is empty - starting automatic watering");
       if (g_metricsLog) g_metricsLog("info", "Auto-watering triggered: valve " + String(i));
@@ -1422,7 +1422,7 @@ inline void WateringSystem::openValve(int valveIndex) {
   // GPIO state. This is a hardware-level safety feature. GPIO read-back would show
   // LOW even when GPIO is set HIGH (expected behavior, not a failure).
 
-  DebugHelper::debugImportant("🔧 OPENING VALVE " + String(valveIndex));
+  DebugHelper::debug("🔧 OPENING VALVE " + String(valveIndex));
   DebugHelper::debug("  GPIO Pin: " + String(VALVE_PINS[valveIndex]));
 
   digitalWrite(VALVE_PINS[valveIndex], HIGH);
@@ -1445,7 +1445,7 @@ inline void WateringSystem::closeValve(int valveIndex) {
   if (activeValveCount > 0)
     activeValveCount--;
 
-  DebugHelper::debugImportant("🔧 CLOSING VALVE " + String(valveIndex) +
+  DebugHelper::debug("🔧 CLOSING VALVE " + String(valveIndex) +
                               " (GPIO " + String(VALVE_PINS[valveIndex]) + ")");
 }
 
@@ -1465,7 +1465,7 @@ inline void WateringSystem::updatePumpState() {
     statusLED.setPixelColor(0, statusLED.Color(0, 0, 255));
     statusLED.show();
     pumpState = PUMP_ON;
-    DebugHelper::debugImportant("💧 Pump ON (GPIO " + String(PUMP_PIN) + ")");
+    DebugHelper::debug("💧 Pump ON (GPIO " + String(PUMP_PIN) + ")");
     publishStateChange("pump", "on");
   } else if (wateringCount == 0 && pumpState == PUMP_ON) {
     digitalWrite(PUMP_PIN, LOW);
@@ -1473,7 +1473,7 @@ inline void WateringSystem::updatePumpState() {
     statusLED.clear();
     statusLED.show();
     pumpState = PUMP_OFF;
-    DebugHelper::debugImportant("💧 Pump OFF (GPIO " + String(PUMP_PIN) + ")");
+    DebugHelper::debug("💧 Pump OFF (GPIO " + String(PUMP_PIN) + ")");
     publishStateChange("pump", "off");
   }
 }
@@ -1508,7 +1508,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     // SPECIAL CASE: First watering timeout on uncalibrated valve
     // Set up 24-hour auto-retry to allow the system to try again
     if (!valve->isCalibrated) {
-      DebugHelper::debugImportant("⏰ TIMEOUT on first watering - scheduling 24h retry");
+      DebugHelper::debug("⏰ TIMEOUT on first watering - scheduling 24h retry");
 
       // Set up minimal learning data to enable auto-watering retry
       valve->lastWateringAttemptTime = currentTime;
@@ -1517,7 +1517,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER; // 1.0x
       // Keep isCalibrated = false so next successful watering establishes baseline
 
-      DebugHelper::debugImportant("  Next attempt in: 24 hours");
+      DebugHelper::debug("  Next attempt in: 24 hours");
       DebugHelper::debug("  Valve remains uncalibrated until successful watering");
 
       saveLearningData();
@@ -1549,12 +1549,12 @@ inline void WateringSystem::processLearningData(ValveController *valve,
 
       if (timeSinceLastWatering < RECENT_WATERING_THRESHOLD_MS) {
         // Recently watered - likely restart/power outage scenario
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "🧠 RESTART DETECTION: Tray wet from recent watering");
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "  Time since last watering: " +
             LearningAlgorithm::formatDuration(timeSinceLastWatering));
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "  Skipping cycle (no interval change) - likely power outage/restart");
 
         // Don't modify interval - just skip this cycle
@@ -1582,12 +1582,12 @@ inline void WateringSystem::processLearningData(ValveController *valve,
 
       if (timeSinceOverflowReset < OVERFLOW_RECOVERY_THRESHOLD_MS) {
         // Overflow was recently reset - tray may have been refilled during overflow period
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "🧠 OVERFLOW RECOVERY DETECTION: Tray wet after overflow reset");
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "  Time since overflow reset: " +
             LearningAlgorithm::formatDuration(timeSinceOverflowReset));
-        DebugHelper::debugImportant(
+        DebugHelper::debug(
             "  Skipping cycle (no interval change) - watering was blocked by overflow");
 
         // Don't modify interval - just skip this cycle
@@ -1601,7 +1601,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     }
 
     // Tray has been wet for a LONG time - genuinely slow consumption
-    DebugHelper::debugImportant("🧠 ADAPTIVE LEARNING: Tray still full after long time");
+    DebugHelper::debug("🧠 ADAPTIVE LEARNING: Tray still full after long time");
 
     // Double the interval (exponential backoff) - tray is consuming water
     // slower than expected
@@ -1611,10 +1611,10 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
     valve->totalWateringCycles++;
 
-    DebugHelper::debugImportant("  Interval: " + String(oldMultiplier, 2) +
+    DebugHelper::debug("  Interval: " + String(oldMultiplier, 2) +
                                 "x → " + String(valve->intervalMultiplier, 2) +
                                 "x (doubled)");
-    DebugHelper::debugImportant(
+    DebugHelper::debug(
         "  Next attempt in: " +
         LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
 
@@ -1649,7 +1649,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     valve->realTimeSinceLastWateringAttempt = 0;
     valve->lastWaterLevelPercent = 0.0;
 
-    DebugHelper::debugImportant(
+    DebugHelper::debug(
         "  ✨ INITIAL CALIBRATION: " + String(fillDuration / 1000.0, 1) + "s");
     DebugHelper::debug("  Baseline will auto-update when tray is emptier");
     DebugHelper::debug("  Starting interval: 1.0x (24 hours)");
@@ -1675,7 +1675,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   if (fillDuration < valve->baselineFillDuration * BASELINE_TOLERANCE) {
     // Fill < 85% of baseline - tray not fully empty, need longer interval
     valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
-    DebugHelper::debugImportant(
+    DebugHelper::debug(
         "  ⬆️  Fill < baseline → Interval: " + String(oldMultiplier, 2) +
         "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
         String(INTERVAL_INCREMENT_LARGE, 1) + ")");
@@ -1684,9 +1684,9 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     // increase interval
     valve->baselineFillDuration = fillDuration;
     valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
-    DebugHelper::debugImportant("  ✨ NEW BASELINE: " + String(fillSeconds, 1) +
+    DebugHelper::debug("  ✨ NEW BASELINE: " + String(fillSeconds, 1) +
                                 "s");
-    DebugHelper::debugImportant("  ⬆️  Interval: " + String(oldMultiplier, 2) +
+    DebugHelper::debug("  ⬆️  Interval: " + String(oldMultiplier, 2) +
                                 "x → " + String(valve->intervalMultiplier, 2) +
                                 "x (+" + String(INTERVAL_INCREMENT_LARGE, 1) +
                                 ")");
@@ -1702,20 +1702,20 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         valve->intervalMultiplier =
             MIN_INTERVAL_MULTIPLIER; // Never go below 24h
       }
-      DebugHelper::debugImportant(
+      DebugHelper::debug(
           "  🎯 Fill stable → Interval: " + String(oldMultiplier, 2) + "x → " +
           String(valve->intervalMultiplier, 2) + "x (-" +
           String(INTERVAL_DECREMENT_BINARY, 1) + ")");
 
       // Check if we've found optimal (stable baseline for 2+ cycles)
       if (valve->totalWateringCycles > 2 && fillDiff == 0) {
-        DebugHelper::debugImportant("  ✅ OPTIMAL INTERVAL FOUND: " +
+        DebugHelper::debug("  ✅ OPTIMAL INTERVAL FOUND: " +
                                     String(valve->intervalMultiplier, 2) + "x");
       }
     } else if (fillDuration < valve->previousFillDuration) {
       // Fill decreased from last time - tray was less empty, interval too short
       valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
-      DebugHelper::debugImportant(
+      DebugHelper::debug(
           "  ⬆️  Fill decreased → Interval: " + String(oldMultiplier, 2) +
           "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
           String(INTERVAL_INCREMENT_FINE, 2) + ")");
@@ -1725,7 +1725,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       if (valve->intervalMultiplier < MIN_INTERVAL_MULTIPLIER) {
         valve->intervalMultiplier = MIN_INTERVAL_MULTIPLIER;
       }
-      DebugHelper::debugImportant(
+      DebugHelper::debug(
           "  ⬇️  Fill increased → Interval: " + String(oldMultiplier, 2) +
           "x → " + String(valve->intervalMultiplier, 2) + "x (-" +
           String(INTERVAL_INCREMENT_FINE, 2) + ")");
@@ -1745,7 +1745,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       fillDuration, valve->baselineFillDuration);
   valve->lastWaterLevelPercent = waterLevelBefore;
 
-  DebugHelper::debugImportant(
+  DebugHelper::debug(
       "  ⏰ Next watering in: " +
       LearningAlgorithm::formatDuration(valve->emptyToFullDuration) + " (" +
       String(valve->intervalMultiplier, 2) + "x)");

@@ -11,7 +11,7 @@
     "to": "now"
   },
   "timepicker": {},
-  "timezone": "browser",
+  "timezone": "Europe/Moscow",
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "tags": ["esp32", "watering", "iot"],

@@ -260,6 +260,29 @@ inline String MetricsPusher::buildMetricsJson() {
             }
             json += ",\"time_until_empty_ms\":" + String(timeUntilEmpty);
 
+            // Time since last watering attempt (for 24h safety interval tracking)
+            unsigned long timeSinceAttempt = 0;
+            if (hasLastWateringAttemptReference(v)) {
+                timeSinceAttempt = getTimeSinceLastWateringAttempt(v, currentTime);
+            }
+            json += ",\"time_since_attempt_ms\":" + String(timeSinceAttempt);
+
+            // Time until next watering (mirrors shouldWaterNow logic)
+            // max(emptyToFullDuration - timeSince, 24h_min - timeSinceAttempt, 0)
+            unsigned long timeUntilNext = 0;
+            if (v->autoWateringEnabled && (v->isCalibrated || v->emptyToFullDuration > 0)) {
+                unsigned long consumptionRemaining = 0;
+                if (v->emptyToFullDuration > 0 && hasLastWateringReference(v) && timeSince < v->emptyToFullDuration) {
+                    consumptionRemaining = v->emptyToFullDuration - timeSince;
+                }
+                unsigned long safetyRemaining = 0;
+                if (hasLastWateringAttemptReference(v) && timeSinceAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
+                    safetyRemaining = AUTO_WATERING_MIN_INTERVAL_MS - timeSinceAttempt;
+                }
+                timeUntilNext = consumptionRemaining > safetyRemaining ? consumptionRemaining : safetyRemaining;
+            }
+            json += ",\"time_until_next_ms\":" + String(timeUntilNext);
+
             json += ",\"baseline_fill_ms\":" + String(v->baselineFillDuration);
             json += ",\"last_fill_ms\":" + String(v->lastFillDuration);
             json += ",\"empty_duration_ms\":" + String(v->emptyToFullDuration);

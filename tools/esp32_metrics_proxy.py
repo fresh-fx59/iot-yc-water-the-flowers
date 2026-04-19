@@ -167,6 +167,8 @@ def _build_prometheus_metrics() -> str:
         ("esp32_valve_baseline_fill_ms",   "gauge",   "Baseline watering fill duration in milliseconds",   "baseline_fill_ms"),
         ("esp32_valve_last_fill_ms",       "gauge",   "Last measured watering fill duration in ms",        "last_fill_ms"),
         ("esp32_valve_empty_duration_ms",  "gauge",   "Current computed empty-to-full interval in ms",     "empty_duration_ms"),
+        ("esp32_valve_time_since_attempt_ms","gauge",  "Milliseconds since last watering attempt",          "time_since_attempt_ms"),
+        ("esp32_valve_time_until_next_ms", "gauge",    "Milliseconds until next auto-watering",             "time_until_next_ms"),
     ]
 
     for metric_name, metric_type, help_text, field in per_valve_defs:

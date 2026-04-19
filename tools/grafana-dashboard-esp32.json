@@ -198,7 +198,52 @@
       "type": "gauge",
       "title": "Time Until Empty",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 17 },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "minVizWidth": 75,
+        "minVizHeight": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "dark-red", "value": null },
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 4 },
+              { "color": "green", "value": 12 }
+            ]
+          },
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(esp32_valve_empty_duration_ms{job=\"esp32_watering\"} - esp32_valve_time_since_watering_ms{job=\"esp32_watering\"}) / 3600000",
+          "legendFormat": "Valve {{valve}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "gauge",
+      "title": "Next Watering In",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 17 },
       "options": {
         "reduceOptions": {
           "values": false,
@@ -220,7 +265,8 @@
             "mode": "absolute",
             "steps": [
               { "color": "red", "value": null },
-              { "color": "yellow", "value": 4 },
+              { "color": "orange", "value": 1 },
+              { "color": "yellow", "value": 6 },
               { "color": "green", "value": 12 }
             ]
           },
@@ -232,7 +278,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "esp32_valve_time_until_empty_ms{job=\"esp32_watering\"} / 3600000",
+          "expr": "esp32_valve_time_until_next_ms{job=\"esp32_watering\"} / 3600000",
           "legendFormat": "Valve {{valve}}",
           "refId": "A"
         }
@@ -243,7 +289,7 @@
       "type": "stat",
       "title": "Total Cycles",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 17 },
       "options": {
         "reduceOptions": {
           "values": false,

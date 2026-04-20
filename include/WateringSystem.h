@@ -1123,38 +1123,11 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
     }
   }
 
-  // Start watering cycle
-  DebugHelper::debug("═══════════════════════════════════════");
-  DebugHelper::debug("Starting watering cycle for valve " + String(valveIndex));
-
-  if (valve->isCalibrated) {
-    DebugHelper::debug(
-        "🧠 Calibrated - Baseline: " +
-        LearningAlgorithm::formatDuration(valve->baselineFillDuration));
-    if (valve->emptyToFullDuration > 0) {
-      DebugHelper::debug("  Empty time: " + LearningAlgorithm::formatDuration(
-                                                valve->emptyToFullDuration));
-    }
-  } else {
-    DebugHelper::debug("🎯 First watering - Establishing baseline");
-  }
-
-  DebugHelper::debug("Step 1: Opening valve (sensor needs water flow)...");
-  valve->wateringRequested = true;
-  valve->rainDetected = false;
-  valve->lastRainCheck = 0;
-  valve->phase = PHASE_OPENING_VALVE;
-
-  // CRITICAL: Record watering attempt time (prevents auto-watering retry loops)
-  valve->lastWateringAttemptTime = currentTime;
-  valve->realTimeSinceLastWateringAttempt = 0;
-
-  publishStateChange("valve" + String(valveIndex), "cycle_started");
-
-  // Record session start if Telegram tracking is active
-  if (telegramSessionActive) {
-    recordSessionStart(valveIndex);
-  }
+  // Route through universal valve queue. processQueue drains it and calls
+  // beginValveCycle, which performs the actual phase transition + session
+  // setup. Task 8 will override the "Manual" label for auto/batch entry points.
+  String triggerType = "Manual";
+  enqueueValve(valveIndex, triggerType, forceWatering);
 }
 
 inline void WateringSystem::beginValveCycle(

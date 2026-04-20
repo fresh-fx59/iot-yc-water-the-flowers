@@ -205,6 +205,25 @@ function updateStatus() {
         lampStatus.classList.add('inactive');
       }
       lampText.textContent = formatLampStatus(data.plant_light);
+
+      // Queue state — surfaced from universal valve queue
+      const queueInfo = document.getElementById('queueInfo');
+      if (queueInfo) {
+        const q = Array.isArray(data.queue) ? data.queue : [];
+        const active = data.active_valve || 0;
+        const gap = data.inter_valve_gap_remaining_ms || 0;
+        let txt = 'Idle';
+        if (active > 0) {
+          txt = `Active: V${active}`;
+          if (q.length > 0) txt += ` · Queued: ${q.map(v => `V${v}`).join(', ')}`;
+        } else if (gap > 0) {
+          txt = `Gap: ${Math.ceil(gap / 1000)}s`;
+          if (q.length > 0) txt += ` · Queued: ${q.map(v => `V${v}`).join(', ')}`;
+        } else if (q.length > 0) {
+          txt = `Queued: ${q.map(v => `V${v}`).join(', ')}`;
+        }
+        queueInfo.textContent = txt;
+      }
     })
     .catch(e => console.error('Status update error:', e));
 }

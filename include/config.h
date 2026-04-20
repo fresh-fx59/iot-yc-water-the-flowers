@@ -99,6 +99,11 @@ constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
     30000   // Valve 5: 30s (5s margin)
 };
 
+// Universal inter-valve gap — pause between finishing one valve and starting
+// the next queued valve. Gives the pump pressure and sensors time to settle so
+// every cycle sees the same flow rate (required for stable learning baselines).
+const unsigned long INTER_VALVE_GAP_MS = 30000;  // 30 seconds
+
 // Helper functions for safe timeout access
 inline unsigned long getValveNormalTimeout(int valveIndex) {
     if (valveIndex < 0 || valveIndex >= NUM_VALVES) {

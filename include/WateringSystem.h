@@ -54,12 +54,6 @@ private:
   unsigned long lastStatePublish;
   String lastStateJson;
 
-  // Sequential watering state
-  bool sequentialMode;
-  int currentSequenceIndex;
-  int sequenceValves[NUM_VALVES];
-  int sequenceLength;
-
   // Universal single-valve queue (replaces sequentialMode-only machinery).
   // At most one valve may be non-IDLE at a time; others wait here.
   ValveQueueLogic::QueueEntry valveQueue[NUM_VALVES];
@@ -103,8 +97,7 @@ public:
   // ========== Constructor ==========
   WateringSystem()
       : pumpState(PUMP_OFF), activeValveCount(0), lastStatePublish(0),
-        lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
-        sequenceLength(0), valveQueueLength(0), currentlyActiveValve(-1),
+        lastStateJson(""), valveQueueLength(0), currentlyActiveValve(-1),
         nextValveReadyTime(0), batchSessionActive(false), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
         lastOverflowCheck(0), lastOverflowResetTime(0), overflowDetectionStreak(0),
@@ -115,7 +108,6 @@ public:
         notificationQueue(nullptr) {
     for (int i = 0; i < NUM_VALVES; i++) {
       valves[i] = new ValveController(i);
-      sequenceValves[i] = 0;
     }
   }
 
@@ -138,7 +130,6 @@ public:
   void startSequentialWatering(const String &triggerType = "Manual");
   void startSequentialWateringCustom(int *valveIndices, int count,
                                      const String &triggerType = "");
-  void stopSequentialWatering();
 
   // Time-based learning algorithm
   void resetCalibration(int valveIndex);
@@ -209,7 +200,6 @@ private:
   // ========== Core Logic ==========
   void processValve(int valveIndex, unsigned long currentTime);
   bool isValveComplete(int valveIndex);
-  void startNextInSequence();
   void checkAutoWatering(unsigned long currentTime);
   // Called at dequeue time — actually begins a valve cycle after all gates
   // have passed. Sets the active-valve marker, starts the Telegram session,
@@ -241,8 +231,7 @@ private:
   void processLearningData(ValveController *valve, unsigned long currentTime);
   void logLearningData(ValveController *valve, float waterLevelBefore,
                        unsigned long emptyDuration);
-  void sendScheduleUpdateIfNeeded(); // Helper: sends schedule update unless in
-                                     // sequential mode
+  void sendScheduleUpdateIfNeeded(); // Helper: queues a schedule update
 
   // ========== Utilities ==========
   void publishStateChange(const String &component, const String &state);
@@ -578,9 +567,7 @@ inline void WateringSystem::processWateringLoop() {
   updatePlantLightSchedule(currentTime);
 
   // Check for automatic watering (time-based)
-  if (!sequentialMode) {
-    checkAutoWatering(currentTime);
-  }
+  checkAutoWatering(currentTime);
 
   // Drain queue: start next valve if gap elapsed and no valve is active.
   processQueue(currentTime);
@@ -588,15 +575,6 @@ inline void WateringSystem::processWateringLoop() {
   // Process each valve independently
   for (int i = 0; i < NUM_VALVES; i++) {
     processValve(i, currentTime);
-  }
-
-  // Handle sequential watering
-  if (sequentialMode && currentSequenceIndex > 0) {
-    int lastValveIndex = sequenceValves[currentSequenceIndex - 1];
-    if (isValveComplete(lastValveIndex)) {
-      delay(1000); // Small delay between valves
-      startNextInSequence();
-    }
   }
 
   // Publish state periodically
@@ -800,9 +778,6 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
   // Turn off LED
   statusLED.clear();
   statusLED.show();
-
-  // Stop sequential mode if active
-  sequentialMode = false;
 
   DebugHelper::debugImportant("✓ All valves closed, pump stopped, sensors off, system halted");
 }
@@ -1417,71 +1392,9 @@ inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
   }
 }
 
-inline void WateringSystem::stopSequentialWatering() {
-  if (!sequentialMode)
-    return;
-
-  DebugHelper::debug("\n⚠️  SEQUENTIAL WATERING STOPPED");
-  sequentialMode = false;
-
-  for (int i = 0; i < NUM_VALVES; i++) {
-    if (valves[i]->phase != PHASE_IDLE) {
-      stopWatering(i);
-    }
-  }
-
-  publishStateChange("system", "sequential_stopped");
-}
-
 inline bool WateringSystem::isValveComplete(int valveIndex) {
   return valves[valveIndex]->phase == PHASE_IDLE &&
          !valves[valveIndex]->wateringRequested;
-}
-
-inline void WateringSystem::startNextInSequence() {
-  if (!sequentialMode)
-    return;
-
-  if (currentSequenceIndex >= sequenceLength) {
-    DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
-    DebugHelper::debug("║  SEQUENTIAL WATERING COMPLETE ✓           ║");
-    DebugHelper::debug("╚═══════════════════════════════════════════╝");
-    sequentialMode = false;
-    publishStateChange("system", "sequential_complete");
-
-    // Send Telegram completion notification
-    if (telegramSessionActive) {
-      // Build results array for Telegram
-      String results[NUM_VALVES][3];
-      int resultCount = 0;
-
-      for (int i = 0; i < NUM_VALVES; i++) {
-        if (sessionData[i].active) {
-          results[resultCount][0] = String(sessionData[i].trayNumber);
-          results[resultCount][1] = String(sessionData[i].duration, 1);
-          results[resultCount][2] = sessionData[i].status;
-          resultCount++;
-        }
-      }
-
-      // Queue completion notification (non-blocking, sent from Core 0)
-      queueTelegramNotification(TelegramNotifier::formatWateringComplete(results, resultCount));
-      endTelegramSession();
-
-      // Queue updated watering schedule after sequential watering completes
-      sendWateringSchedule("Updated Schedule");
-    }
-
-    return;
-  }
-
-  int valveIndex = sequenceValves[currentSequenceIndex];
-  DebugHelper::debug("\n→ [Sequence " + String(currentSequenceIndex + 1) + "/" +
-                     String(sequenceLength) + "] Starting Valve " +
-                     String(valveIndex));
-
-  startWatering(valveIndex, true); // Force watering - ignore learning algorithm
-  currentSequenceIndex++;
 }
 
 // ========== Hardware Control ==========
@@ -1607,10 +1520,8 @@ inline void WateringSystem::updatePumpState() {
 
 // ========== Helper: Schedule Update ==========
 inline void WateringSystem::sendScheduleUpdateIfNeeded() {
-  if (!sequentialMode) {
-    DebugHelper::debug("📅 Queuing updated watering schedule...");
-    sendWateringSchedule("Updated Schedule");
-  }
+  DebugHelper::debug("📅 Queuing updated watering schedule...");
+  sendWateringSchedule("Updated Schedule");
 }
 
 // ========== Time-Based Learning Algorithm ==========
@@ -2369,9 +2280,6 @@ inline void WateringSystem::setHaltMode(bool enabled) {
     DebugHelper::debugImportant("  Send /resume to exit halt mode");
 
     // Stop any ongoing watering
-    if (sequentialMode) {
-      stopSequentialWatering();
-    }
     for (int i = 0; i < NUM_VALVES; i++) {
       if (valves[i]->phase != PHASE_IDLE) {
         stopWatering(i);

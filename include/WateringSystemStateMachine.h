@@ -206,8 +206,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 }
                 recordSessionEnd(valveIndex, status);
 
-                // Send completion notification for auto-watering (not sequential mode)
-                if (!sequentialMode && autoWateringValveIndex == valveIndex) {
+                // Send completion notification for auto-watering (single-valve, not part of a batch)
+                if (!batchSessionActive && autoWateringValveIndex == valveIndex) {
                     // Build results for single valve
                     String results[1][3];
                     results[0][0] = String(sessionData[valveIndex].trayNumber);
@@ -282,12 +282,9 @@ inline void WateringSystem::publishCurrentState() {
     // Build state JSON
     String stateJson = "{";
     stateJson += "\"pump\":\"" + String(pumpState == PUMP_ON ? "on" : "off") + "\",";
-    stateJson += "\"sequential_mode\":" + String(sequentialMode ? "true" : "false");
-
-    if (sequentialMode) {
-        stateJson += ",\"sequence_progress\":" + String(currentSequenceIndex);
-        stateJson += ",\"sequence_total\":" + String(sequenceLength);
-    }
+    // sequential_mode: true while a multi-valve batch is draining the queue.
+    // (Task 12 will surface richer queue state in /api/status.)
+    stateJson += "\"sequential_mode\":" + String(batchSessionActive ? "true" : "false");
 
     // Add water level sensor status
     stateJson += ",\"water_level\":{";

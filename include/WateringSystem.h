@@ -218,6 +218,9 @@ private:
   // Add a valve to the queue after all startWatering gates have passed.
   // Dedupes: if the valve is already active or already queued, this is a noop.
   void enqueueValve(int valveIndex, const String& triggerType, bool force);
+  // Per-loop queue drain. Detects valve-completion edge, starts gap timer,
+  // and dequeues the next entry when all gates allow. Safe to call every tick.
+  void processQueue(unsigned long currentTime);
   void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
   void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
   void checkWaterLevelSensor(unsigned long currentTime);  // Water level sensor check
@@ -574,6 +577,9 @@ inline void WateringSystem::processWateringLoop() {
   if (!sequentialMode) {
     checkAutoWatering(currentTime);
   }
+
+  // Drain queue: start next valve if gap elapsed and no valve is active.
+  processQueue(currentTime);
 
   // Process each valve independently
   for (int i = 0; i < NUM_VALVES; i++) {
@@ -1224,6 +1230,62 @@ inline void WateringSystem::enqueueValve(int valveIndex,
   DebugHelper::debug("⊕ enqueued valve " + String(valveIndex) +
                      " (trigger=" + triggerType + ", queue=" +
                      String(valveQueueLength) + ")");
+}
+
+inline void WateringSystem::processQueue(unsigned long currentTime) {
+  // Step 1: Detect "active valve just became idle" edge. Covers normal
+  // completion, early aborts (initial-rain wet), timeouts, and emergency
+  // shutdowns — anything that lands the valve in PHASE_IDLE.
+  if (currentlyActiveValve != -1 &&
+      valves[currentlyActiveValve]->phase == PHASE_IDLE) {
+    DebugHelper::debug("↻ valve " + String(currentlyActiveValve) +
+                       " idle — gap timer started (" +
+                       String(INTER_VALVE_GAP_MS / 1000) + "s)");
+    currentlyActiveValve = -1;
+    nextValveReadyTime = currentTime + INTER_VALVE_GAP_MS;
+  }
+
+  // Step 2: Dequeue when allowed.
+  if (!ValveQueueLogic::canDequeue(currentTime, nextValveReadyTime,
+                                   currentlyActiveValve, valveQueueLength)) {
+    return;
+  }
+
+  // Safety gates (defer but don't drop).
+  if (overflowDetected || waterLevelLow || haltMode) {
+    if (g_metricsLog) {
+      String reason = overflowDetected ? "overflow"
+                                       : (waterLevelLow ? "water_low" : "halt");
+      g_metricsLog("warn",
+                   "queue: dequeue deferred — safety gate (" + reason + ")");
+    }
+    return;
+  }
+
+  // Peek head, then re-check learning-interval for non-force entries
+  // (may be stale after long waits behind safety gates).
+  ValveQueueLogic::QueueEntry head = valveQueue[0];
+  ValveController *valve = valves[head.valveIndex];
+
+  if (!head.force && valve->isCalibrated && valve->emptyToFullDuration > 0 &&
+      valve->lastWateringCompleteTime > 0 &&
+      valve->lastWateringCompleteTime <= currentTime) {
+    unsigned long timeSince = currentTime - valve->lastWateringCompleteTime;
+    if (timeSince < valve->emptyToFullDuration) {
+      ValveQueueLogic::QueueEntry drop;
+      ValveQueueLogic::dequeue(valveQueue, valveQueueLength, drop);
+      if (g_metricsLog) {
+        g_metricsLog("info", "queue: dropped valve " + String(head.valveIndex) +
+                                 " at dequeue — no longer due (learning)");
+      }
+      return;
+    }
+  }
+
+  // Pop and start.
+  ValveQueueLogic::QueueEntry entry;
+  ValveQueueLogic::dequeue(valveQueue, valveQueueLength, entry);
+  beginValveCycle(entry);
 }
 
 inline void WateringSystem::stopWatering(int valveIndex) {

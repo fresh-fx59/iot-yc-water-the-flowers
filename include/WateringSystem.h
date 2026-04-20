@@ -1520,6 +1520,9 @@ inline void WateringSystem::updatePumpState() {
 
 // ========== Helper: Schedule Update ==========
 inline void WateringSystem::sendScheduleUpdateIfNeeded() {
+  if (batchSessionActive) {
+    return;
+  }
   DebugHelper::debug("📅 Queuing updated watering schedule...");
   sendWateringSchedule("Updated Schedule");
 }

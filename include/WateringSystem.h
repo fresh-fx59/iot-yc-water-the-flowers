@@ -218,6 +218,10 @@ private:
   // Add a valve to the queue after all startWatering gates have passed.
   // Dedupes: if the valve is already active or already queued, this is a noop.
   void enqueueValve(int valveIndex, const String& triggerType, bool force);
+  // Internal gated entry point. Runs all safety + learning gates, then
+  // enqueues with the given trigger label. All public/internal callers
+  // (startWatering, checkAutoWatering, etc.) delegate here.
+  void requestWatering(int valveIndex, const String& triggerType, bool force);
   // Per-loop queue drain. Detects valve-completion edge, starts gap timer,
   // and dequeues the next entry when all gates allow. Safe to call every tick.
   void processQueue(unsigned long currentTime);
@@ -1025,21 +1029,17 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
       DebugHelper::debug("  Tray is empty - starting automatic watering");
       if (g_metricsLog) g_metricsLog("info", "Auto-watering triggered: valve " + String(i));
 
-      // Start Telegram session for auto-watering
-      startTelegramSession("Auto (Tray " + String(i + 1) + ")");
-      autoWateringValveIndex = i;
-
-      // Queue start notification (non-blocking, sent from Core 0)
-      String trayNumber = String(i + 1);
-      queueTelegramNotification(TelegramNotifier::formatWateringStarted("Auto", trayNumber));
-
-      startWatering(i);
+      requestWatering(i, "Auto", /*force=*/false);
     }
   }
 }
 
 // ========== Watering Control ==========
 inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
+  requestWatering(valveIndex, "Manual", forceWatering);
+}
+
+inline void WateringSystem::requestWatering(int valveIndex, const String& triggerType, bool force) {
   // OVERFLOW CHECK: Block all watering if overflow detected
   if (overflowDetected) {
     DebugHelper::debug("🚨 Watering blocked - OVERFLOW DETECTED");
@@ -1075,7 +1075,7 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
 
   // Check if we should skip this watering (time-based learning algorithm)
   // ONLY skip for auto-watering, NOT for manual/Telegram/API commands
-  if (!forceWatering && valve->isCalibrated && valve->emptyToFullDuration > 0 &&
+  if (!force && valve->isCalibrated && valve->emptyToFullDuration > 0 &&
       valve->lastWateringCompleteTime > 0) {
     // Safety check for future timestamps (e.g. clock drift)
     if (valve->lastWateringCompleteTime > currentTime) {
@@ -1123,11 +1123,9 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
     }
   }
 
-  // Route through universal valve queue. processQueue drains it and calls
-  // beginValveCycle, which performs the actual phase transition + session
-  // setup. Task 8 will override the "Manual" label for auto/batch entry points.
-  String triggerType = "Manual";
-  enqueueValve(valveIndex, triggerType, forceWatering);
+  // All gates passed — enqueue. beginValveCycle (called by processQueue)
+  // performs the state transition and session setup.
+  enqueueValve(valveIndex, triggerType, force);
 }
 
 inline void WateringSystem::beginValveCycle(

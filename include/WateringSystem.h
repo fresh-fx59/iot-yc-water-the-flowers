@@ -211,6 +211,10 @@ private:
   bool isValveComplete(int valveIndex);
   void startNextInSequence();
   void checkAutoWatering(unsigned long currentTime);
+  // Called at dequeue time — actually begins a valve cycle after all gates
+  // have passed. Sets the active-valve marker, starts the Telegram session,
+  // and transitions the valve's state machine to PHASE_OPENING_VALVE.
+  void beginValveCycle(const ValveQueueLogic::QueueEntry& entry);
   void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
   void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
   void checkWaterLevelSensor(unsigned long currentTime);  // Water level sensor check
@@ -1142,6 +1146,50 @@ inline void WateringSystem::startWatering(int valveIndex, bool forceWatering) {
   if (telegramSessionActive) {
     recordSessionStart(valveIndex);
   }
+}
+
+inline void WateringSystem::beginValveCycle(
+    const ValveQueueLogic::QueueEntry& entry) {
+  int valveIndex = entry.valveIndex;
+  ValveController *valve = valves[valveIndex];
+
+  currentlyActiveValve = valveIndex;
+
+  if (entry.triggerType == "Auto") {
+    autoWateringValveIndex = valveIndex;
+  }
+
+  // Start per-cycle Telegram session if one isn't already running.
+  // Batch sessions (triggerType == "Sequential") are started by the batch
+  // entry point instead — see startSequentialWatering.
+  if (!telegramSessionActive && entry.triggerType != "Sequential") {
+    String sessionLabel = entry.triggerType;
+    if (entry.triggerType == "Auto") {
+      sessionLabel = "Auto (Tray " + String(valveIndex + 1) + ")";
+    }
+    startTelegramSession(sessionLabel);
+
+    String trayNumber = String(valveIndex + 1);
+    queueTelegramNotification(
+        TelegramNotifier::formatWateringStarted(entry.triggerType, trayNumber));
+  }
+
+  // Transition state machine — mirrors what the old startWatering tail does.
+  valve->wateringRequested = true;
+  valve->rainDetected = false;
+  valve->lastRainCheck = 0;
+  valve->phase = PHASE_OPENING_VALVE;
+  valve->lastWateringAttemptTime = millis();
+  valve->realTimeSinceLastWateringAttempt = 0;
+  publishStateChange("valve" + String(valveIndex), "cycle_started");
+
+  if (g_metricsLog) {
+    g_metricsLog("info", "queue: dequeued valve " + String(valveIndex) +
+                             " (trigger=" + entry.triggerType + ")");
+  }
+
+  DebugHelper::debug("▶ beginValveCycle: valve " + String(valveIndex) +
+                     " (trigger=" + entry.triggerType + ")");
 }
 
 inline void WateringSystem::stopWatering(int valveIndex) {

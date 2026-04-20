@@ -5,6 +5,7 @@
 #include "TelegramNotifier.h"
 #include "PlantLightController.h"
 #include "ValveController.h"
+#include "ValveQueueLogic.h"
 #include "config.h"
 #include "DS3231RTC.h"
 #include "LearningAlgorithm.h"
@@ -59,6 +60,14 @@ private:
   int sequenceValves[NUM_VALVES];
   int sequenceLength;
 
+  // Universal single-valve queue (replaces sequentialMode-only machinery).
+  // At most one valve may be non-IDLE at a time; others wait here.
+  ValveQueueLogic::QueueEntry valveQueue[NUM_VALVES];
+  int valveQueueLength;
+  int currentlyActiveValve;         // -1 if no valve is actively cycling
+  unsigned long nextValveReadyTime; // earliest millis() allowed for next dequeue
+  bool batchSessionActive;          // true while a multi-valve batch is draining
+
   // Telegram session tracking
   bool telegramSessionActive;
   String sessionTriggerType;
@@ -95,7 +104,8 @@ public:
   WateringSystem()
       : pumpState(PUMP_OFF), activeValveCount(0), lastStatePublish(0),
         lastStateJson(""), sequentialMode(false), currentSequenceIndex(0),
-        sequenceLength(0), telegramSessionActive(false), sessionTriggerType(""),
+        sequenceLength(0), valveQueueLength(0), currentlyActiveValve(-1),
+        nextValveReadyTime(0), batchSessionActive(false), telegramSessionActive(false), sessionTriggerType(""),
         autoWateringValveIndex(-1), haltMode(false), overflowDetected(false),
         lastOverflowCheck(0), lastOverflowResetTime(0), overflowDetectionStreak(0),
         waterLevelLow(false),

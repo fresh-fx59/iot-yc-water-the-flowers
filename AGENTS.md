@@ -36,3 +36,6 @@ Recent history follows short, imperative, version-prefixed subjects such as `v1.
 
 ## Security & Configuration Tips
 Do not commit secrets. Local credentials and tokens belong in `include/secret.h`. Treat LittleFS contents and Telegram/MQTT settings as deployable configuration, and double-check proxy/service files in `deploy/systemd/` before shipping monitoring changes.
+
+## Plan Execution
+When a written implementation plan is ready (e.g. under `docs/superpowers/plans/`), execute it via **subagent-driven development** (`superpowers:subagent-driven-development`) by default — fresh subagent per task with review between tasks. Do not ask which execution mode to use unless the user explicitly requests inline execution.

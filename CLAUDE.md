@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.21.0 (config.h:10)
+**Version**: 1.24.0 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -83,6 +83,8 @@ All logic lives in `include/*.h` as inline headers. Source files (`src/main.cpp`
 **Critical**: Valve opens BEFORE sensor check (sensors need water flow). Pump only runs if initially dry.
 **Sequential**: `startSequentialWatering()` waters 5→0, one at a time.
 **Auto**: Every loop checks if tray empty (time-based) AND auto-watering enabled.
+
+**Single-valve invariant (v1.24.0+)**: At most one valve is non-IDLE at any time. All watering requests (manual/API/Telegram/auto/sequential batch) funnel through a universal FIFO queue in `WateringSystem`; the next queued valve starts `INTER_VALVE_GAP_MS` (30s default, `config.h`) after the previous completes. Learning baselines depend on this — concurrent valves corrupt flow-rate calibration. Key members: `valveQueue[]`, `valveQueueLength`, `currentlyActiveValve`, `nextValveReadyTime`, `batchSessionActive`; helpers `enqueueValve`, `processQueue`, `beginValveCycle`, `requestWatering`.
 
 ### Adaptive Learning
 

@@ -7,9 +7,116 @@
 #include "StateMachineLogic.h"
 #include "ValveController.h"
 #include "TestConfig.h"
+#include "ValveQueueLogic.h"
 
 using namespace fakeit;
 using namespace StateMachineLogic;
+
+// ============================================
+// VALVE QUEUE LOGIC TESTS
+// ============================================
+
+void test_queue_empty_by_default(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    TEST_ASSERT_FALSE(ValveQueueLogic::contains(q, len, 3));
+}
+
+void test_queue_enqueue_appends(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::QueueEntry entry = {2, "Manual", false};
+    bool added = ValveQueueLogic::enqueue(q, len, 6, entry);
+    TEST_ASSERT_TRUE(added);
+    TEST_ASSERT_EQUAL(1, len);
+    TEST_ASSERT_EQUAL(2, q[0].valveIndex);
+    TEST_ASSERT_EQUAL_STRING("Manual", q[0].triggerType.c_str());
+}
+
+void test_queue_dedupes_same_valve(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::enqueue(q, len, 6, {2, "Manual", false});
+    bool added = ValveQueueLogic::enqueue(q, len, 6, {2, "Auto", true});
+    TEST_ASSERT_FALSE(added);
+    TEST_ASSERT_EQUAL(1, len);
+    TEST_ASSERT_EQUAL_STRING("Manual", q[0].triggerType.c_str());  // first wins
+}
+
+void test_queue_fifo_order(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::enqueue(q, len, 6, {1, "Manual", false});
+    ValveQueueLogic::enqueue(q, len, 6, {3, "Manual", false});
+    ValveQueueLogic::enqueue(q, len, 6, {5, "Manual", false});
+    ValveQueueLogic::QueueEntry out;
+    TEST_ASSERT_TRUE(ValveQueueLogic::dequeue(q, len, out));
+    TEST_ASSERT_EQUAL(1, out.valveIndex);
+    TEST_ASSERT_EQUAL(2, len);
+    TEST_ASSERT_EQUAL(3, q[0].valveIndex);
+    TEST_ASSERT_EQUAL(5, q[1].valveIndex);
+}
+
+void test_queue_dequeue_empty_returns_false(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::QueueEntry out;
+    TEST_ASSERT_FALSE(ValveQueueLogic::dequeue(q, len, out));
+}
+
+void test_queue_remove_by_index(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::enqueue(q, len, 6, {1, "Manual", false});
+    ValveQueueLogic::enqueue(q, len, 6, {3, "Manual", false});
+    ValveQueueLogic::enqueue(q, len, 6, {5, "Manual", false});
+    bool removed = ValveQueueLogic::remove(q, len, 3);
+    TEST_ASSERT_TRUE(removed);
+    TEST_ASSERT_EQUAL(2, len);
+    TEST_ASSERT_EQUAL(1, q[0].valveIndex);
+    TEST_ASSERT_EQUAL(5, q[1].valveIndex);
+}
+
+void test_queue_remove_missing_returns_false(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::enqueue(q, len, 6, {1, "Manual", false});
+    TEST_ASSERT_FALSE(ValveQueueLogic::remove(q, len, 5));
+    TEST_ASSERT_EQUAL(1, len);
+}
+
+void test_queue_clear(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    ValveQueueLogic::enqueue(q, len, 6, {1, "Manual", false});
+    ValveQueueLogic::enqueue(q, len, 6, {3, "Manual", false});
+    ValveQueueLogic::clear(len);
+    TEST_ASSERT_EQUAL(0, len);
+}
+
+void test_queue_enqueue_full_returns_false(void) {
+    ValveQueueLogic::QueueEntry q[6];
+    int len = 0;
+    for (int i = 0; i < 6; i++) {
+        ValveQueueLogic::enqueue(q, len, 6, {i, "Manual", false});
+    }
+    // Try to add a 7th (impossible since dedupe stops at 6 unique valves,
+    // but cover the capacity guard explicitly)
+    ValveQueueLogic::QueueEntry dup = {0, "Auto", false};
+    bool added = ValveQueueLogic::enqueue(q, len, 6, dup);
+    TEST_ASSERT_FALSE(added);
+    TEST_ASSERT_EQUAL(6, len);
+}
+
+void test_queue_can_dequeue_all_conditions(void) {
+    // canDequeue(currentTime, nextReadyTime, activeValve, queueLength)
+    // Must have: activeValve == -1 AND queueLength > 0 AND currentTime >= nextReadyTime
+    TEST_ASSERT_TRUE(ValveQueueLogic::canDequeue(100, 100, -1, 1));
+    TEST_ASSERT_TRUE(ValveQueueLogic::canDequeue(200, 100, -1, 1));
+    TEST_ASSERT_FALSE(ValveQueueLogic::canDequeue(50, 100, -1, 1));   // gap not elapsed
+    TEST_ASSERT_FALSE(ValveQueueLogic::canDequeue(100, 100, 3, 1));   // valve active
+    TEST_ASSERT_FALSE(ValveQueueLogic::canDequeue(100, 100, -1, 0));  // empty
+}
 
 void setUp(void) {
     // Reset before each test
@@ -696,6 +803,18 @@ void test_per_valve_emergency_timeout(void) {
 
 int main(int argc, char **argv) {
     UNITY_BEGIN();
+
+    // ValveQueueLogic tests
+    RUN_TEST(test_queue_empty_by_default);
+    RUN_TEST(test_queue_enqueue_appends);
+    RUN_TEST(test_queue_dedupes_same_valve);
+    RUN_TEST(test_queue_fifo_order);
+    RUN_TEST(test_queue_dequeue_empty_returns_false);
+    RUN_TEST(test_queue_remove_by_index);
+    RUN_TEST(test_queue_remove_missing_returns_false);
+    RUN_TEST(test_queue_clear);
+    RUN_TEST(test_queue_enqueue_full_returns_false);
+    RUN_TEST(test_queue_can_dequeue_all_conditions);
 
     // Learning Algorithm Tests
     RUN_TEST(test_calculate_water_level);

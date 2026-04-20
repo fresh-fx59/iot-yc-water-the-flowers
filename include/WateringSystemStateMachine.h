@@ -282,9 +282,27 @@ inline void WateringSystem::publishCurrentState() {
     // Build state JSON
     String stateJson = "{";
     stateJson += "\"pump\":\"" + String(pumpState == PUMP_ON ? "on" : "off") + "\",";
-    // sequential_mode: true while a multi-valve batch is draining the queue.
-    // (Task 12 will surface richer queue state in /api/status.)
-    stateJson += "\"sequential_mode\":" + String(batchSessionActive ? "true" : "false");
+    // Universal single-valve queue state
+    stateJson += "\"queue\":[";
+    for (int i = 0; i < valveQueueLength; i++) {
+        stateJson += String(valveQueue[i].valveIndex + 1);  // 1-indexed for UI
+        if (i < valveQueueLength - 1) stateJson += ",";
+    }
+    stateJson += "]";
+    stateJson += ",\"active_valve\":" +
+                 String(currentlyActiveValve == -1 ? 0 : currentlyActiveValve + 1);
+    unsigned long now = millis();
+    unsigned long gapRemaining = 0;
+    if (nextValveReadyTime > now && currentlyActiveValve == -1) {
+        gapRemaining = nextValveReadyTime - now;
+    }
+    stateJson += ",\"inter_valve_gap_remaining_ms\":" + String(gapRemaining);
+    // Redefined: true iff anything is queued OR active. Keeps existing field
+    // name for web-UI compatibility as a "system busy" indicator.
+    stateJson += ",\"sequential_mode\":" +
+                 String((valveQueueLength > 0 || currentlyActiveValve != -1)
+                            ? "true"
+                            : "false");
 
     // Add water level sensor status
     stateJson += ",\"water_level\":{";

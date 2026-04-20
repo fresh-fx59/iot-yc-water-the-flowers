@@ -1183,6 +1183,10 @@ inline void WateringSystem::beginValveCycle(
   valve->realTimeSinceLastWateringAttempt = 0;
   publishStateChange("valve" + String(valveIndex), "cycle_started");
 
+  if (telegramSessionActive) {
+    recordSessionStart(valveIndex);
+  }
+
   if (g_metricsLog) {
     g_metricsLog("info", "queue: dequeued valve " + String(valveIndex) +
                              " (trigger=" + entry.triggerType + ")");

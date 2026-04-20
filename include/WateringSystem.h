@@ -1214,6 +1214,33 @@ inline void WateringSystem::processQueue(unsigned long currentTime) {
                        String(INTER_VALVE_GAP_MS / 1000) + "s)");
     currentlyActiveValve = -1;
     nextValveReadyTime = currentTime + INTER_VALVE_GAP_MS;
+
+    // Batch completion: active valve just finished AND queue is empty AND
+    // we're inside a batch session. Emit the completion notification once.
+    if (batchSessionActive && valveQueueLength == 0) {
+      DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
+      DebugHelper::debug("║  SEQUENTIAL BATCH COMPLETE ✓              ║");
+      DebugHelper::debug("╚═══════════════════════════════════════════╝");
+
+      if (telegramSessionActive) {
+        String results[NUM_VALVES][3];
+        int resultCount = 0;
+        for (int i = 0; i < NUM_VALVES; i++) {
+          if (sessionData[i].active) {
+            results[resultCount][0] = String(sessionData[i].trayNumber);
+            results[resultCount][1] = String(sessionData[i].duration, 1);
+            results[resultCount][2] = sessionData[i].status;
+            resultCount++;
+          }
+        }
+        queueTelegramNotification(
+            TelegramNotifier::formatWateringComplete(results, resultCount));
+        endTelegramSession();
+        sendWateringSchedule("Updated Schedule");
+      }
+      batchSessionActive = false;
+      publishStateChange("system", "sequential_complete");
+    }
   }
 
   // Step 2: Dequeue when allowed.
@@ -1290,129 +1317,81 @@ inline void WateringSystem::stopWatering(int valveIndex) {
 }
 
 inline void WateringSystem::startSequentialWatering(const String &triggerType) {
-  // OVERFLOW CHECK: Block all watering if overflow detected
-  if (overflowDetected) {
-    DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
-    return;
-  }
-
-  // WATER LEVEL CHECK: Block all watering if water tank is empty
-  if (waterLevelLow) {
-    DebugHelper::debug("💧 Sequential watering blocked - WATER LEVEL LOW");
-    return;
-  }
-
-  // HALT MODE CHECK: Block all watering operations
-  if (haltMode) {
-    DebugHelper::debug("🛑 Sequential watering blocked - system in HALT MODE");
-    return;
-  }
-
-  if (sequentialMode) {
-    DebugHelper::debug("Sequential watering already in progress");
-    return;
-  }
-
   DebugHelper::debug("\n╔═══════════════════════════════════════════╗");
-  DebugHelper::debug("║  SEQUENTIAL WATERING STARTED (ALL VALVES) ║");
+  DebugHelper::debug("║  SEQUENTIAL WATERING — BULK ENQUEUE       ║");
   DebugHelper::debug("╚═══════════════════════════════════════════╝");
 
-  // Prepare sequence: all valves in reverse order (5-0)
-  sequenceLength = NUM_VALVES;
+  // Safety gates up front — same as startWatering, but rejecting the whole
+  // batch if blocked (rather than per-valve drop).
+  if (overflowDetected) {
+    DebugHelper::debug("🚨 Sequential blocked — OVERFLOW DETECTED");
+    return;
+  }
+  if (waterLevelLow) {
+    DebugHelper::debug("💧 Sequential blocked — WATER LEVEL LOW");
+    return;
+  }
+  if (haltMode) {
+    DebugHelper::debug("🛑 Sequential blocked — HALT MODE");
+    return;
+  }
+
+  // Build the per-valve list (5→0 so tray 6 waters first — existing behavior)
+  int targetValves[NUM_VALVES];
+  int targetCount = NUM_VALVES;
   for (int i = 0; i < NUM_VALVES; i++) {
-    sequenceValves[i] = NUM_VALVES - 1 - i;
+    targetValves[i] = NUM_VALVES - 1 - i;
   }
 
-  sequentialMode = true;
-  currentSequenceIndex = 0;
-  publishStateChange("system", "sequential_started");
-
-  // Start Telegram session and send start notification
+  // Start the batch session so completion notification fires when queue drains
   startTelegramSession(triggerType);
+  batchSessionActive = true;
 
-  // Build tray numbers list
-  String trayNumbers;
-  if (sequenceLength == NUM_VALVES) {
-    trayNumbers = "All";
-  } else {
-    trayNumbers = "";
-    for (int i = 0; i < sequenceLength; i++) {
-      trayNumbers += String(sequenceValves[i] + 1); // Convert to 1-indexed
-      if (i < sequenceLength - 1)
-        trayNumbers += ", ";
-    }
+  String trayNumbers = "All";
+  queueTelegramNotification(
+      TelegramNotifier::formatWateringStarted(triggerType, trayNumbers));
+
+  // Enqueue in order. force=true matches prior startSequentialWatering
+  // behavior (batch ignores learning interval).
+  for (int i = 0; i < targetCount; i++) {
+    enqueueValve(targetValves[i], "Sequential", /*force=*/true);
   }
 
-  // Queue start notification (non-blocking, sent from Core 0)
-  queueTelegramNotification(TelegramNotifier::formatWateringStarted(sessionTriggerType, trayNumbers));
-
-  startNextInSequence();
+  if (g_metricsLog) {
+    g_metricsLog("info", "queue: bulk-enqueued " + String(targetCount) +
+                             " valves (trigger=" + triggerType + ")");
+  }
 }
 
 inline void WateringSystem::startSequentialWateringCustom(int *valveIndices,
                                                           int count,
                                                           const String &triggerType) {
-  // OVERFLOW CHECK: Block all watering if overflow detected
-  if (overflowDetected) {
-    DebugHelper::debug("🚨 Sequential watering blocked - OVERFLOW DETECTED");
+  if (count <= 0 || count > NUM_VALVES) return;
+
+  if (overflowDetected || waterLevelLow || haltMode) {
+    DebugHelper::debug("Sequential-custom blocked by safety gate");
     return;
   }
 
-  // WATER LEVEL CHECK: Block all watering if water tank is empty
-  if (waterLevelLow) {
-    DebugHelper::debug("💧 Sequential watering blocked - WATER LEVEL LOW");
-    return;
-  }
+  startTelegramSession(triggerType);
+  batchSessionActive = true;
 
-  // HALT MODE CHECK: Block all watering operations
-  if (haltMode) {
-    DebugHelper::debug("🛑 Sequential watering blocked - system in HALT MODE");
-    return;
-  }
-
-  if (sequentialMode) {
-    DebugHelper::debug("Sequential watering already in progress");
-    return;
-  }
-
-  if (count == 0 || count > NUM_VALVES) {
-    DebugHelper::debug("Invalid valve count for sequential watering");
-    return;
-  }
-
-  DebugHelper::debug("╔═══════════════════════════════════════════╗");
-  DebugHelper::debug("║  SEQUENTIAL WATERING STARTED              ║");
-  DebugHelper::debug("╚═══════════════════════════════════════════╝");
-  String valveSeq = "Valve sequence: ";
+  String trayNumbers;
   for (int i = 0; i < count; i++) {
-    valveSeq += String(valveIndices[i]);
-    if (i < count - 1)
-      valveSeq += ", ";
-    sequenceValves[i] = valveIndices[i];
+    trayNumbers += String(valveIndices[i] + 1);
+    if (i < count - 1) trayNumbers += ",";
   }
-  DebugHelper::debug(valveSeq);
+  queueTelegramNotification(
+      TelegramNotifier::formatWateringStarted(triggerType, trayNumbers));
 
-  sequenceLength = count;
-  sequentialMode = true;
-  currentSequenceIndex = 0;
-  publishStateChange("system", "sequential_started");
-
-  if (triggerType.length() > 0) {
-    startTelegramSession(triggerType);
-
-    String trayNumbers;
-    for (int i = 0; i < sequenceLength; i++) {
-      trayNumbers += String(sequenceValves[i] + 1); // Convert to 1-indexed
-      if (i < sequenceLength - 1) {
-        trayNumbers += ", ";
-      }
-    }
-
-    queueTelegramNotification(
-        TelegramNotifier::formatWateringStarted(sessionTriggerType, trayNumbers));
+  for (int i = 0; i < count; i++) {
+    enqueueValve(valveIndices[i], "Sequential", /*force=*/true);
   }
 
-  startNextInSequence();
+  if (g_metricsLog) {
+    g_metricsLog("info", "queue: bulk-enqueued " + String(count) +
+                             " valves (custom, trigger=" + triggerType + ")");
+  }
 }
 
 inline void WateringSystem::stopSequentialWatering() {

@@ -771,6 +771,18 @@ inline String WateringSystem::getOverflowStatusMessage() {
 inline void WateringSystem::emergencyStopAll(const String &reason) {
   DebugHelper::debugImportant("🚨 EMERGENCY STOP: " + reason);
 
+  // Queued valves must NOT pop off once overflow clears — user must re-request.
+  if (valveQueueLength > 0) {
+    if (g_metricsLog) {
+      g_metricsLog("warn", "queue: cleared on emergency (" +
+                               String(valveQueueLength) + " entries dropped)");
+    }
+    ValveQueueLogic::clear(valveQueueLength);
+  }
+  batchSessionActive = false;
+  currentlyActiveValve = -1;
+  nextValveReadyTime = 0;
+
   // Force close all valves via direct GPIO control
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], LOW);
@@ -1289,6 +1301,17 @@ inline void WateringSystem::processQueue(unsigned long currentTime) {
 inline void WateringSystem::stopWatering(int valveIndex) {
   if (valveIndex < 0 || valveIndex >= NUM_VALVES)
     return;
+
+  // Remove from queue if pending (never actually opened)
+  if (ValveQueueLogic::remove(valveQueue, valveQueueLength, valveIndex)) {
+    if (g_metricsLog) {
+      g_metricsLog("info",
+                   "queue: removed valve " + String(valveIndex) +
+                       " (stop requested)");
+    }
+    DebugHelper::debug("⊖ removed queued valve " + String(valveIndex));
+    return;
+  }
 
   ValveController *valve = valves[valveIndex];
   valve->wateringRequested = false;

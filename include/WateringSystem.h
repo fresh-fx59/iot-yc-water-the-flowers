@@ -215,6 +215,9 @@ private:
   // have passed. Sets the active-valve marker, starts the Telegram session,
   // and transitions the valve's state machine to PHASE_OPENING_VALVE.
   void beginValveCycle(const ValveQueueLogic::QueueEntry& entry);
+  // Add a valve to the queue after all startWatering gates have passed.
+  // Dedupes: if the valve is already active or already queued, this is a noop.
+  void enqueueValve(int valveIndex, const String& triggerType, bool force);
   void globalSafetyWatchdog(unsigned long currentTime);  // EMERGENCY SAFETY CHECK
   void checkMasterOverflowSensor(unsigned long currentTime);  // Master overflow sensor check
   void checkWaterLevelSensor(unsigned long currentTime);  // Water level sensor check
@@ -1194,6 +1197,33 @@ inline void WateringSystem::beginValveCycle(
 
   DebugHelper::debug("▶ beginValveCycle: valve " + String(valveIndex) +
                      " (trigger=" + entry.triggerType + ")");
+}
+
+inline void WateringSystem::enqueueValve(int valveIndex,
+                                          const String& triggerType,
+                                          bool force) {
+  if (valveIndex == currentlyActiveValve) {
+    DebugHelper::debug("queue: valve " + String(valveIndex) +
+                       " already active — skip enqueue");
+    return;
+  }
+
+  ValveQueueLogic::QueueEntry entry{valveIndex, triggerType, force};
+  bool added = ValveQueueLogic::enqueue(valveQueue, valveQueueLength,
+                                         NUM_VALVES, entry);
+  if (!added) {
+    DebugHelper::debug("queue: valve " + String(valveIndex) +
+                       " already queued — skip enqueue");
+    return;
+  }
+
+  if (g_metricsLog) {
+    g_metricsLog("info", "queue: enqueued valve " + String(valveIndex) +
+                             " (trigger=" + triggerType + ")");
+  }
+  DebugHelper::debug("⊕ enqueued valve " + String(valveIndex) +
+                     " (trigger=" + triggerType + ", queue=" +
+                     String(valveQueueLength) + ")");
 }
 
 inline void WateringSystem::stopWatering(int valveIndex) {

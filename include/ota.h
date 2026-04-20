@@ -155,10 +155,10 @@ void setupOta() {
     serveFile("/web/prod/js/app.js", "application/javascript");
   });
 
-  // Firmware update page
+  // Firmware update page — also links to filesystem update
   httpServer.on("/firmware", HTTP_GET, []() {
     if (!checkAuth()) return;
-    
+
     String firmwarePage = R"(<!DOCTYPE html>
 <html>
 <head>
@@ -168,32 +168,44 @@ void setupOta() {
     body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
     .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 500px; width: 100%; }
     h1 { color: #333; margin-bottom: 10px; }
+    h2 { color: #555; margin-top: 30px; font-size: 18px; }
     .info { background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #2196F3; color: #1565c0; font-size: 14px; }
-    input[type=file] { display: block; margin: 20px 0; padding: 10px; width: 100%; }
+    .warn { background: #fff3e0; padding: 12px; border-radius: 4px; margin: 14px 0; border-left: 4px solid #ff9800; color: #bf360c; font-size: 13px; }
+    input[type=file] { display: block; margin: 12px 0; padding: 10px; width: 100%; }
     input[type=submit] { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 30px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; width: 100%; font-weight: bold; }
     input[type=submit]:hover { opacity: 0.9; }
+    form { margin-bottom: 28px; }
     a { color: #667eea; text-decoration: none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🔧 Firmware Update</h1>
+    <h1>🔧 Remote Update</h1>
     <div class="info">
       <strong>Device:</strong> Watering System<br>
-      <strong>Platform:</strong> ESP32-S3<br>
-      <strong>Endpoint:</strong> /firmware
+      <strong>Platform:</strong> ESP32-S3
     </div>
+
+    <h2>Firmware (.pio/.../firmware.bin)</h2>
     <form method='POST' action='/firmware' enctype='multipart/form-data'>
       <input type='file' name='update' accept='.bin' required>
       <input type='submit' value='Update Firmware'>
     </form>
+
+    <h2>Filesystem / LittleFS (.pio/.../littlefs.bin)</h2>
+    <div class="warn">Uploading a filesystem image rewrites the entire LittleFS partition. Persisted learning data will be lost unless the image contains it.</div>
+    <form method='POST' action='/filesystem' enctype='multipart/form-data'>
+      <input type='file' name='update' accept='.bin' required>
+      <input type='submit' value='Update Filesystem'>
+    </form>
+
     <div style="margin-top: 20px; text-align: center;">
       <a href="/">← Back to Control Panel</a>
     </div>
   </div>
 </body>
 </html>)";
-    
+
     httpServer.sendHeader("Connection", "close");
     httpServer.send(200, "text/html", firmwarePage);
   });
@@ -206,10 +218,10 @@ void setupOta() {
     ESP.restart();
   }, []() {
     HTTPUpload& upload = httpServer.upload();
-    
+
     if (upload.status == UPLOAD_FILE_START) {
-      Serial.printf("Update: %s\n", upload.filename.c_str());
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+      Serial.printf("Firmware update: %s\n", upload.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
         Update.printError(Serial);
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -220,7 +232,38 @@ void setupOta() {
       }
     } else if (upload.status == UPLOAD_FILE_END) {
       if (Update.end(true)) {
-        Serial.printf("\nUpdate Success: %u bytes\n", upload.totalSize);
+        Serial.printf("\nFirmware update success: %u bytes\n", upload.totalSize);
+      } else {
+        Update.printError(Serial);
+      }
+    }
+  });
+
+  // Handle filesystem (LittleFS) upload. Partition rewritten in place;
+  // LittleFS is unmounted at UPLOAD_FILE_START so the flash write is safe.
+  httpServer.on("/filesystem", HTTP_POST, []() {
+    if (!checkAuth()) return;
+    httpServer.send(200, "text/html", updateSuccessPage);
+    delay(1000);
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = httpServer.upload();
+
+    if (upload.status == UPLOAD_FILE_START) {
+      Serial.printf("Filesystem update: %s\n", upload.filename.c_str());
+      LittleFS.end();
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_SPIFFS)) {
+        Update.printError(Serial);
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Update.printError(Serial);
+      } else {
+        Serial.printf("Progress: %d%%\r", (Update.progress() * 100) / Update.size());
+      }
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.printf("\nFilesystem update success: %u bytes\n", upload.totalSize);
       } else {
         Update.printError(Serial);
       }

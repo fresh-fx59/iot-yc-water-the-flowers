@@ -245,9 +245,15 @@ No `learning_data_*.json` (no per-valve learning).
 
 No infrastructure changes. Same Cloud.ru proxy at `https://water-the-flowers-proxy.aiengineerhelper.com:16443/` accepts any bot token.
 
-- **Telegram**: register a new BotFather bot for the mini (don't share the mother's token — would confuse `/menu` routing). Same chat ID is fine if the user prefers a single chat; bot username distinguishes them.
+- **Telegram**: register a new BotFather bot for the mini with its own token. Each device gets its own bot and its own DM thread in Telegram with the user. The user's `chat_id` (e.g., `314102923`) is the same for both bots since both DM the same person.
 - **Prometheus**: add a new scrape job `esp32_watering_mini` (separate from `esp32_watering`) for clean dashboard separation. Or add a `device` label on the existing job — either works; new job is recommended.
 - **Grafana**: fork `tools/grafana-dashboard-esp32.json` into `tools/grafana-dashboard-esp32-mini.json` with simplified panels (single zone, single soil sensor, single motor; drop per-valve learning panels).
+
+### Considered and deferred: single-bot supergroup topic routing
+
+We explored consolidating both devices under one bot in a Telegram supergroup with forum topics (one topic per device). The blocker is that `getUpdates` is exclusive per bot token — two devices long-polling the same token race on the offset and silently lose messages. Solutions exist (multiplex inside the proxy, or switch to webhooks) but require a substantial proxy rewrite and a coordinated re-flash of the mother device — risky to do under deadline pressure.
+
+Deferring. If a third device is added later, or if managing two DM threads becomes friction, revisit. The mini's `TelegramNotifier.h` would need only minor changes at that time (include `message_thread_id` outbound, filter inbound by it).
 
 ## Bootstrap Plan
 

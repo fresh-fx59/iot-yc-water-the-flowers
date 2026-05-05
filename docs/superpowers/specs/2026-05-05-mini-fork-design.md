@@ -88,6 +88,9 @@ IDLE ──(time-to-water OR manual cmd)──► WATERING ──(soil-wet OR ti
 
 - Motor relay is asserted ON **only** when state == WATERING. Any transition into IDLE (success, timeout, overflow, halt, manual `/stop`) forces motor OFF before completing the transition.
 - `last_run_unix` semantics: "last time the device attempted a cycle" (success OR skip-due-to-wet). The timeout path is the only exception — it does NOT advance `last_run_unix`, so the next schedule check fires the same day for retry after diagnosis.
+- **Global watchdog**: independent of the SM, every Core 1 loop checks: if `motorOnGpioState == HIGH` AND `now - motor_start_time > max_runtime + 5s` → force motor OFF, log a critical alert, and `ESP.restart()`. Insurance against SM wedges from brownouts or stack corruption. Mirrors mother project's `globalSafetyWatchdog`.
+- **Settings concurrency**: settings are loaded once at boot into an in-memory struct. Core 1 reads via const accessor only. Mutations (Telegram or web) go through a single Core 0 function that updates the in-memory copy then atomically writes `/settings.json` (write to `/settings.json.tmp`, fsync, rename — LittleFS supports rename). No mutex needed because Core 1 sees an atomic-pointer-sized update; in practice booleans/ints/short strings are torn-write-safe on ESP32.
+- **Calibration → threshold**: when both `calibration_wet` and `calibration_dry` exist, `soil_threshold = (calibration_wet + calibration_dry) / 2`. The user can also override via `/set_threshold`.
 
 ### Per-loop check on Core 1 (every 10ms)
 
@@ -232,6 +235,8 @@ Field names mirror mother project where they overlap, so any throwaway scripts a
 
 No `learning_data_*.json` (no per-valve learning).
 
+**Filesystem OTA is destructive.** Uploading a new LittleFS image via `POST /filesystem` wipes both files. Boot logic must rewrite defaults if either is missing — never assume they exist. Document this prominently in the bot user guide so the user doesn't lose calibration accidentally.
+
 ### Boot behavior
 
 1. Init RTC, LittleFS.
@@ -245,7 +250,8 @@ No `learning_data_*.json` (no per-valve learning).
 
 No infrastructure changes. Same Cloud.ru proxy at `https://water-the-flowers-proxy.aiengineerhelper.com:16443/` accepts any bot token.
 
-- **Telegram**: register a new BotFather bot for the mini with its own token. Each device gets its own bot and its own DM thread in Telegram with the user. The user's `chat_id` (e.g., `314102923`) is the same for both bots since both DM the same person.
+- **Telegram**: register a new BotFather bot for the mini with its own token (bot is `@iot_alex_watering_1_bot`). Each device gets its own bot and its own DM thread in Telegram with the user. The user's `chat_id` (e.g., `314102923`) is the same for both bots since both DM the same person. The bot token lives in the new repo's `secret.h` (gitignored, never committed).
+- **Telegram queue resilience**: inherits mother's 16-slot `notificationQueue`. During a WiFi outage, alerts beyond 16 silently drop. Acceptable for the mini given low alert frequency (typically <10 alerts per week of normal operation).
 - **Prometheus**: add a new scrape job `esp32_watering_mini` (separate from `esp32_watering`) for clean dashboard separation. Or add a `device` label on the existing job — either works; new job is recommended.
 - **Grafana**: fork `tools/grafana-dashboard-esp32.json` into `tools/grafana-dashboard-esp32-mini.json` with simplified panels (single zone, single soil sensor, single motor; drop per-valve learning panels).
 
@@ -294,7 +300,17 @@ In order, with native tests written first per the mother project's TDD disciplin
 - Add Prometheus scrape job for the mini's device label
 - Import the mini Grafana dashboard
 
-### Step 7 — On-bench validation
+### Step 7 — Bot user guide (`docs/bot-guide.md` in the new repo)
+
+Standalone Markdown document the user can keep open on their phone while away. Sections:
+- **Quick start**: bot username, what each topic alert means at a glance.
+- **Command reference**: every Telegram command, what it does, what it replies with, when to use it. Grouped by category (control, settings, time, diagnostics).
+- **Alert glossary**: every alert message the device can emit (success, skip-wet, stuck-wet warning, timeout, overflow trip, WiFi recovery, OTA reboot), with cause and recommended response.
+- **Recovery procedures**: "device is silent" → checklist; "overflow latched" → procedure; "OTA failed, device unreachable" → fallback to USB reflash.
+- **Calibration walkthrough**: dry-soil vs wet-soil reference capture, what threshold to set if calibration is unavailable.
+- **Don't-do list**: don't run `POST /filesystem` while away (wipes calibration); don't change `/set_runtime` to a tiny number; don't power-cycle while overflow is latched expecting it to clear (it now persists across reboot).
+
+### Step 8 — On-bench validation
 
 - `pio test -e native` — all module tests pass
 - Flash → serial log: "boot OK, RTC OK, LittleFS OK, WiFi OK, Telegram OK, metrics OK"
@@ -302,7 +318,7 @@ In order, with native tests written first per the mother project's TDD disciplin
 - Floor sensor pour test → overflow latches → reboot → confirm latch survived → `/reset_overflow` clears it
 - Schedule test: `/set_time` to a minute from now, observe trigger
 - OTA test: rebuild, upload via `/firmware`, confirm device reboots with new version
-- Filesystem OTA test: `pio run -t buildfs && pio run -t uploadfs` via web — confirm `/settings.json` survives reboot if included in the image
+- Filesystem OTA test: `pio run -t buildfs && pio run -t uploadfs` via web — confirm device writes default `/settings.json` and `/state.json` on first boot after fs-flash (the upload wipes existing files)
 
 ## Open Questions / TBD Until Decided
 

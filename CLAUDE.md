@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.25.0 (config.h:10)
+**Version**: 1.26.1 (config.h:10)
 **Testing**: 36 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -103,7 +103,7 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 ### Safety Layers
 
 1. **L1: Overflow Sensor** (GPIO 42, software debounced 5/7 threshold) → emergencyStopAll(), blocks all watering until `reset_overflow`
-2. **L2: Water Level Sensor** (GPIO 19, 11s continuation delay) → blocks watering when tank empty, auto-resumes
+2. **L2: Water Level Sensor** (GPIO 21, 11s continuation delay) → blocks watering when tank empty, auto-resumes
 3. **L3: Per-Valve Timeouts** (config.h) — Valve 0: 40s/45s, Valves 1-5: 25s/30s (normal/emergency)
 4. **L4: Two-Tier SM Timeouts** (WateringSystemStateMachine.h) — normal (learning) + emergency (force GPIO)
 5. **L5: Global Watchdog** (WateringSystem.h) — `globalSafetyWatchdog()` every loop, bypasses SM
@@ -198,7 +198,7 @@ All external services run on a single VPS. SSH: `ssh user1@45.151.30.146`
 
 ## Hardware
 
-**Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=19 (INPUT_PULLUP, HIGH=water, LOW=empty), Plant Light=41 (active-low relay), LED=48, RTC I2C SDA=14/SCL=3, Battery ADC=1/Ctrl=2
+**Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=21 (INPUT_PULLUP, HIGH=water, LOW=empty), Plant Light=41 (active-low relay), LED=48, RTC I2C SDA=14/SCL=3, Battery ADC=1/Ctrl=2
 
 **Sensor Logic (CRITICAL)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY.
 

@@ -125,6 +125,7 @@ private:
                "{\"command\":\"reset_overflow\",\"description\":\"Clear overflow lock\"}," +
                "{\"command\":\"reinit_gpio\",\"description\":\"Reinitialize relay GPIOs\"}," +
                "{\"command\":\"overflow_status\",\"description\":\"Show overflow sensor readings\"}," +
+               "{\"command\":\"water_level_status\",\"description\":\"Show water tank sensor readings\"}," +
                "{\"command\":\"lamp_status\",\"description\":\"Show plant light status\"}," +
                "{\"command\":\"lamp_on\",\"description\":\"Turn plant light on manually\"}," +
                "{\"command\":\"lamp_off\",\"description\":\"Turn plant light off manually\"}," +
@@ -345,7 +346,8 @@ public:
         message += "/time - RTC time, battery, lamp status\n";
         message += "/settime - Sync from NTP\n";
         message += "/test_sensors - Test all rain sensors\n";
-        message += "/overflow_status - Overflow sensor readings\n\n";
+        message += "/overflow_status - Overflow sensor readings\n";
+        message += "/water_level_status - Water tank sensor readings\n\n";
         message += "<b>Safety</b>\n";
         message += "/reset_overflow - Clear overflow lock\n";
         message += "/reinit_gpio - Reinitialize relay GPIOs\n\n";
@@ -364,7 +366,7 @@ public:
         kb += "[{\"text\":\"🚿 Water All\",\"callback_data\":\"start_all\"}],";
         kb += "[{\"text\":\"⏸ Halt\",\"callback_data\":\"halt\"},{\"text\":\"▶️ Resume\",\"callback_data\":\"resume\"}],";
         kb += "[{\"text\":\"🕐 Time\",\"callback_data\":\"time\"},{\"text\":\"🔍 Sensors\",\"callback_data\":\"test_sensors\"}],";
-        kb += "[{\"text\":\"🌊 Overflow\",\"callback_data\":\"overflow_status\"},{\"text\":\"🔄 Reset\",\"callback_data\":\"reset_overflow\"}],";
+        kb += "[{\"text\":\"🌊 Overflow\",\"callback_data\":\"overflow_status\"},{\"text\":\"💧 Water Lvl\",\"callback_data\":\"water_level_status\"},{\"text\":\"🔄 Reset\",\"callback_data\":\"reset_overflow\"}],";
         kb += "[{\"text\":\"💡 On\",\"callback_data\":\"lamp_on\"},{\"text\":\"🔌 Off\",\"callback_data\":\"lamp_off\"},{\"text\":\"🔄 Auto\",\"callback_data\":\"lamp_auto\"}]";
         kb += "]}";
         return kb;

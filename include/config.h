@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.26.0";
+const char *VERSION = "watering_system_1.26.5";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -46,7 +46,10 @@ const char *DEVICE_TYPE = "smart_watering_system_time_based";
 #define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
 
 // Water Level Sensor pin (float switch in water tank)
-#define WATER_LEVEL_SENSOR_PIN 19  // HIGH = water detected, LOW = no water/empty
+// GPIO 21 chosen over GPIO 19 because GPIO 19 is the chip's USB D- line on
+// ESP32-S3 — safe today via the external FTDI UART, but a foot-gun if
+// USB-Serial-JTAG ever gets enabled in the build.
+#define WATER_LEVEL_SENSOR_PIN 21  // HIGH = water detected, LOW = no water/empty
 
 // Plant light relay pin
 // Change this if you wire the lamp relay to a different free ESP32 GPIO.

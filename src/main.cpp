@@ -150,6 +150,12 @@ void checkTelegramCommands(int timeout) {
         TelegramNotifier::sendMessageWithKeyboard(TelegramNotifier::getHelpMessage(), TelegramNotifier::getMainMenuKeyboard());
     } else if (command == "/menu" || command == "menu") {
         TelegramNotifier::sendMessageWithKeyboard("🌱 <b>Watering System Control</b>", TelegramNotifier::getMainMenuKeyboard());
+    } else if (command == "/water_level_status" || command == "water_level_status" ||
+               command == "/water_status" || command == "water_status" ||
+               command == "/water_level" || command == "water_level") {
+        DebugHelper::debugImportant("🔍 WATER LEVEL STATUS command received!");
+        DebugHelper::flushBuffer();
+        sendTelegramDebug(wateringSystem.getWaterLevelStatusMessage());
     } else if (command.startsWith("/water_") || command.startsWith("water_") ||
                command.startsWith("/water ") || command.startsWith("water ")) {
         String numStr = command;

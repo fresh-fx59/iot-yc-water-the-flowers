@@ -186,6 +186,7 @@ public:
   // Water level sensor control
   bool isWaterLevelLow() { return waterLevelLow; }
   void checkWaterLevel(); // Manual water level check (for testing)
+  String getWaterLevelStatusMessage();
   bool setPlantLightManualOn();
   bool setPlantLightManualOff();
   bool setPlantLightAuto();
@@ -742,6 +743,40 @@ inline String WateringSystem::getOverflowStatusMessage() {
              String(OVERFLOW_DEBOUNCE_SAMPLES) + " LOW samples required\n";
   message += "Latch rule: " + String(OVERFLOW_CONFIRMATION_CHECKS) +
              " consecutive debounced detections required";
+
+  return message;
+}
+
+inline String WateringSystem::getWaterLevelStatusMessage() {
+  int rawReading = digitalRead(WATER_LEVEL_SENSOR_PIN);
+  unsigned long now = millis();
+
+  String message = "💧 <b>WATER LEVEL STATUS</b>\n\n";
+  message += "⏰ " + TelegramNotifier::getCurrentDateTime() + "\n";
+  message += "🔌 GPIO: " + String(WATER_LEVEL_SENSOR_PIN) + "\n";
+  message += "📍 Raw reading: " + String(rawReading) + " (" +
+             String(rawReading == LOW ? "LOW / empty" : "HIGH / water present") + ")\n";
+  message += "🔒 Latched flag: " + String(waterLevelLow ? "ON (blocking)" : "OFF") + "\n";
+
+  if (waterLevelLow) {
+    unsigned long confirmedAgoMs = (waterLevelLowFirstDetectedTime > 0 &&
+                                     now >= waterLevelLowFirstDetectedTime)
+                                        ? (now - waterLevelLowFirstDetectedTime)
+                                        : 0;
+    unsigned long secs = confirmedAgoMs / 1000;
+    message += "⏱ Debounce: confirmed ~" + String(secs) + "s ago\n";
+  } else if (waterLevelLowFirstDetectedTime != 0 && rawReading == LOW) {
+    unsigned long elapsedMs = now - waterLevelLowFirstDetectedTime;
+    float elapsedSec = elapsedMs / 1000.0f;
+    float thresholdSec = WATER_LEVEL_LOW_DELAY / 1000.0f;
+    message += "⏱ Debounce: " + String(elapsedSec, 1) + " / " +
+               String(thresholdSec, 1) + " s LOW\n";
+  } else {
+    message += "⏱ Debounce: idle\n";
+  }
+
+  message += "\nThreshold: " + String(WATER_LEVEL_LOW_DELAY / 1000) +
+             "s continuous LOW required to confirm.";
 
   return message;
 }

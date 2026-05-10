@@ -31,7 +31,7 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 - **v1.15.6**: Added 10-second confirmation delay to water level sensor - prevents false low-water alarms when water drains back from pipes to tank after pump stops
 - **v1.15.5**: Reset learning data files to force immediate recalibration after bug fixes
 - **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
-- **v1.14.0**: Added water level sensor (GPIO 19) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
+- **v1.14.0**: Added water level sensor (GPIO 19, moved to GPIO 21 in v1.26.5) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
 - **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
 
 ## 🏗️ Architectural Improvements (v1.13.0)
@@ -113,7 +113,7 @@ The system now includes **7 independent safety layers** to prevent overwatering 
 - **Recovery**: Manual intervention required, send `/reset_overflow` command
 
 **Layer 2: Water Level Sensor (v1.14.0, v1.15.6 delay)**
-- **Hardware**: Float switch on GPIO 19 (monitors water tank level)
+- **Hardware**: Float switch on GPIO 21 (monitors water tank level)
 - **Detection**: HIGH = water OK, LOW = tank empty
 - **Response Time**: 100ms polling
 - **Confirmation Delay** (v1.15.6): 10-second delay before blocking watering - prevents false alarms from pipe drainage after pump stops
@@ -226,7 +226,7 @@ Send /reset_overflow to resume operations
 ### 💧 Water Level Sensor (v1.14.0)
 
 **Hardware Circuit:**
-- Float switch in water tank connected to GPIO 19
+- Float switch in water tank connected to GPIO 21
 - Pulls GPIO HIGH when water present (tank OK)
 - Pulls GPIO LOW when no water (tank empty)
 
@@ -253,7 +253,7 @@ When water level low detected:
 
 ⏰ 12-01-2026 10:15:32
 💧 Water tank is empty or low
-🔧 Sensor GPIO 19
+🔧 Sensor GPIO 21
 ⏱️ Confirmed after 10s delay
 
 ✅ Actions taken:
@@ -539,7 +539,7 @@ platformio device monitor -b 115200 --raw
 - Interactive serial menu (press `H` for help)
 - Test all hardware: LED, pump, 6 valves, 6 rain sensors (individually or all at once)
 - Test DS3231 RTC (I2C at GPIO 14/SDA, GPIO 3/SCL) with current time sync
-- Test water level sensor (GPIO 19)
+- Test water level sensor (GPIO 21)
 - Test master overflow sensor (GPIO 42)
 - I2C bus scanner
 - **WiFi & OTA support** - remotely switch back to production firmware
@@ -571,7 +571,7 @@ platformio device monitor -b 115200 --raw
 - Sensor 5: Valve GPIO 16, Sensor GPIO 12
 - Sensor 6: Valve GPIO 17, Sensor GPIO 13
 
-**Water Level Sensor (GPIO 19):**
+**Water Level Sensor (GPIO 21):**
 - `W` - Read water level sensor once (HIGH = water OK, LOW = empty)
 - `N` - Monitor water level sensor continuously
 - `S` - Stop monitoring

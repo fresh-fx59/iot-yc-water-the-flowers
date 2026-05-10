@@ -127,8 +127,8 @@ Adafruit_NeoPixel pixels(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 #define RAIN_SENSOR6_PIN 13
 #define RAIN_SENSOR_POWER_PIN 18  // Optocoupler control for sensor power
 
-// Water level sensor pin
-#define WATER_LEVEL_SENSOR_PIN 19
+// Water level sensor pin (matches production config.h)
+#define WATER_LEVEL_SENSOR_PIN 21
 
 // Master Overflow Sensor pin (2N2222 transistor circuit)
 #define MASTER_OVERFLOW_SENSOR_PIN 42  // LOW = overflow detected, HIGH = normal
@@ -312,7 +312,7 @@ void printMenu() {
   Serial.println("  S - Stop monitoring");
   Serial.println();
   Serial.println("WATER LEVEL SENSOR TEST:");
-  Serial.println("  W - Read water level sensor (GPIO 19)");
+  Serial.println("  W - Read water level sensor (GPIO 21)");
   Serial.println("  N - Monitor water level sensor (continuous)");
   Serial.println();
   Serial.println("MASTER OVERFLOW SENSOR TEST:");

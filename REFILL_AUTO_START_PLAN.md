@@ -2,12 +2,12 @@
 
 ## Requirements
 - Start watering automatically 10 seconds after successful water refill detection
-- Refill is successful only after 5 consecutive HIGH readings from water level sensor (GPIO 19)
+- Refill is successful only after 5 consecutive HIGH readings from water level sensor (GPIO 21)
 - Prevents false positives from sensor noise or brief water detection
 
 ## Current Implementation Analysis
 
-### Water Level Sensor (GPIO 19)
+### Water Level Sensor (GPIO 21)
 - **Current behavior**: Single reading triggers immediate state change
 - **Location**: `WateringSystem.h:616-758` - `checkWaterLevelSensor()`
 - **Polling**: Every 100ms

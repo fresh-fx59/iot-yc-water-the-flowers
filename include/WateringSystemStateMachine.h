@@ -305,9 +305,16 @@ inline void WateringSystem::publishCurrentState() {
                             : "false");
 
     // Add water level sensor status
+    int waterLevelRaw = digitalRead(WATER_LEVEL_SENSOR_PIN);
     stateJson += ",\"water_level\":{";
     stateJson += "\"status\":\"" + String(waterLevelLow ? "low" : "ok") + "\"";
     stateJson += ",\"blocked\":" + String(waterLevelLow ? "true" : "false");
+    stateJson += ",\"sensor_gpio\":" + String(WATER_LEVEL_SENSOR_PIN);
+    stateJson += ",\"raw_value\":" + String(waterLevelRaw);
+    stateJson += ",\"raw_state\":\"" +
+                 String(waterLevelRaw == LOW ? "empty" : "water") + "\"";
+    stateJson += ",\"debounce_low_started_ms\":" +
+                 String(waterLevelLowFirstDetectedTime);
     stateJson += "}";
 
     int overflowRawReading = getMasterOverflowRawReading();

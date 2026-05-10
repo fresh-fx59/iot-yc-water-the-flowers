@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.26.5";
+const char *VERSION = "watering_system_1.27.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -154,6 +154,12 @@ const int LEARNING_FULL_SKIP_CYCLES =
     10; // Skip cycles when tray is almost full
 const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
     86400000; // 24 hours minimum between auto-watering attempts
+// Hard ceiling on the per-valve learning multiplier. Without this, the
+// "tray-still-full → 2x" and "fill > baseline → +1.0x" paths can compound
+// unboundedly when measurements are noisy (sensor placement, weather, etc.).
+// Empirically every TIMEOUT we saw happened with a multiplier in the 4.75x–7x
+// range; 5.0x is the safety belt — the algorithm fix does the real work.
+const float MAX_INTERVAL_MULTIPLIER = 5.0; // Never wait more than 5 days
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
 const unsigned long RECENT_WATERING_THRESHOLD_MS =

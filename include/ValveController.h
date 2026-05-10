@@ -67,6 +67,15 @@ struct ValveController {
   float intervalMultiplier; // Multiplier for base 24h interval
                             // (1.0=24h, 2.0=48h, 3.5=84h, etc.)
 
+  // Set true when the previous cycle ended in a TIMEOUT on a calibrated valve.
+  // The very next successful cycle's fill is a recovery artifact (residual
+  // wetness from the timed-out pump run + the tray drying further during the
+  // gap), not a true measurement. We use this flag to skip the fine-tune
+  // "+0.25x because fill decreased" path on that next cycle — otherwise a
+  // TIMEOUT followed by a quick fill walks the interval upward, exactly the
+  // wrong direction.
+  bool lastCycleWasTimeoutRecovery;
+
   // Long outage recovery: Real time since last watering when millis() can't represent timestamp
   unsigned long realTimeSinceLastWatering; // Duration in ms, calculated during load
                                            // Used when lastWateringCompleteTime == 0 after long outage
@@ -82,6 +91,7 @@ struct ValveController {
         previousFillDuration(0), lastWaterLevelPercent(0.0),
         isCalibrated(false), totalWateringCycles(0), consecutiveTimeouts(0),
         autoWateringEnabled(true), intervalMultiplier(1.0),
+        lastCycleWasTimeoutRecovery(false),
         realTimeSinceLastWatering(0), realTimeSinceLastWateringAttempt(0) {}
 };
 

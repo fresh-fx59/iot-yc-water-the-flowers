@@ -55,6 +55,7 @@ static const int LEARNING_MAX_SKIP_CYCLES = 15;
 static const int LEARNING_FULL_SKIP_CYCLES = 10;
 static const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;
 static const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000;
+static const float MAX_INTERVAL_MULTIPLIER = 5.0;
 
 // ============================================
 // Plant Light Constants for Testing

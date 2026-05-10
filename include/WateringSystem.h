@@ -137,6 +137,11 @@ public:
   void printLearningStatus();
   void setAutoWatering(int valveIndex, bool enabled);
   void setAllAutoWatering(bool enabled);
+  // Manually override a valve's learned interval multiplier. Validates the
+  // value against [MIN_INTERVAL_MULTIPLIER, MAX_INTERVAL_MULTIPLIER], updates
+  // emptyToFullDuration, and persists. Returns false on out-of-range input or
+  // invalid valveIndex.
+  bool setIntervalMultiplier(int valveIndex, float multiplier);
 
   // Persistence
   bool saveLearningData();
@@ -373,6 +378,7 @@ inline bool WateringSystem::saveLearningData() {
     valveObj["consecutiveTimeouts"] = valve->consecutiveTimeouts;
     valveObj["autoWateringEnabled"] = valve->autoWateringEnabled;
     valveObj["intervalMultiplier"] = valve->intervalMultiplier;
+    valveObj["lastCycleWasTimeoutRecovery"] = valve->lastCycleWasTimeoutRecovery;
   }
 
   // Save current millis() and DS3231 RTC time as reference points
@@ -487,6 +493,23 @@ inline bool WateringSystem::loadLearningData() {
     valve->consecutiveTimeouts = valveObj["consecutiveTimeouts"] | 0;
     valve->autoWateringEnabled = valveObj["autoWateringEnabled"] | true;
     valve->intervalMultiplier = valveObj["intervalMultiplier"] | 1.0;
+    valve->lastCycleWasTimeoutRecovery =
+        valveObj["lastCycleWasTimeoutRecovery"] | false;
+
+    // Clamp persisted multiplier to current MAX. Trays that ran away on older
+    // firmware (we observed 6.5x and 7.0x) get rescued on first boot of new
+    // firmware without manual intervention.
+    float clampedMultiplier =
+        LearningAlgorithm::clampMultiplier(valve->intervalMultiplier);
+    if (clampedMultiplier != valve->intervalMultiplier) {
+      DebugHelper::debugImportant(
+          "🔧 Valve " + String(valve->valveIndex) +
+          ": persisted multiplier " + String(valve->intervalMultiplier, 2) +
+          "x out of range, clamping to " + String(clampedMultiplier, 2) + "x");
+      valve->intervalMultiplier = clampedMultiplier;
+      valve->emptyToFullDuration =
+          (unsigned long)(86400000UL * clampedMultiplier);
+    }
     valve->lastWateringCompleteTime = 0;
     valve->lastWateringAttemptTime = 0;
     valve->realTimeSinceLastWatering = 0;
@@ -1612,10 +1635,31 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       return;
     }
 
-    // For calibrated valves, skip learning on timeout but still persist the
-    // counter and refresh the schedule notification so the user sees the
-    // updated plan (and an alert if timeouts are recurring).
-    DebugHelper::debug("🧠 Skipping learning - timeout occurred (calibrated valve)");
+    // For calibrated valves: a TIMEOUT means the pump ran the full configured
+    // window but the rain sensor never wetted. That's a strong "tray was very
+    // empty / interval was too long" signal. Treat it as a (small) corrective
+    // decrement and arm the recovery flag so the next cycle's "fast fill"
+    // (residual + partial fill) doesn't get misread as "interval too short"
+    // and walk the multiplier back up.
+    float oldMultiplier = valve->intervalMultiplier;
+    valve->intervalMultiplier =
+        LearningAlgorithm::decrementMultiplierOnTimeout(oldMultiplier);
+    valve->emptyToFullDuration =
+        (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
+    valve->lastCycleWasTimeoutRecovery = true;
+
+    DebugHelper::debug(
+        "🧠 TIMEOUT on calibrated valve → interval: " +
+        String(oldMultiplier, 2) + "x → " +
+        String(valve->intervalMultiplier, 2) + "x (-" +
+        String(INTERVAL_INCREMENT_FINE, 2) +
+        "); next cycle will skip fine-tune bump");
+
+    if (g_metricsLog)
+      g_metricsLog("info", "Valve " + String(valve->valveIndex) +
+                              ": learning: timeout, interval " +
+                              String(oldMultiplier, 2) + "x->" +
+                              String(valve->intervalMultiplier, 2) + "x");
     saveLearningData();
     if (valve->consecutiveTimeouts == CONSECUTIVE_TIMEOUT_ALERT_THRESHOLD) {
       queueTelegramNotification(TelegramNotifier::formatRepeatedTimeoutAlert(
@@ -1701,7 +1745,8 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     // Double the interval (exponential backoff) - tray is consuming water
     // slower than expected
     float oldMultiplier = valve->intervalMultiplier;
-    valve->intervalMultiplier *= INTERVAL_DOUBLE;
+    valve->intervalMultiplier = LearningAlgorithm::clampMultiplier(
+        valve->intervalMultiplier * INTERVAL_DOUBLE);
     valve->emptyToFullDuration =
         (unsigned long)(BASE_INTERVAL_MS * valve->intervalMultiplier);
     valve->totalWateringCycles++;
@@ -1768,9 +1813,12 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   DebugHelper::debug("  Current multiplier: " + String(oldMultiplier, 2) + "x");
 
   // Adaptive interval adjustment algorithm
+  bool skipFineTuneBumpDueToTimeoutRecovery =
+      valve->lastCycleWasTimeoutRecovery;
   if (fillDuration < valve->baselineFillDuration * BASELINE_TOLERANCE) {
-    // Fill < 85% of baseline - tray not fully empty, need longer interval
-    valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
+    // Fill < 65% of baseline - tray not fully empty, need longer interval
+    valve->intervalMultiplier = LearningAlgorithm::clampMultiplier(
+        valve->intervalMultiplier + INTERVAL_INCREMENT_LARGE);
     DebugHelper::debug(
         "  ⬆️  Fill < baseline → Interval: " + String(oldMultiplier, 2) +
         "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
@@ -1779,7 +1827,8 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     // Fill > baseline - tray was emptier than ever! Update baseline AND
     // increase interval
     valve->baselineFillDuration = fillDuration;
-    valve->intervalMultiplier += INTERVAL_INCREMENT_LARGE;
+    valve->intervalMultiplier = LearningAlgorithm::clampMultiplier(
+        valve->intervalMultiplier + INTERVAL_INCREMENT_LARGE);
     DebugHelper::debug("  ✨ NEW BASELINE: " + String(fillSeconds, 1) +
                                 "s");
     DebugHelper::debug("  ⬆️  Interval: " + String(oldMultiplier, 2) +
@@ -1809,12 +1858,23 @@ inline void WateringSystem::processLearningData(ValveController *valve,
                                     String(valve->intervalMultiplier, 2) + "x");
       }
     } else if (fillDuration < valve->previousFillDuration) {
-      // Fill decreased from last time - tray was less empty, interval too short
-      valve->intervalMultiplier += INTERVAL_INCREMENT_FINE;
-      DebugHelper::debug(
-          "  ⬆️  Fill decreased → Interval: " + String(oldMultiplier, 2) +
-          "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
-          String(INTERVAL_INCREMENT_FINE, 2) + ")");
+      // Fill decreased from last time - normally read as "tray less empty,
+      // interval too short → +0.25x". But if the previous cycle was a TIMEOUT,
+      // this "decrease" is a recovery artifact (residual + partial fill) and
+      // the +0.25x would re-create the runaway loop the timeout-decrement just
+      // tried to break. Skip the bump and just record the new fill.
+      if (skipFineTuneBumpDueToTimeoutRecovery) {
+        DebugHelper::debug(
+            "  🛑 Fill decreased but previous cycle was TIMEOUT — skipping "
+            "+0.25x bump (recovery artifact, not a real signal)");
+      } else {
+        valve->intervalMultiplier = LearningAlgorithm::clampMultiplier(
+            valve->intervalMultiplier + INTERVAL_INCREMENT_FINE);
+        DebugHelper::debug(
+            "  ⬆️  Fill decreased → Interval: " + String(oldMultiplier, 2) +
+            "x → " + String(valve->intervalMultiplier, 2) + "x (+" +
+            String(INTERVAL_INCREMENT_FINE, 2) + ")");
+      }
     } else {
       // Fill increased from last time - tray was emptier, interval too long
       valve->intervalMultiplier -= INTERVAL_INCREMENT_FINE;
@@ -1827,6 +1887,10 @@ inline void WateringSystem::processLearningData(ValveController *valve,
           String(INTERVAL_INCREMENT_FINE, 2) + ")");
     }
   }
+
+  // Recovery flag consumed for this cycle (always clear after a successful
+  // non-timeout learning step, regardless of which branch we took).
+  valve->lastCycleWasTimeoutRecovery = false;
 
   // Update state
   valve->previousFillDuration = fillDuration;
@@ -1928,6 +1992,33 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
 
   // Save to flash
   saveLearningData();
+}
+
+inline bool WateringSystem::setIntervalMultiplier(int valveIndex,
+                                                  float multiplier) {
+  if (valveIndex < 0 || valveIndex >= NUM_VALVES) {
+    return false;
+  }
+  if (!(multiplier >= 1.0f && multiplier <= MAX_INTERVAL_MULTIPLIER)) {
+    return false; // NaN-safe: any NaN fails this comparison
+  }
+  ValveController *valve = valves[valveIndex];
+  float oldMultiplier = valve->intervalMultiplier;
+  valve->intervalMultiplier = multiplier;
+  valve->emptyToFullDuration =
+      (unsigned long)(86400000UL * multiplier); // 24h * multiplier
+  DebugHelper::debug("🔧 Valve " + String(valveIndex) +
+                     ": interval set manually " + String(oldMultiplier, 2) +
+                     "x → " + String(multiplier, 2) + "x");
+  if (g_metricsLog)
+    g_metricsLog("info", "Valve " + String(valveIndex) +
+                            ": manual interval set " +
+                            String(oldMultiplier, 2) + "x->" +
+                            String(multiplier, 2) + "x");
+  publishStateChange("valve" + String(valveIndex), "interval_set");
+  saveLearningData();
+  sendScheduleUpdateIfNeeded();
+  return true;
 }
 
 inline void WateringSystem::resetAllCalibrations() {

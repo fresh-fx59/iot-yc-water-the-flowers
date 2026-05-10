@@ -469,6 +469,8 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/lamp");
     httpServer.on("/api/reset_calibration", HTTP_GET, handleResetCalibrationApi);
     Serial.println("  ✓ Registered /api/reset_calibration");
+    httpServer.on("/api/set_multiplier", HTTP_GET, handleSetMultiplierApi);
+    Serial.println("  ✓ Registered /api/set_multiplier");
 }
 
 // ============================================ 

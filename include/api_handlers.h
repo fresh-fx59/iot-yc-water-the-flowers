@@ -146,4 +146,34 @@ inline void handleResetCalibrationApi() {
     httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Calibration reset for valve " + String(valve) + "\"}");
 }
 
+inline void handleSetMultiplierApi() {
+    if (!g_wateringSystem_ptr) {
+        httpServer.send(500, "application/json", "{\"success\":false,\"message\":\"System not initialized\"}");
+        return;
+    }
+
+    String valveStr = httpServer.arg("valve");
+    String multStr = httpServer.arg("multiplier");
+
+    int valve = valveStr.toInt();
+    if (valve < 1 || valve > 6) {
+        httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid valve number (use 1-6)\"}");
+        return;
+    }
+
+    float multiplier = multStr.toFloat();
+    // toFloat() returns 0.0 on parse failure, which our range check rejects.
+    if (!g_wateringSystem_ptr->setIntervalMultiplier(valve - 1, multiplier)) {
+        String maxStr = String(MAX_INTERVAL_MULTIPLIER, 2);
+        httpServer.send(400, "application/json",
+                        "{\"success\":false,\"message\":\"multiplier must be in [1.0, " + maxStr + "]\"}");
+        return;
+    }
+
+    Serial.printf("✓ API: Set multiplier for valve %d to %.2fx\n", valve, multiplier);
+    httpServer.send(200, "application/json",
+                    "{\"success\":true,\"valve\":" + String(valve) +
+                        ",\"multiplier\":" + String(multiplier, 2) + "}");
+}
+
 #endif // API_HANDLERS_H

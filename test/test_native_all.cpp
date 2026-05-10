@@ -236,6 +236,61 @@ void test_should_water_now_blocks_retry_until_realtime_min_interval_passes(void)
     TEST_ASSERT_FALSE(shouldWaterNow(&valve, currentTime));
 }
 
+// ========== Adaptive Interval Cap + Timeout-Decrement Tests ==========
+
+void test_valve_controller_initializes_timeout_recovery_flag_false(void) {
+    ValveController valve(0);
+    TEST_ASSERT_FALSE(valve.lastCycleWasTimeoutRecovery);
+}
+
+void test_clamp_multiplier_within_range_unchanged(void) {
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, LearningAlgorithm::clampMultiplier(1.0f));
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, LearningAlgorithm::clampMultiplier(2.5f));
+    TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
+        LearningAlgorithm::clampMultiplier(MAX_INTERVAL_MULTIPLIER));
+}
+
+void test_clamp_multiplier_below_min_clamps_to_one(void) {
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, LearningAlgorithm::clampMultiplier(0.5f));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, LearningAlgorithm::clampMultiplier(0.0f));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, LearningAlgorithm::clampMultiplier(-3.0f));
+}
+
+void test_clamp_multiplier_above_max_clamps_to_cap(void) {
+    // Trays we actually observed in the wild (6.5x, 7.0x) and the
+    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (5.0).
+    TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
+        LearningAlgorithm::clampMultiplier(6.5f));
+    TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
+        LearningAlgorithm::clampMultiplier(7.0f));
+    TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
+        LearningAlgorithm::clampMultiplier(10.0f));
+}
+
+void test_decrement_on_timeout_subtracts_quarter(void) {
+    // Calibrated valve at 5.00x hits TIMEOUT → 4.75x.
+    TEST_ASSERT_EQUAL_FLOAT(4.75f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(5.0f));
+    TEST_ASSERT_EQUAL_FLOAT(3.0f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(3.25f));
+}
+
+void test_decrement_on_timeout_floors_at_one(void) {
+    // Already at the floor → stays at the floor.
+    TEST_ASSERT_EQUAL_FLOAT(1.0f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(1.0f));
+    // Barely above the floor → clamps, doesn't go below.
+    TEST_ASSERT_EQUAL_FLOAT(1.0f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(1.1f));
+}
+
+void test_decrement_on_timeout_caps_input_too(void) {
+    // If somehow a multiplier > MAX is passed in, the result is also clamped.
+    // (Edge case for migration paths / external callers.)
+    TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
+        LearningAlgorithm::decrementMultiplierOnTimeout(10.0f));
+}
+
 // ========== PHASE_IDLE Tests ==========
 
 void test_idle_phase_does_nothing(void) {
@@ -875,6 +930,15 @@ int main(int argc, char **argv) {
     // Per-Valve Timeout Configuration Tests
     RUN_TEST(test_per_valve_timeout_configuration);
     RUN_TEST(test_per_valve_emergency_timeout);
+
+    // Adaptive Interval Cap + Timeout-Decrement Tests (v1.27.0)
+    RUN_TEST(test_valve_controller_initializes_timeout_recovery_flag_false);
+    RUN_TEST(test_clamp_multiplier_within_range_unchanged);
+    RUN_TEST(test_clamp_multiplier_below_min_clamps_to_one);
+    RUN_TEST(test_clamp_multiplier_above_max_clamps_to_cap);
+    RUN_TEST(test_decrement_on_timeout_subtracts_quarter);
+    RUN_TEST(test_decrement_on_timeout_floors_at_one);
+    RUN_TEST(test_decrement_on_timeout_caps_input_too);
 
     return UNITY_END();
 }

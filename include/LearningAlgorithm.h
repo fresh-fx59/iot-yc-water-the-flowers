@@ -52,6 +52,26 @@ calculateEmptyDuration(unsigned long fillDuration,
   return emptyDuration;
 }
 
+// Clamp an interval multiplier to the configured [1.0, MAX_INTERVAL_MULTIPLIER]
+// window. The same clamp is applied to every increment path in the learning
+// algorithm and to values loaded from flash, so older firmware that allowed
+// runaway multipliers gets rescued on first boot of new firmware.
+inline float clampMultiplier(float multiplier) {
+  if (multiplier < 1.0f) return 1.0f;
+  if (multiplier > MAX_INTERVAL_MULTIPLIER) return MAX_INTERVAL_MULTIPLIER;
+  return multiplier;
+}
+
+// Compute the new multiplier after a TIMEOUT on a calibrated valve.
+// A TIMEOUT means the pump ran the full per-valve window but the rain sensor
+// never wetted — strong evidence the interval was too long. The caller is
+// expected to arm a recovery flag so the next cycle's "fast fill" (residual
+// from the timed-out run + partial fill) isn't misread as "interval too
+// short" by the fine-tune branch.
+inline float decrementMultiplierOnTimeout(float currentMultiplier) {
+  return clampMultiplier(currentMultiplier - 0.25f);
+}
+
 // Format time duration for display (ms to human-readable)
 inline String formatDuration(unsigned long milliseconds) {
   unsigned long seconds = milliseconds / 1000;

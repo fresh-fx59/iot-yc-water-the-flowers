@@ -59,6 +59,8 @@ struct ValveController {
                                // (0-100%)
   bool isCalibrated;           // Has baseline been established?
   int totalWateringCycles;     // Total successful cycles
+  int consecutiveTimeouts;     // Resets on successful pump-and-fill;
+                               // alert fires on threshold crossing
   bool autoWateringEnabled;    // Enable automatic watering when empty
 
   // Adaptive interval learning (binary search for optimal watering interval)
@@ -78,9 +80,9 @@ struct ValveController {
         lastWateringCompleteTime(0), lastWateringAttemptTime(0),
         emptyToFullDuration(0), baselineFillDuration(0), lastFillDuration(0),
         previousFillDuration(0), lastWaterLevelPercent(0.0),
-        isCalibrated(false), totalWateringCycles(0), autoWateringEnabled(true),
-        intervalMultiplier(1.0), realTimeSinceLastWatering(0),
-        realTimeSinceLastWateringAttempt(0) {}
+        isCalibrated(false), totalWateringCycles(0), consecutiveTimeouts(0),
+        autoWateringEnabled(true), intervalMultiplier(1.0),
+        realTimeSinceLastWatering(0), realTimeSinceLastWateringAttempt(0) {}
 };
 
 // ============================================

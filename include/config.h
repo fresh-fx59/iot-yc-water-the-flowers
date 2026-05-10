@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.25.0";
+const char *VERSION = "watering_system_1.26.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -159,6 +159,9 @@ const unsigned long RECENT_WATERING_THRESHOLD_MS =
 const unsigned long OVERFLOW_RECOVERY_THRESHOLD_MS =
     7200000; // 2 hours - if overflow was reset within this time and tray is wet,
              // skip learning (tray may have been refilled during overflow period)
+const int CONSECUTIVE_TIMEOUT_ALERT_THRESHOLD =
+    3; // Alert via Telegram when a valve hits this many consecutive timeouts
+       // (counter resets on successful pump-and-fill)
 
 // ============================================
 // DS3231 Battery Voltage Calibration

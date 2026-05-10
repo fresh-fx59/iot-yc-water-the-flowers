@@ -517,6 +517,15 @@ public:
         sendMessage(formatWateringComplete(results, numTrays));
     }
 
+    // Format repeated-timeout alert (no network call). trayNumber is 1-indexed.
+    static String formatRepeatedTimeoutAlert(int trayNumber, int consecutiveCount) {
+        String message = "🚨 <b>Repeated Timeout Alert</b>\n";
+        message += "🌱 Tray " + String(trayNumber) + ": " +
+                   String(consecutiveCount) + " consecutive timeouts.\n";
+        message += "Possible causes: clogged pipe, weak pump, sensor fault.";
+        return message;
+    }
+
     // Format watering schedule notification (no network call)
     // scheduleData[i][0] = tray number, [1] = planned time, [2] = duration, [3] = cycle (hours)
     static String formatWateringSchedule(const String scheduleData[][4], int numTrays, const String& title) {

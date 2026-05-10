@@ -369,6 +369,7 @@ inline bool WateringSystem::saveLearningData() {
     valveObj["lastWaterLevelPercent"] = valve->lastWaterLevelPercent;
     valveObj["isCalibrated"] = valve->isCalibrated;
     valveObj["totalWateringCycles"] = valve->totalWateringCycles;
+    valveObj["consecutiveTimeouts"] = valve->consecutiveTimeouts;
     valveObj["autoWateringEnabled"] = valve->autoWateringEnabled;
     valveObj["intervalMultiplier"] = valve->intervalMultiplier;
   }
@@ -482,6 +483,7 @@ inline bool WateringSystem::loadLearningData() {
     valve->lastWaterLevelPercent = valveObj["lastWaterLevelPercent"] | 0.0;
     valve->isCalibrated = valveObj["isCalibrated"] | false;
     valve->totalWateringCycles = valveObj["totalWateringCycles"] | 0;
+    valve->consecutiveTimeouts = valveObj["consecutiveTimeouts"] | 0;
     valve->autoWateringEnabled = valveObj["autoWateringEnabled"] | true;
     valve->intervalMultiplier = valveObj["intervalMultiplier"] | 1.0;
     valve->lastWateringCompleteTime = 0;
@@ -1546,6 +1548,11 @@ inline void WateringSystem::processLearningData(ValveController *valve,
 
   // Handle timeout scenarios
   if (valve->timeoutOccurred) {
+    valve->consecutiveTimeouts++;
+    DebugHelper::debug("⏰ Consecutive timeouts for valve " +
+                       String(valve->valveIndex) + ": " +
+                       String(valve->consecutiveTimeouts));
+
     // SPECIAL CASE: First watering timeout on uncalibrated valve
     // Set up 24-hour auto-retry to allow the system to try again
     if (!valve->isCalibrated) {
@@ -1562,12 +1569,24 @@ inline void WateringSystem::processLearningData(ValveController *valve,
       DebugHelper::debug("  Valve remains uncalibrated until successful watering");
 
       saveLearningData();
+      if (valve->consecutiveTimeouts == CONSECUTIVE_TIMEOUT_ALERT_THRESHOLD) {
+        queueTelegramNotification(TelegramNotifier::formatRepeatedTimeoutAlert(
+            valve->valveIndex + 1, valve->consecutiveTimeouts));
+      }
       sendScheduleUpdateIfNeeded();
       return;
     }
 
-    // For calibrated valves, skip learning on timeout
+    // For calibrated valves, skip learning on timeout but still persist the
+    // counter and refresh the schedule notification so the user sees the
+    // updated plan (and an alert if timeouts are recurring).
     DebugHelper::debug("🧠 Skipping learning - timeout occurred (calibrated valve)");
+    saveLearningData();
+    if (valve->consecutiveTimeouts == CONSECUTIVE_TIMEOUT_ALERT_THRESHOLD) {
+      queueTelegramNotification(TelegramNotifier::formatRepeatedTimeoutAlert(
+          valve->valveIndex + 1, valve->consecutiveTimeouts));
+    }
+    sendScheduleUpdateIfNeeded();
     return;
   }
 
@@ -1689,6 +1708,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
     valve->realTimeSinceLastWatering = 0; // Clear outage duration
     valve->realTimeSinceLastWateringAttempt = 0;
     valve->lastWaterLevelPercent = 0.0;
+    valve->consecutiveTimeouts = 0;
 
     DebugHelper::debug(
         "  ✨ INITIAL CALIBRATION: " + String(fillDuration / 1000.0, 1) + "s");
@@ -1780,6 +1800,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   valve->lastWateringCompleteTime = currentTime;
   valve->realTimeSinceLastWatering = 0; // Clear outage duration
   valve->realTimeSinceLastWateringAttempt = 0;
+  valve->consecutiveTimeouts = 0;
 
   // Calculate water level before this watering (for logging)
   float waterLevelBefore = LearningAlgorithm::calculateWaterLevelBefore(
@@ -2245,6 +2266,21 @@ inline int WateringSystem::getOverdueValveIndices(int *valveIndices, int maxCoun
     // Skip if not calibrated
     if (!valve->isCalibrated) {
       continue;
+    }
+
+    // SAFETY: Apply the same 24h-from-last-attempt floor that shouldWaterNow
+    // uses (ValveController.h:201-208) and that the schedule display uses
+    // (sendWateringSchedule). Without this, a recent timeout (which updates
+    // lastWateringAttemptTime but not lastWateringCompleteTime) makes
+    // catch-up fire even though both runtime auto-watering and the displayed
+    // schedule consider the valve not yet due — also prevents reflash-cycle
+    // double-watering.
+    if (hasLastWateringAttemptReference(valve)) {
+      unsigned long timeSinceLastAttempt =
+          getTimeSinceLastWateringAttempt(valve, currentTime);
+      if (timeSinceLastAttempt < AUTO_WATERING_MIN_INTERVAL_MS) {
+        continue;
+      }
     }
 
     // Check for overdue watering using either millis timestamp or real time duration

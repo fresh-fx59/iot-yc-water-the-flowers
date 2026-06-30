@@ -76,6 +76,12 @@ struct ValveController {
   // wrong direction.
   bool lastCycleWasTimeoutRecovery;
 
+  // Consecutive wet sensor reads during PHASE_WATERING. A fill only completes
+  // after RAIN_SENSOR_CONFIRMATION_CHECKS back-to-back wet reads, so a brief
+  // mid-cycle flicker can't end watering early and be recorded as a real fill.
+  // Reset to 0 when watering starts and on any dry read.
+  int rainWetStreak;
+
   // Long outage recovery: Real time since last watering when millis() can't represent timestamp
   unsigned long realTimeSinceLastWatering; // Duration in ms, calculated during load
                                            // Used when lastWateringCompleteTime == 0 after long outage
@@ -91,7 +97,7 @@ struct ValveController {
         previousFillDuration(0), lastWaterLevelPercent(0.0),
         isCalibrated(false), totalWateringCycles(0), consecutiveTimeouts(0),
         autoWateringEnabled(true), intervalMultiplier(1.0),
-        lastCycleWasTimeoutRecovery(false),
+        lastCycleWasTimeoutRecovery(false), rainWetStreak(0),
         realTimeSinceLastWatering(0), realTimeSinceLastWateringAttempt(0) {}
 };
 

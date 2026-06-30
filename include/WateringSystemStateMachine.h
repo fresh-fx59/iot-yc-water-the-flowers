@@ -28,6 +28,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             if (currentTime - valve->valveOpenTime >= VALVE_STABILIZATION_DELAY) {
                 valve->phase = PHASE_CHECKING_INITIAL_RAIN;
                 valve->lastRainCheck = currentTime;
+                valve->rainWetStreak = 0;  // fresh streak for the initial already-full check
                 DebugHelper::debug("Step 2: Checking rain sensor (water is flowing now)...");
             }
             break;
@@ -39,7 +40,16 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 valve->rainDetected = isRaining;
 
                 if (isRaining) {
-                    // Sensor already wet = TRAY IS FULL - treat as successful fill
+                    // Require SUSTAINED wet here too: a single (debounced) wet read at
+                    // cycle start must not conclude "already full" and ×2 the interval.
+                    // Need RAIN_SENSOR_CONFIRMATION_CHECKS consecutive wet reads; a dry
+                    // read (else-branch) resets the streak and proceeds to water.
+                    valve->rainWetStreak = SensorDebounce::nextWetStreak(valve->rainWetStreak, true);
+                    if (!SensorDebounce::fillConfirmed(valve->rainWetStreak, RAIN_SENSOR_CONFIRMATION_CHECKS)) {
+                        break;  // not yet confirmed full — re-check next poll before skipping
+                    }
+
+                    // Sensor sustained wet = TRAY IS FULL - treat as successful fill
                     DebugHelper::debug("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
                     if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=WET");
 
@@ -73,6 +83,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     }
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
+                    valve->rainWetStreak = 0;  // start sustained-wet confirmation fresh
                     valve->phase = PHASE_WATERING;
                     updatePumpState();
                     publishStateChange("valve" + String(valveIndex), "watering_started");
@@ -126,6 +137,17 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 }
 
                 if (isRaining) {
+                    // Require SUSTAINED wet before declaring the fill complete:
+                    // RAIN_SENSOR_CONFIRMATION_CHECKS consecutive wet reads. Debounce
+                    // rejects a noisy sample; this rejects a single noisy read — so a
+                    // brief mid-cycle flicker can't end watering early and be logged as
+                    // a real fill (the field cause of the tray-interval runaway). A dry
+                    // read in the else-branch resets the streak.
+                    valve->rainWetStreak = SensorDebounce::nextWetStreak(valve->rainWetStreak, true);
+                    if (!SensorDebounce::fillConfirmed(valve->rainWetStreak, RAIN_SENSOR_CONFIRMATION_CHECKS)) {
+                        break;  // not yet confirmed — keep watering, re-check next poll
+                    }
+
                     // SAFETY: Sensor detected water - immediately close valve and stop pump
                     // Calculate FULL cycle time: from valve open to valve close
                     int totalTime = (currentTime - valve->valveOpenTime) / 1000;
@@ -158,30 +180,36 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
                     publishStateChange("valve" + String(valveIndex), "watering_complete");
                     valve->phase = PHASE_CLOSING_VALVE;  // Go to cleanup phase for learning data
-                } else if (!valve->wateringRequested) {
-                    // Manual stop requested - immediately close valve and stop pump
-                    DebugHelper::debug("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
+                } else {
+                    // Dry read — break the consecutive-wet streak so confirmation
+                    // restarts from scratch the next time the sensor reads wet.
+                    valve->rainWetStreak = 0;
 
-                    // SAFETY: Immediately close valve and stop pump
-                    closeValve(valveIndex);
-                    updatePumpState();
+                    if (!valve->wateringRequested) {
+                        // Manual stop requested - immediately close valve and stop pump
+                        DebugHelper::debug("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
 
-                    valve->phase = PHASE_IDLE;  // Go directly to IDLE (no learning data for manual stop)
-                    valve->wateringRequested = false;
-                    valve->wateringStartTime = 0;  // Reset for next watering cycle
+                        // SAFETY: Immediately close valve and stop pump
+                        closeValve(valveIndex);
+                        updatePumpState();
 
-                    // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
-                    {
-                        bool anyWateringStop = false;
-                        for (int i = 0; i < NUM_VALVES; i++) {
-                            if (valves[i]->phase == PHASE_WATERING) {
-                                anyWateringStop = true;
-                                break;
+                        valve->phase = PHASE_IDLE;  // Go directly to IDLE (no learning data for manual stop)
+                        valve->wateringRequested = false;
+                        valve->wateringStartTime = 0;  // Reset for next watering cycle
+
+                        // CRITICAL: Turn off sensor power (GPIO 18) if no other valves are watering
+                        {
+                            bool anyWateringStop = false;
+                            for (int i = 0; i < NUM_VALVES; i++) {
+                                if (valves[i]->phase == PHASE_WATERING) {
+                                    anyWateringStop = true;
+                                    break;
+                                }
                             }
-                        }
-                        if (!anyWateringStop) {
-                            digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
-                            DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+                            if (!anyWateringStop) {
+                                digitalWrite(RAIN_SENSOR_POWER_PIN, LOW);
+                                DebugHelper::debug("Sensor power (GPIO 18) turned OFF - no valves watering");
+                            }
                         }
                     }
                 }

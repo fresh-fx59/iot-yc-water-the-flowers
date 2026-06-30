@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.27.0";
+const char *VERSION = "watering_system_1.28.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -143,6 +143,17 @@ const unsigned long OVERFLOW_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5
 const int OVERFLOW_CONFIRMATION_CHECKS = 3;     // Require 3 consecutive debounced detections (~300ms sustained LOW)
 
 // ============================================
+// Rain/Soil Sensor Debouncing Constants
+// ============================================
+// Rain sensors are active-LOW (LOW = wet). Debounce the same way as the overflow
+// sensor so a single stray LOW (EMI, condensation, momentary contact) cannot be
+// read as "wet" -- a false wet both under-fills the tray (cycle ends early) and
+// drives the "tray already full -> grow interval" learning runaway.
+const int RAIN_SENSOR_DEBOUNCE_SAMPLES = 7;            // Readings per sensor poll
+const int RAIN_SENSOR_DEBOUNCE_THRESHOLD = 5;          // Minimum LOW readings to declare wet (5 of 7)
+const unsigned long RAIN_SENSOR_DEBOUNCE_DELAY_MS = 5; // Delay between readings (5ms)
+
+// ============================================
 // Learning Algorithm Constants
 // ============================================
 const float LEARNING_EMPTY_THRESHOLD =
@@ -158,8 +169,11 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
 // "tray-still-full → 2x" and "fill > baseline → +1.0x" paths can compound
 // unboundedly when measurements are noisy (sensor placement, weather, etc.).
 // Empirically every TIMEOUT we saw happened with a multiplier in the 4.75x–7x
-// range; 5.0x is the safety belt — the algorithm fix does the real work.
-const float MAX_INTERVAL_MULTIPLIER = 5.0; // Never wait more than 5 days
+// range; the cap is the safety belt — the algorithm fix does the real work.
+// Lowered 5.0→2.5 (tray-1 fix): a 5-day starve is too long even as a worst
+// case, and a lower cap auto-rescues any runaway value loaded from flash on the
+// first boot of new firmware (clampMultiplier is applied to loaded values).
+const float MAX_INTERVAL_MULTIPLIER = 2.5; // Never wait more than 2.5 days
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
 const unsigned long RECENT_WATERING_THRESHOLD_MS =

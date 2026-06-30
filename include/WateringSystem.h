@@ -9,6 +9,7 @@
 #include "config.h"
 #include "DS3231RTC.h"
 #include "LearningAlgorithm.h"
+#include "SensorDebounce.h"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -1494,8 +1495,23 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
     delay(SENSOR_POWER_STABILIZATION);
   }
 
-  // Read sensor: LOW = wet, HIGH = dry (with pull-up)
-  int rawValue = digitalRead(RAIN_SENSOR_PINS[valveIndex]);
+  // Read sensor with software debounce: LOW = wet, HIGH = dry (with pull-up).
+  // A single stray LOW (EMI from pump/valve switching, condensation, a momentary
+  // contact) must NOT be read as "wet": a false wet both under-fills the tray
+  // (the watering cycle ends early) and feeds the "tray already full -> grow
+  // interval" learning runaway that starves one tray. Mirror the master overflow
+  // sensor — take N samples and require a majority LOW. GPIO 18 stays powered for
+  // the whole sampling window.
+  int lowReadings = 0;
+  for (int i = 0; i < RAIN_SENSOR_DEBOUNCE_SAMPLES; i++) {
+    if (digitalRead(RAIN_SENSOR_PINS[valveIndex]) == LOW) {
+      lowReadings++;
+    }
+    if (i < RAIN_SENSOR_DEBOUNCE_SAMPLES - 1) {
+      delay(RAIN_SENSOR_DEBOUNCE_DELAY_MS);
+    }
+  }
+  bool wet = SensorDebounce::isWet(lowReadings, RAIN_SENSOR_DEBOUNCE_THRESHOLD);
 
   // Power management: Only turn off GPIO 18 if NOT in watering phase
   // During watering, GPIO 18 stays HIGH for continuous sensor monitoring
@@ -1507,12 +1523,13 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
   static unsigned long lastDetailedLog = 0;
   if (millis() - lastDetailedLog > 5000) {  // Detailed log every 5s
     DebugHelper::debug("Sensor " + String(valveIndex) + " GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) +
-                      ": raw=" + String(rawValue) + " (" + String(rawValue == LOW ? "WET" : "DRY") +
+                      ": " + String(lowReadings) + "/" + String(RAIN_SENSOR_DEBOUNCE_SAMPLES) +
+                      " LOW (" + String(wet ? "WET" : "DRY") +
                       "), GPIO18=" + String(anyWatering ? "CONTINUOUS" : "PULSED"));
     lastDetailedLog = millis();
   }
 
-  return (rawValue == LOW); // LOW = wet/rain detected
+  return wet; // majority LOW = wet/rain detected
 }
 
 inline void WateringSystem::openValve(int valveIndex) {
@@ -1597,7 +1614,10 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   const long FILL_STABLE_TOLERANCE_MS =
       500; // ±0.5s - threshold for "same fill time"
   const float MIN_INTERVAL_MULTIPLIER = 1.0; // Never go below 24h
-  const float INTERVAL_DOUBLE = 2.0;         // Double when tray already full
+  // Growth factor when a tray reads "already full" before watering. Softened
+  // 2.0→1.5 (tray-1 fix) so one mistaken "full" reading can't double the wait;
+  // combined with sensor debounce this stops the interval running away.
+  const float INTERVAL_DOUBLE = 1.5;         // Grow when tray already full
   const float INTERVAL_INCREMENT_LARGE =
       1.0; // Large adjustment for coarse search
   const float INTERVAL_DECREMENT_BINARY =

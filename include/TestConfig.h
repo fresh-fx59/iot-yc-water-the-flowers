@@ -46,6 +46,11 @@ inline unsigned long getValveEmergencyTimeout(int valveIndex) {
 
 static const unsigned long SENSOR_POWER_STABILIZATION = 100;
 
+// Rain/soil sensor debouncing (mirror production config.h)
+static const int RAIN_SENSOR_DEBOUNCE_SAMPLES = 7;
+static const int RAIN_SENSOR_DEBOUNCE_THRESHOLD = 5;
+static const unsigned long RAIN_SENSOR_DEBOUNCE_DELAY_MS = 5;
+
 // ============================================
 // Learning Algorithm Constants for Testing
 // ============================================
@@ -55,7 +60,7 @@ static const int LEARNING_MAX_SKIP_CYCLES = 15;
 static const int LEARNING_FULL_SKIP_CYCLES = 10;
 static const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;
 static const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000;
-static const float MAX_INTERVAL_MULTIPLIER = 5.0;
+static const float MAX_INTERVAL_MULTIPLIER = 2.5;
 
 // ============================================
 // Plant Light Constants for Testing

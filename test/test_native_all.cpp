@@ -8,6 +8,7 @@
 #include "ValveController.h"
 #include "TestConfig.h"
 #include "ValveQueueLogic.h"
+#include "SensorDebounce.h"
 
 using namespace fakeit;
 using namespace StateMachineLogic;
@@ -258,7 +259,7 @@ void test_clamp_multiplier_below_min_clamps_to_one(void) {
 
 void test_clamp_multiplier_above_max_clamps_to_cap(void) {
     // Trays we actually observed in the wild (6.5x, 7.0x) and the
-    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (5.0).
+    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (2.5).
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
         LearningAlgorithm::clampMultiplier(6.5f));
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
@@ -268,11 +269,11 @@ void test_clamp_multiplier_above_max_clamps_to_cap(void) {
 }
 
 void test_decrement_on_timeout_subtracts_quarter(void) {
-    // Calibrated valve at 5.00x hits TIMEOUT → 4.75x.
-    TEST_ASSERT_EQUAL_FLOAT(4.75f,
-        LearningAlgorithm::decrementMultiplierOnTimeout(5.0f));
-    TEST_ASSERT_EQUAL_FLOAT(3.0f,
-        LearningAlgorithm::decrementMultiplierOnTimeout(3.25f));
+    // Calibrated valve at 2.50x hits TIMEOUT → 2.25x.
+    TEST_ASSERT_EQUAL_FLOAT(2.25f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(2.5f));
+    TEST_ASSERT_EQUAL_FLOAT(1.75f,
+        LearningAlgorithm::decrementMultiplierOnTimeout(2.0f));
 }
 
 void test_decrement_on_timeout_floors_at_one(void) {
@@ -289,6 +290,41 @@ void test_decrement_on_timeout_caps_input_too(void) {
     // (Edge case for migration paths / external callers.)
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
         LearningAlgorithm::decrementMultiplierOnTimeout(10.0f));
+}
+
+// ========== Interval-Multiplier Cap (runaway safety belt) ==========
+
+void test_max_interval_multiplier_capped_at_two_and_half(void) {
+    // Worst-case wait is bounded at 2.5 days (was 5.0). This is the safety belt
+    // for the tray-1 runaway: even a persistently false-wet sensor can only push
+    // the learned interval to 2.5x, and lowering the cap auto-rescues any
+    // runaway value loaded from flash on the first boot of new firmware.
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, MAX_INTERVAL_MULTIPLIER);
+    // A multiplier the old 5.0 cap allowed (4.0x) now clamps down to the cap.
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, LearningAlgorithm::clampMultiplier(4.0f));
+}
+
+// ========== Rain/Soil Sensor Debounce (false-wet guard) ==========
+
+void test_rain_debounce_single_stray_low_reads_dry(void) {
+    // The tray-1 root cause: a lone noise spike must NOT register as wet.
+    TEST_ASSERT_FALSE(SensorDebounce::isWet(0, RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+    TEST_ASSERT_FALSE(SensorDebounce::isWet(1, RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+}
+
+void test_rain_debounce_just_below_threshold_reads_dry(void) {
+    // 4 of 7 LOW is still not enough to confirm wet.
+    TEST_ASSERT_FALSE(
+        SensorDebounce::isWet(RAIN_SENSOR_DEBOUNCE_THRESHOLD - 1,
+                              RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+}
+
+void test_rain_debounce_threshold_and_above_reads_wet(void) {
+    // >= threshold LOW samples -> genuinely wet.
+    TEST_ASSERT_TRUE(SensorDebounce::isWet(RAIN_SENSOR_DEBOUNCE_THRESHOLD,
+                                           RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+    TEST_ASSERT_TRUE(SensorDebounce::isWet(RAIN_SENSOR_DEBOUNCE_SAMPLES,
+                                           RAIN_SENSOR_DEBOUNCE_THRESHOLD));
 }
 
 // ========== PHASE_IDLE Tests ==========
@@ -939,6 +975,10 @@ int main(int argc, char **argv) {
     RUN_TEST(test_decrement_on_timeout_subtracts_quarter);
     RUN_TEST(test_decrement_on_timeout_floors_at_one);
     RUN_TEST(test_decrement_on_timeout_caps_input_too);
+    RUN_TEST(test_max_interval_multiplier_capped_at_two_and_half);
+    RUN_TEST(test_rain_debounce_single_stray_low_reads_dry);
+    RUN_TEST(test_rain_debounce_just_below_threshold_reads_dry);
+    RUN_TEST(test_rain_debounce_threshold_and_above_reads_wet);
 
     return UNITY_END();
 }

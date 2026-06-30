@@ -1614,10 +1614,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   const long FILL_STABLE_TOLERANCE_MS =
       500; // ±0.5s - threshold for "same fill time"
   const float MIN_INTERVAL_MULTIPLIER = 1.0; // Never go below 24h
-  // Growth factor when a tray reads "already full" before watering. Softened
-  // 2.0→1.5 (tray-1 fix) so one mistaken "full" reading can't double the wait;
-  // combined with sensor debounce this stops the interval running away.
-  const float INTERVAL_DOUBLE = 1.5;         // Grow when tray already full
+  const float INTERVAL_DOUBLE = 2.0;         // Double when tray already full
   const float INTERVAL_INCREMENT_LARGE =
       1.0; // Large adjustment for coarse search
   const float INTERVAL_DECREMENT_BINARY =

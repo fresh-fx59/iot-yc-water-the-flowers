@@ -37,5 +37,26 @@ Recent history follows short, imperative, version-prefixed subjects such as `v1.
 ## Security & Configuration Tips
 Do not commit secrets. Local credentials and tokens belong in `include/secret.h`. Treat LittleFS contents and Telegram/MQTT settings as deployable configuration, and double-check proxy/service files in `deploy/systemd/` before shipping monitoring changes.
 
+## Debugging via Monitoring Logs (Loki)
+
+The live device ships logs (and metrics) to the monitoring box's Loki via the metrics proxy. This is the primary way to debug field behavior without serial access. Reach for it before guessing.
+
+**Tool:** `~/Documents/projects/personal-os/tools/waterlog` (wraps the fleet `mon` ssh; built 2026-06-30). Modes:
+- `waterlog summary [days]` — per-tray multiplier / last-fill / cycle-count / timeout table + tank events. **Start here.**
+- `waterlog tray N [days]` — every line for Tray N (does the index math for you).
+- `waterlog timeouts [days]` / `waterlog recent [min]` / `waterlog grep 'REGEX' [days]`.
+
+Loki labels: `{job="esp32", device="watering-system"}`. (Prometheus metric selector was unverified as of 2026-06-30 — trust the logs.)
+
+**Two traps that will bite you:**
+1. **Indexing.** A log line `Valve N` = internal `valveIndex N` = the user's **`Tray N+1`**. Session-tracking lines (`Tray M`) and Telegram alerts use `M = valveIndex+1`. So the user's *Tray 1* is log *Valve 0*. `waterlog tray N` already maps this; the raw logs do not.
+2. **Loki 429s on filtered queries.** A server-side `|=`/`|~` filter over a multi-day range splits into hundreds of subqueries → `429 "too many outstanding requests"` (surfaces as a python JSON-decode error in `lokiq logs`). **Pull label-only and filter client-side** — that's exactly what `waterlog` does (label-only query + python regex + retry-on-429). Don't add line filters to long-range server queries.
+
+**The underwatering signature (learning runaway), how to read it:**
+- `waterlog summary` → any tray with `mult` >> 1.0× is under-watering (1.0× = 24 h; the cap is `MAX_INTERVAL_MULTIPLIER`). The whole fleet drifting >1.0× = the asymmetric grow-vs-shrink loop; one tray pinned near the cap = that sensor.
+- In `waterlog tray N`, the tell is a cycle that **completes `✓ OK` while every `Sensor N-1 GPIO …` line in the trace reads `(DRY)`**, with `learning: fill=…s interval A→B` where B > A and `fill` shrinking over cycles. That means a brief WET flicker (caught by the 100 ms rain check, missed by the 5 s debug log) ended the cycle and was recorded as a real fill → interval grows → tray waters less, shorter, each time. Root cause was an **un-debounced** `readRainSensor`; fixed in v1.28.0 (5-of-7 majority). Manual `/api/water` cycles also feed learning, so a fast false-complete on a manual top-up *raises* the interval.
+- TIMEOUT events (`waterlog timeouts`) are the *opposite* state: pump ran the full per-valve window, sensor never wetted → interval decrements. Genuine slow-flow/clog looks like repeated timeouts on one valve.
+- Also check tank state: `water level before: X% (empty)` / `WATER LEVEL LOW` blocks watering fleet-wide — a low tank under-waters everything regardless of learning.
+
 ## Plan Execution
 When a written implementation plan is ready (e.g. under `docs/superpowers/plans/`), execute it via **subagent-driven development** (`superpowers:subagent-driven-development`) by default — fresh subagent per task with review between tasks. Do not ask which execution mode to use unless the user explicitly requests inline execution.

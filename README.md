@@ -19,8 +19,8 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 - **v1.19.0**: Added Telegram command polling throttle (`TELEGRAM_COMMAND_POLL_INTERVAL_MS=1000`) so `getUpdates(timeout=0)` is not called every 100ms network loop tick. Reduces continuous `ssl_client (-76)` and `WiFiClient ERR:9` noise caused by rapid TLS reconnect churn while keeping command checks responsive.
 - **v1.18.9**: Switched recommended monitoring deployment to nginx TLS termination on `:16443` with Python proxy on localhost `127.0.0.1:18085`. This avoids direct Python TLS serving and reduces ESP32 TLS-close noise (`ssl_client -76`) while keeping auth/token logic in proxy.
 - **v1.18.8**: Added separate proxy-mode HTTP timeout (`TELEGRAM_PROXY_HTTP_TIMEOUT_MS=4000`) while keeping direct Telegram timeout at `1500ms`. Fixes repeated ESP32 SSL read timeouts when proxy->Telegram responses take longer than 1.5 seconds.
-- **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.aiengineerhelper.com:16443/health`.
-- **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.aiengineerhelper.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
+- **v1.18.7**: Fixed monitoring proxy deployment docs for non-root service TLS key access by using service-readable cert/key copies under `/etc/telegram-bot-api-proxy`. Verified live endpoint on `https://water-the-flowers-proxy.example.com:16443/health`.
+- **v1.18.6**: Updated monitoring proxy service setup docs/env examples to use `water-the-flowers-proxy.example.com` certificate paths and added explicit reboot-protection verification steps (`systemctl is-enabled` + post-reboot health check).
 - **v1.18.5**: Added Telegram Bot API proxy mode for ESP32 (`sendMessage` + `getUpdates`) with optional bearer auth, custom HTTPS port configuration, and monitoring-host systemd deployment files. Updated defaults/docs to avoid VPN relay conflict by using `16443` (not `15443`).
 - **v1.18.4**: just version up
 - **v1.18.3**: Made network task local-first so OTA/web API remain responsive during internet outages or Telegram restrictions. Added Telegram fast timeout + exponential cooldown to avoid repeated blocking. Limited queued Telegram notification processing to one per cycle so watering/lamp logic stays responsive even when Telegram/MQTT fail.
@@ -728,7 +728,7 @@ python3 tools/telegram_bot_api_proxy.py
 
 Health check:
 ```bash
-curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
+curl -sk https://water-the-flowers-proxy.example.com:16443/health
 ```
 
 ### systemd Setup (Custom HTTPS Port, no 443)
@@ -760,10 +760,10 @@ sudo systemctl is-enabled telegram-bot-api-proxy.service
 ```nginx
 server {
     listen 16443 ssl http2;
-    server_name water-the-flowers-proxy.aiengineerhelper.com;
+    server_name water-the-flowers-proxy.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/water-the-flowers-proxy.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/water-the-flowers-proxy.example.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -794,7 +794,7 @@ sudo ufw allow 16443/tcp
 sudo reboot
 # after host is back:
 systemctl status telegram-bot-api-proxy.service --no-pager
-curl -sk https://water-the-flowers-proxy.aiengineerhelper.com:16443/health
+curl -sk https://water-the-flowers-proxy.example.com:16443/health
 ```
 
 ## 🚀 Step-by-Step Deployment

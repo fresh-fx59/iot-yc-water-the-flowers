@@ -31,7 +31,7 @@
 | `include/TelegramNotifier.h` | Add `MetricsPusher::log()` on send success/failure |
 | `include/NetworkManager.h` | Add `MetricsPusher::log()` on WiFi connect/disconnect |
 
-### Remote files (Cloud.ru VPS 45.151.30.146)
+### Remote files (Cloud.ru VPS 203.0.113.12)
 | File | Changes |
 |------|---------|
 | `/opt/iot-yc-water-the-flowers/tools/esp32_metrics_proxy.py` | Deploy new proxy script |
@@ -375,17 +375,17 @@ git commit -m "v1.20.1: add ESP32 metrics proxy for Prometheus + Loki"
 - [ ] **Step 1: Copy proxy script to server**
 
 ```bash
-scp tools/esp32_metrics_proxy.py user1@45.151.30.146:/tmp/esp32_metrics_proxy.py
-ssh user1@45.151.30.146 "sudo cp /tmp/esp32_metrics_proxy.py /opt/iot-yc-water-the-flowers/tools/esp32_metrics_proxy.py && sudo chmod 644 /opt/iot-yc-water-the-flowers/tools/esp32_metrics_proxy.py"
+scp tools/esp32_metrics_proxy.py user1@203.0.113.12:/tmp/esp32_metrics_proxy.py
+ssh user1@203.0.113.12 "sudo cp /tmp/esp32_metrics_proxy.py /opt/iot-yc-water-the-flowers/tools/esp32_metrics_proxy.py && sudo chmod 644 /opt/iot-yc-water-the-flowers/tools/esp32_metrics_proxy.py"
 ```
 
 - [ ] **Step 2: Create env file**
 
 ```bash
-ssh user1@45.151.30.146 "sudo tee /etc/default/esp32-metrics-proxy > /dev/null << 'ENVEOF'
+ssh user1@203.0.113.12 "sudo tee /etc/default/esp32-metrics-proxy > /dev/null << 'ENVEOF'
 METRICS_PROXY_HOST=127.0.0.1
 METRICS_PROXY_PORT=18086
-METRICS_PROXY_AUTH_TOKEN=774b44668b94a589c3792e6069f0df1fe75d1c927d4332075b7e58bedf2f4611
+METRICS_PROXY_AUTH_TOKEN=replace_with_long_random_token
 LOKI_PUSH_URL=http://localhost:3100/loki/api/v1/push
 ENVEOF"
 ```
@@ -395,7 +395,7 @@ Note: Reuses same auth token as Telegram proxy for simplicity (ESP32 already has
 - [ ] **Step 3: Create systemd service**
 
 ```bash
-ssh user1@45.151.30.146 "sudo tee /etc/systemd/system/esp32-metrics-proxy.service > /dev/null << 'SVCEOF'
+ssh user1@203.0.113.12 "sudo tee /etc/systemd/system/esp32-metrics-proxy.service > /dev/null << 'SVCEOF'
 [Unit]
 Description=ESP32 Metrics Proxy for Prometheus + Loki
 After=network-online.target
@@ -424,7 +424,7 @@ SVCEOF"
 - [ ] **Step 4: Enable and start the service**
 
 ```bash
-ssh user1@45.151.30.146 "sudo systemctl daemon-reload && sudo systemctl enable esp32-metrics-proxy && sudo systemctl start esp32-metrics-proxy && sudo systemctl status esp32-metrics-proxy"
+ssh user1@203.0.113.12 "sudo systemctl daemon-reload && sudo systemctl enable esp32-metrics-proxy && sudo systemctl start esp32-metrics-proxy && sudo systemctl status esp32-metrics-proxy"
 ```
 
 Expected: Active (running)
@@ -432,7 +432,7 @@ Expected: Active (running)
 - [ ] **Step 5: Verify health endpoint**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s http://127.0.0.1:18086/health"
+ssh user1@203.0.113.12 "curl -s http://127.0.0.1:18086/health"
 ```
 
 Expected: `{"status": "ok"}`
@@ -447,7 +447,7 @@ Expected: `{"status": "ok"}`
 - [ ] **Step 1: Find and read current config file**
 
 ```bash
-ssh user1@45.151.30.146 "sudo grep -rl '16443' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null"
+ssh user1@203.0.113.12 "sudo grep -rl '16443' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null"
 ```
 
 This returns the config file path. Read it to get the exact filename.
@@ -459,10 +459,10 @@ Replace the single `location /` block with path-based routing. The full server b
 ```nginx
 server {
     listen 16443 ssl http2;
-    server_name water-the-flowers-proxy.aiengineerhelper.com;
+    server_name water-the-flowers-proxy.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/water-the-flowers-proxy.aiengineerhelper.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/water-the-flowers-proxy.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/water-the-flowers-proxy.example.com/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -514,7 +514,7 @@ Write this using `sudo tee` via SSH, replacing the existing file.
 - [ ] **Step 3: Test and reload nginx**
 
 ```bash
-ssh user1@45.151.30.146 "sudo nginx -t && sudo systemctl reload nginx"
+ssh user1@203.0.113.12 "sudo nginx -t && sudo systemctl reload nginx"
 ```
 
 Expected: `nginx: configuration file /etc/nginx/nginx.conf syntax is ok`
@@ -523,13 +523,13 @@ Expected: `nginx: configuration file /etc/nginx/nginx.conf syntax is ok`
 
 Test Telegram proxy still works:
 ```bash
-ssh user1@45.151.30.146 "curl -s -k https://localhost:16443/health"
+ssh user1@203.0.113.12 "curl -s -k https://localhost:16443/health"
 ```
 Expected: `{"status": "ok"}`
 
 Test metrics proxy through nginx:
 ```bash
-ssh user1@45.151.30.146 "curl -s -k -X POST https://localhost:16443/v1/metrics/push -H 'Authorization: Bearer 774b44668b94a589c3792e6069f0df1fe75d1c927d4332075b7e58bedf2f4611' -H 'Content-Type: application/json' -d '{\"uptime_s\":1}'"
+ssh user1@203.0.113.12 "curl -s -k -X POST https://localhost:16443/v1/metrics/push -H 'Authorization: Bearer replace_with_long_random_token' -H 'Content-Type: application/json' -d '{\"uptime_s\":1}'"
 ```
 Expected: `{"ok": true}`
 
@@ -559,18 +559,18 @@ Use `sudo tee -a` or read+modify+write via SSH.
 - [ ] **Step 2: Reload Prometheus**
 
 ```bash
-ssh user1@45.151.30.146 "sudo docker exec prometheus kill -SIGHUP 1"
+ssh user1@203.0.113.12 "sudo docker exec prometheus kill -SIGHUP 1"
 ```
 
 Or restart:
 ```bash
-ssh user1@45.151.30.146 "sudo docker restart prometheus"
+ssh user1@203.0.113.12 "sudo docker restart prometheus"
 ```
 
 - [ ] **Step 3: Verify scrape target appears**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | grep -A5 esp32_watering"
+ssh user1@203.0.113.12 "curl -s http://localhost:9090/api/v1/targets | python3 -m json.tool | grep -A5 esp32_watering"
 ```
 
 Expected: Target with state "up" (or "unknown" if no metrics pushed yet)
@@ -582,8 +582,8 @@ Expected: Target with state "up" (or "unknown" if no metrics pushed yet)
 - [ ] **Step 1: Push test metrics through nginx TLS**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s -k -X POST https://localhost:16443/v1/metrics/push \
-  -H 'Authorization: Bearer 774b44668b94a589c3792e6069f0df1fe75d1c927d4332075b7e58bedf2f4611' \
+ssh user1@203.0.113.12 "curl -s -k -X POST https://localhost:16443/v1/metrics/push \
+  -H 'Authorization: Bearer replace_with_long_random_token' \
   -H 'Content-Type: application/json' \
   -d '{\"uptime_s\":42,\"free_heap\":180000,\"wifi_rssi\":-55,\"pump\":0,\"overflow\":0,\"overflow_streak\":0,\"water_tank_ok\":1,\"plant_light\":1,\"telegram_failures\":2,\"valves\":[{\"id\":0,\"state\":0,\"phase\":0,\"rain\":0,\"watering_s\":0,\"water_level_pct\":80,\"calibrated\":1,\"auto_watering\":1,\"interval_mult\":1.5,\"total_cycles\":10,\"time_since_ms\":7200000,\"time_until_empty_ms\":79200000,\"baseline_fill_ms\":15000,\"last_fill_ms\":14500,\"empty_duration_ms\":86400000}]}'"
 ```
@@ -592,15 +592,15 @@ Expected: `{"ok": true}`
 - [ ] **Step 2: Verify Prometheus can scrape**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s http://localhost:9090/api/v1/query?query=esp32_uptime_seconds | python3 -m json.tool"
+ssh user1@203.0.113.12 "curl -s http://localhost:9090/api/v1/query?query=esp32_uptime_seconds | python3 -m json.tool"
 ```
 Expected: JSON with `"value"` containing `"42"`
 
 - [ ] **Step 3: Push test log to Loki**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s -k -X POST https://localhost:16443/v1/logs/push \
-  -H 'Authorization: Bearer 774b44668b94a589c3792e6069f0df1fe75d1c927d4332075b7e58bedf2f4611' \
+ssh user1@203.0.113.12 "curl -s -k -X POST https://localhost:16443/v1/logs/push \
+  -H 'Authorization: Bearer replace_with_long_random_token' \
   -H 'Content-Type: application/json' \
   -d '{\"streams\":[{\"stream\":{\"job\":\"esp32\",\"device\":\"watering-system\",\"level\":\"info\"},\"values\":[[\"$(date +%s)000000000\",\"Test log from setup verification\"]]}]}'"
 ```
@@ -609,7 +609,7 @@ Expected: `{"ok": true}`
 - [ ] **Step 4: Verify log in Loki**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s 'http://localhost:3100/loki/api/v1/query_range?query={job=\"esp32\"}&limit=5' | python3 -m json.tool | head -20"
+ssh user1@203.0.113.12 "curl -s 'http://localhost:3100/loki/api/v1/query_range?query={job=\"esp32\"}&limit=5' | python3 -m json.tool | head -20"
 ```
 Expected: JSON with the test log entry
 
@@ -1324,10 +1324,10 @@ The JSON should use Grafana dashboard model v38+ with proper datasource UIDs (us
 
 ```bash
 # First, get datasource UIDs
-ssh user1@45.151.30.146 "curl -s -u admin:admin http://localhost:3000/api/datasources | python3 -m json.tool | grep -E '\"uid\"|\"name\"|\"type\"'"
+ssh user1@203.0.113.12 "curl -s -u admin:admin http://localhost:3000/api/datasources | python3 -m json.tool | grep -E '\"uid\"|\"name\"|\"type\"'"
 
 # Import dashboard
-ssh user1@45.151.30.146 "curl -s -u admin:admin -X POST http://localhost:3000/api/dashboards/db \
+ssh user1@203.0.113.12 "curl -s -u admin:admin -X POST http://localhost:3000/api/dashboards/db \
   -H 'Content-Type: application/json' \
   -d '{\"dashboard\": $(cat tools/grafana-dashboard-esp32.json), \"overwrite\": true}'"
 ```
@@ -1336,7 +1336,7 @@ If datasource UIDs need to be hardcoded (simpler for single-server setup), repla
 
 - [ ] **Step 3: Verify dashboard loads in Grafana**
 
-Open `http://45.151.30.146:3000` in browser, navigate to the "ESP32 Watering System" dashboard. All panels should render (with data if ESP32 is pushing metrics, or empty if not yet flashed).
+Open `http://203.0.113.12:3000` in browser, navigate to the "ESP32 Watering System" dashboard. All panels should render (with data if ESP32 is pushing metrics, or empty if not yet flashed).
 
 - [ ] **Step 4: Commit**
 
@@ -1377,7 +1377,7 @@ Watch for:
 - [ ] **Step 4: Verify metrics flowing to Prometheus**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s http://localhost:9090/api/v1/query?query=esp32_uptime_seconds | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"data\"][\"result\"])'"
+ssh user1@203.0.113.12 "curl -s http://localhost:9090/api/v1/query?query=esp32_uptime_seconds | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"data\"][\"result\"])'"
 ```
 
 Expected: Non-empty result with current uptime value
@@ -1385,7 +1385,7 @@ Expected: Non-empty result with current uptime value
 - [ ] **Step 5: Verify logs flowing to Loki**
 
 ```bash
-ssh user1@45.151.30.146 "curl -s 'http://localhost:3100/loki/api/v1/query_range?query={job=\"esp32\"}&limit=5&start=$(date -d '5 minutes ago' +%s)000000000' | python3 -m json.tool | head -30"
+ssh user1@203.0.113.12 "curl -s 'http://localhost:3100/loki/api/v1/query_range?query={job=\"esp32\"}&limit=5&start=$(date -d '5 minutes ago' +%s)000000000' | python3 -m json.tool | head -30"
 ```
 
 Expected: Boot log entries visible

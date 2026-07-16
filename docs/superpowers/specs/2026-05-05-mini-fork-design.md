@@ -248,9 +248,9 @@ No `learning_data_*.json` (no per-valve learning).
 
 ## Cloud.ru VPS
 
-No infrastructure changes. Same Cloud.ru proxy at `https://water-the-flowers-proxy.aiengineerhelper.com:16443/` accepts any bot token.
+No infrastructure changes. Same Cloud.ru proxy at `https://water-the-flowers-proxy.example.com:16443/` accepts any bot token.
 
-- **Telegram**: register a new BotFather bot for the mini with its own token (bot is `@iot_alex_watering_1_bot`). Each device gets its own bot and its own DM thread in Telegram with the user. The user's `chat_id` (e.g., `314102923`) is the same for both bots since both DM the same person. The bot token lives in the new repo's `secret.h` (gitignored, never committed).
+- **Telegram**: register a new BotFather bot for the mini with its own token (bot is `@your_bot`). Each device gets its own bot and its own DM thread in Telegram with the user. The user's `chat_id` (e.g., `<your-telegram-chat-id>`) is the same for both bots since both DM the same person. The bot token lives in the new repo's `secret.h` (gitignored, never committed).
 - **Telegram queue resilience**: inherits mother's 16-slot `notificationQueue`. During a WiFi outage, alerts beyond 16 silently drop. Acceptable for the mini given low alert frequency (typically <10 alerts per week of normal operation).
 - **Prometheus**: add a new scrape job `esp32_watering_mini` (separate from `esp32_watering`) for clean dashboard separation. Or add a `device` label on the existing job — either works; new job is recommended.
 - **Grafana**: fork `tools/grafana-dashboard-esp32.json` into `tools/grafana-dashboard-esp32-mini.json` with simplified panels (single zone, single soil sensor, single motor; drop per-valve learning panels).

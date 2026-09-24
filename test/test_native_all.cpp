@@ -259,11 +259,11 @@ void test_clamp_multiplier_below_min_clamps_to_one(void) {
 
 void test_clamp_multiplier_above_max_clamps_to_cap(void) {
     // Trays we actually observed in the wild (6.5x, 7.0x) and the
-    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (5.0).
+    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (7.0).
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::clampMultiplier(6.5f));
+        LearningAlgorithm::clampMultiplier(7.5f));
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::clampMultiplier(7.0f));
+        LearningAlgorithm::clampMultiplier(8.0f));
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
         LearningAlgorithm::clampMultiplier(10.0f));
 }
@@ -294,13 +294,13 @@ void test_decrement_on_timeout_caps_input_too(void) {
 
 // ========== Interval-Multiplier Cap (runaway safety belt) ==========
 
-void test_max_interval_multiplier_is_five_days(void) {
-    // Worst-case wait stays bounded at 5.0x (~5 days). Kept at 5.0 deliberately:
-    // healthy trays (2-4.5x) must not be forced to water more often. The debounce
-    // + sustained-wet confirmation stop the runaway, not a tighter cap.
-    TEST_ASSERT_EQUAL_FLOAT(5.0f, MAX_INTERVAL_MULTIPLIER);
-    TEST_ASSERT_EQUAL_FLOAT(4.0f, LearningAlgorithm::clampMultiplier(4.0f));
-    TEST_ASSERT_EQUAL_FLOAT(5.0f, LearningAlgorithm::clampMultiplier(6.0f));
+void test_max_interval_multiplier_is_seven_days(void) {
+    // Worst-case wait bounded at 7.0x (~7 days). v1.31.0: raised from 5.0 by the
+    // operator — tray 2 was observed still wet with standing water at the 5-day cap.
+    // Dry trays fill slowly and keep short intervals; only wet trays stretch.
+    TEST_ASSERT_EQUAL_FLOAT(7.0f, MAX_INTERVAL_MULTIPLIER);
+    TEST_ASSERT_EQUAL_FLOAT(6.0f, LearningAlgorithm::clampMultiplier(6.0f));
+    TEST_ASSERT_EQUAL_FLOAT(7.0f, LearningAlgorithm::clampMultiplier(9.0f));
 }
 
 // ========== Rain/Soil Sensor Debounce (false-wet guard) ==========
@@ -1006,7 +1006,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_decrement_on_timeout_subtracts_quarter);
     RUN_TEST(test_decrement_on_timeout_floors_at_one);
     RUN_TEST(test_decrement_on_timeout_caps_input_too);
-    RUN_TEST(test_max_interval_multiplier_is_five_days);
+    RUN_TEST(test_max_interval_multiplier_is_seven_days);
     RUN_TEST(test_rain_debounce_single_stray_low_reads_dry);
     RUN_TEST(test_rain_debounce_just_below_threshold_reads_dry);
     RUN_TEST(test_rain_debounce_threshold_and_above_reads_wet);

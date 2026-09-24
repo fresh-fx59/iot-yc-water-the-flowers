@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.30.1";
+const char *VERSION = "watering_system_1.31.0";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -179,7 +179,7 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
 // healthy watering every 2-4.5 days, so a lower cap would force them to water
 // more often than they need. (clampMultiplier still rescues any value loaded
 // from flash that exceeds this.)
-const float MAX_INTERVAL_MULTIPLIER = 5.0; // Never wait more than 5 days
+const float MAX_INTERVAL_MULTIPLIER = 7.0; // Never wait more than 7 days (v1.31.0: operator-approved, wet trays e.g. tray 2 need 6-7d)
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
 const unsigned long RECENT_WATERING_THRESHOLD_MS =

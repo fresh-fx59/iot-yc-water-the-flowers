@@ -8,6 +8,11 @@
 #include <secret.h>
 #include <Adafruit_NeoPixel.h>
 
+// Tray numbering: internal valve indices are 0-based, the operator reads trays 1-6
+// off the rig. Mirrors trayLabel() in DebugHelper.h, which this test build does not
+// pull in (it would drag the Telegram/RTC stack into the hardware bring-up firmware).
+inline String trayLabel(int valveIndex) { return "Tray " + String(valveIndex + 1); }
+
 // Forward declarations
 void printMenu();
 void setupOTA();
@@ -293,12 +298,12 @@ void printMenu() {
   Serial.println("  P - Toggle Pump (GPIO 4)");
   Serial.println();
   Serial.println("VALVE TESTS (Individual):");
-  Serial.println("  1 - Toggle Valve 1 (GPIO 5)");
-  Serial.println("  2 - Toggle Valve 2 (GPIO 6)");
-  Serial.println("  3 - Toggle Valve 3 (GPIO 7)");
-  Serial.println("  4 - Toggle Valve 4 (GPIO 15)");
-  Serial.println("  5 - Toggle Valve 5 (GPIO 16)");
-  Serial.println("  6 - Toggle Valve 6 (GPIO 17)");
+  Serial.println("  1 - Toggle Tray 1 (GPIO 5)");
+  Serial.println("  2 - Toggle Tray 2 (GPIO 6)");
+  Serial.println("  3 - Toggle Tray 3 (GPIO 7)");
+  Serial.println("  4 - Toggle Tray 4 (GPIO 15)");
+  Serial.println("  5 - Toggle Tray 5 (GPIO 16)");
+  Serial.println("  6 - Toggle Tray 6 (GPIO 17)");
   Serial.println();
   Serial.println("VALVE TESTS (All):");
   Serial.println("  A - Turn ALL valves ON");
@@ -395,7 +400,7 @@ void testAllValvesOn() {
   webLog("Opening ALL valves...");
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], HIGH);
-    webLog("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): OPEN ✓");
+    webLog("  " + trayLabel(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): OPEN ✓");
     delay(200);
   }
   webLog("→ All valves should be open now");
@@ -407,7 +412,7 @@ void testAllValvesOff() {
   webLog("Closing ALL valves...");
   for (int i = 0; i < NUM_VALVES; i++) {
     digitalWrite(VALVE_PINS[i], LOW);
-    webLog("  Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): CLOSED ✗");
+    webLog("  " + trayLabel(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + "): CLOSED ✗");
     delay(200);
   }
   webLog("→ All valves should be closed now");
@@ -1017,11 +1022,11 @@ void fullSequenceTest() {
   webLog("");
   webLog("3/7 Testing Valves (one by one)...");
   for (int i = 0; i < NUM_VALVES; i++) {
-    webLog("    Testing Valve " + String(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + ")...");
+    webLog("    Testing " + trayLabel(i + 1) + " (GPIO " + String(VALVE_PINS[i]) + ")...");
     digitalWrite(VALVE_PINS[i], HIGH);
     delay(2000);
     digitalWrite(VALVE_PINS[i], LOW);
-    webLog("    ✓ Valve " + String(i + 1) + " complete");
+    webLog("    ✓ " + trayLabel(i + 1) + " complete");
     delay(500);
   }
 

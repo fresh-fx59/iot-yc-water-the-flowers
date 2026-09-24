@@ -150,7 +150,14 @@ def _build_prometheus_metrics() -> str:
     counter("esp32_log_push_successes_total", "Total successful log pushes",
             data.get("log_push_successes", 0))
 
-    # --- Per-valve metrics ---
+    # --- Per-tray metrics ---
+    # TRAY NUMBERING (2026-07-31): the device's JSON "id" is the 0-based internal
+    # valveIndex; the operator reads tray numbers 1-6 written in marker on the rig.
+    # This proxy is where that index first becomes an operator-visible label, so the
+    # +1 happens HERE, once, and the label is named `tray`. Downstream (Prometheus
+    # rules, Grafana, alert emails) must never see a 0-based index again.
+    # Metric NAMES keep the esp32_valve_* prefix — renaming them would break all
+    # existing history and they carry no drifting number.
     valves = data.get("valves", [])
     per_valve_defs = [
         ("esp32_valve_state",              "gauge",   "Valve state (0=IDLE, 1=active)",                    "state"),
@@ -175,9 +182,15 @@ def _build_prometheus_metrics() -> str:
         lines.append(f"# HELP {metric_name} {help_text}")
         lines.append(f"# TYPE {metric_name} {metric_type}")
         for valve in valves:
-            valve_id = str(valve.get("id", "?"))
+            raw_id = valve.get("id")
+            # 0-based valveIndex -> 1-based tray number. A malformed/absent id must
+            # not silently become "Tray 1", so it degrades to the literal "?".
+            try:
+                tray_id = str(int(raw_id) + 1)
+            except (TypeError, ValueError):
+                tray_id = "?"
             value = valve.get(field, 0)
-            lines.append(f'{metric_name}{{valve="{valve_id}"}} {value}')
+            lines.append(f'{metric_name}{{tray="{tray_id}"}} {value}')
 
     return "\n".join(lines) + "\n"
 

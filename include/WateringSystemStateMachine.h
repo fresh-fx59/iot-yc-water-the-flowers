@@ -19,8 +19,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             openValve(valveIndex);
             valve->valveOpenTime = currentTime;
             valve->phase = PHASE_WAITING_STABILIZATION;
-            DebugHelper::debug("✓ Valve " + String(valveIndex) + " opened - waiting stabilization");
-            if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": opened");
+            DebugHelper::debug("✓ " + trayLabel(valveIndex) + " opened - waiting stabilization");
+            if (g_metricsLog) g_metricsLog("info", trayLabel(valveIndex) + ": opened");
             publishStateChange("valve" + String(valveIndex), "valve_opened");
             break;
 
@@ -50,8 +50,8 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     }
 
                     // Sensor sustained wet = TRAY IS FULL - treat as successful fill
-                    DebugHelper::debug("✓ Sensor " + String(valveIndex) + " already WET - tray is FULL");
-                    if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=WET");
+                    DebugHelper::debug("✓ " + trayLabel(valveIndex) + " sensor already WET - tray is FULL");
+                    if (g_metricsLog) g_metricsLog("info", trayLabel(valveIndex) + ": rain=WET");
 
                     // SAFETY: Close valve immediately
                     closeValve(valveIndex);
@@ -76,10 +76,10 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->phase = PHASE_CLOSING_VALVE;
                 } else {
                     // Sensor dry - start watering
-                    DebugHelper::debug("✓ Sensor " + String(valveIndex) + " is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
+                    DebugHelper::debug("✓ " + trayLabel(valveIndex) + " sensor is DRY - starting pump (timeout: " + String(getValveNormalTimeout(valveIndex) / 1000) + "s)");
                     if (g_metricsLog) {
-                        g_metricsLog("info", "Valve " + String(valveIndex) + ": rain=DRY");
-                        g_metricsLog("info", "Valve " + String(valveIndex) + ": watering started");
+                        g_metricsLog("info", trayLabel(valveIndex) + ": rain=DRY");
+                        g_metricsLog("info", trayLabel(valveIndex) + ": watering started");
                     }
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
@@ -94,7 +94,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
         case PHASE_WATERING:
             // SAFETY CHECK 1: ABSOLUTE EMERGENCY TIMEOUT - HARD CUTOFF
             if (currentTime - valve->wateringStartTime >= getValveEmergencyTimeout(valveIndex)) {
-                DebugHelper::debugImportant("🚨 EMERGENCY CUTOFF: Valve " + String(valveIndex) + " exceeded ABSOLUTE limit " + String(getValveEmergencyTimeout(valveIndex) / 1000) + "s!");
+                DebugHelper::debugImportant("🚨 EMERGENCY CUTOFF: " + trayLabel(valveIndex) + " exceeded ABSOLUTE limit " + String(getValveEmergencyTimeout(valveIndex) / 1000) + "s!");
                 DebugHelper::debugImportant("🚨 This indicates a CRITICAL SAFETY FAILURE!");
                 DebugHelper::debugImportant("🚨 Check sensor hardware immediately!");
 
@@ -111,7 +111,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
             // SAFETY CHECK 2: Normal timeout - MAX WATERING TIME
             if (currentTime - valve->wateringStartTime >= getValveNormalTimeout(valveIndex)) {
-                DebugHelper::debugImportant("⚠️ TIMEOUT: Valve " + String(valveIndex) + " exceeded " + String(getValveNormalTimeout(valveIndex) / 1000) + "s - IMMEDIATE SAFETY STOP");
+                DebugHelper::debugImportant("⚠️ TIMEOUT: " + trayLabel(valveIndex) + " exceeded " + String(getValveNormalTimeout(valveIndex) / 1000) + "s - IMMEDIATE SAFETY STOP");
 
                 // SAFETY: Immediately close valve and stop pump
                 valve->timeoutOccurred = true;
@@ -133,7 +133,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 if ((currentTime - valve->wateringStartTime) % 1000 < RAIN_CHECK_INTERVAL) {
                     int elapsed = (currentTime - valve->wateringStartTime) / 1000;
                     int remaining = (getValveNormalTimeout(valveIndex) - (currentTime - valve->wateringStartTime)) / 1000;
-                    DebugHelper::debug("Valve " + String(valveIndex) + ": " + String(elapsed) + "s/" + String(remaining) + "s, Sensor: " + String(isRaining ? "WET" : "DRY"));
+                    DebugHelper::debug(trayLabel(valveIndex) + ": " + String(elapsed) + "s/" + String(remaining) + "s, Sensor: " + String(isRaining ? "WET" : "DRY"));
                 }
 
                 if (isRaining) {
@@ -152,7 +152,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     // Calculate FULL cycle time: from valve open to valve close
                     int totalTime = (currentTime - valve->valveOpenTime) / 1000;
                     int pumpTime = (currentTime - valve->wateringStartTime) / 1000;
-                    DebugHelper::debug("✓ Valve " + String(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
+                    DebugHelper::debug("✓ " + trayLabel(valveIndex) + " COMPLETE - Total: " + String(totalTime) + "s (pump: " + String(pumpTime) + "s)");
 
                     // Count how many valves are watering
                     int wateringCount = 0;
@@ -187,7 +187,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
 
                     if (!valve->wateringRequested) {
                         // Manual stop requested - immediately close valve and stop pump
-                        DebugHelper::debug("⚠️ Manual stop for valve " + String(valveIndex) + " - IMMEDIATE STOP");
+                        DebugHelper::debug("⚠️ Manual stop for " + trayLabel(valveIndex) + " - IMMEDIATE STOP");
 
                         // SAFETY: Immediately close valve and stop pump
                         closeValve(valveIndex);
@@ -256,7 +256,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             closeValve(valveIndex);
             {
                 unsigned long closeDuration = (valve->valveOpenTime > 0) ? (currentTime - valve->valveOpenTime) / 1000 : 0;
-                if (g_metricsLog) g_metricsLog("info", "Valve " + String(valveIndex) + ": closing, duration=" + String(closeDuration) + "s" + (valve->timeoutOccurred ? " TIMEOUT" : ""));
+                if (g_metricsLog) g_metricsLog("info", trayLabel(valveIndex) + ": closing, duration=" + String(closeDuration) + "s" + (valve->timeoutOccurred ? " TIMEOUT" : ""));
                 (void)closeDuration;
             }
             valve->phase = PHASE_IDLE;
@@ -282,7 +282,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
         }
 
         case PHASE_ERROR: {
-            DebugHelper::debugImportant("❌ ERROR: Valve " + String(valveIndex) + " in error state");
+            DebugHelper::debugImportant("❌ ERROR: " + trayLabel(valveIndex) + " in error state");
             closeValve(valveIndex);
             valve->phase = PHASE_IDLE;
             valve->wateringStartTime = 0;  // Reset for next watering cycle

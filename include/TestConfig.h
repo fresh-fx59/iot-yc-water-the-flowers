@@ -21,11 +21,11 @@ static const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000;
 
 // Per-valve timeouts (mirror production config for testing)
 static const unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
-    40000,  // Valve 0: 40s (slower fill rate, matches production)
+    40000,  // Tray 1: 40s (slower fill rate, matches production)
     25000, 25000, 25000, 25000, 25000
 };
 static const unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
-    45000,  // Valve 0: 45s (5s margin, matches production)
+    45000,  // Tray 1: 45s (5s margin, matches production)
     30000, 30000, 30000, 30000, 30000
 };
 

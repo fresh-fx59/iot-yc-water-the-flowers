@@ -167,7 +167,7 @@ void checkTelegramCommands(int timeout) {
         int valveNum = numStr.toInt();
         if (valveNum >= 1 && valveNum <= 6) {
             int valveIndex = valveNum - 1;
-            DebugHelper::debugImportant("🚿 WATER VALVE " + String(valveNum) + " command received!");
+            DebugHelper::debugImportant("🚿 WATER TRAY " + String(valveNum) + " command received!");
             wateringSystem.startWatering(valveIndex, true);
             DebugHelper::flushBuffer();
             sendTelegramDebug("🚿 Watering tray " + String(valveNum) + " started");
@@ -179,7 +179,7 @@ void checkTelegramCommands(int timeout) {
         wateringSystem.startSequentialWatering("Telegram");
 
         String message = "🚿 <b>SEQUENTIAL WATERING STARTED</b>\n\n";
-        message += "• Watering all trays (5→0)\n";
+        message += "• Watering all trays (6→1)\n";
         message += "• Send /halt to stop";
         DebugHelper::flushBuffer();
         sendTelegramDebug(message);
@@ -194,11 +194,11 @@ void checkTelegramCommands(int timeout) {
         indexStr.replace("/test_sensor_", "");
         indexStr.replace("test_sensor_", "");
         int valveIndex = indexStr.toInt();
-        DebugHelper::debugImportant("🔍 TEST SENSOR " + String(valveIndex) + " command received!");
+        DebugHelper::debugImportant("🔍 TEST " + trayLabel(valveIndex) + " SENSOR" + " command received!");
         wateringSystem.testSensor(valveIndex);
 
         DebugHelper::flushBuffer();
-        sendTelegramDebug("🔍 <b>Testing sensor " + String(valveIndex) + "</b>\n\nResults will appear in debug log.");
+        sendTelegramDebug("🔍 <b>Testing " + trayLabel(valveIndex) + " sensor</b>\n\nResults will appear in debug log.");
     } else if (command == "/halt" || command == "halt") {
         if (!wateringSystem.isHaltMode()) {
             DebugHelper::debugImportant("🛑 HALT command received!");

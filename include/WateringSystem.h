@@ -504,7 +504,7 @@ inline bool WateringSystem::loadLearningData() {
         LearningAlgorithm::clampMultiplier(valve->intervalMultiplier);
     if (clampedMultiplier != valve->intervalMultiplier) {
       DebugHelper::debugImportant(
-          "🔧 Valve " + String(valve->valveIndex) +
+          "🔧 " + trayLabel(valve->valveIndex) +
           ": persisted multiplier " + String(valve->intervalMultiplier, 2) +
           "x out of range, clamping to " + String(clampedMultiplier, 2) + "x");
       valve->intervalMultiplier = clampedMultiplier;
@@ -624,10 +624,10 @@ inline void WateringSystem::globalSafetyWatchdog(unsigned long currentTime) {
       // CRITICAL: If exceeded absolute timeout, FORCE STOP EVERYTHING
       if (wateringDuration >= getValveEmergencyTimeout(i)) {
         DebugHelper::debugImportant("🚨🚨🚨 GLOBAL SAFETY WATCHDOG TRIGGERED! 🚨🚨🚨");
-        DebugHelper::debugImportant("Valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s!");
+        DebugHelper::debugImportant(trayLabel(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s!");
         DebugHelper::debugImportant("Duration: " + String(wateringDuration / 1000) + "s");
         DebugHelper::debugImportant("FORCING EMERGENCY SHUTDOWN!");
-        if (g_metricsLog) g_metricsLog("error", "Safety watchdog: valve " + String(i) + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s, forcing shutdown");
+        if (g_metricsLog) g_metricsLog("error", trayLabel(i) + " safety watchdog:" + " exceeded " + String(getValveEmergencyTimeout(i) / 1000) + "s, forcing shutdown");
 
         // FORCE DIRECT GPIO CONTROL - BYPASS ALL STATE MACHINES
         digitalWrite(VALVE_PINS[i], LOW);
@@ -651,7 +651,7 @@ inline void WateringSystem::globalSafetyWatchdog(unsigned long currentTime) {
         valve->timeoutOccurred = true;
         valve->phase = PHASE_CLOSING_VALVE;
 
-        DebugHelper::debugImportant("Emergency shutdown complete for valve " + String(i));
+        DebugHelper::debugImportant("Emergency shutdown complete for " + trayLabel(i));
       }
     }
   }
@@ -1072,10 +1072,9 @@ inline void WateringSystem::checkAutoWatering(unsigned long currentTime) {
 
     // Check if tray is empty and should be watered
     if (shouldWaterNow(valve, currentTime)) {
-      DebugHelper::debug("⏰ AUTO-WATERING TRIGGERED: Valve " +
-                                  String(i));
+      DebugHelper::debug("⏰ AUTO-WATERING TRIGGERED: " + trayLabel(i));
       DebugHelper::debug("  Tray is empty - starting automatic watering");
-      if (g_metricsLog) g_metricsLog("info", "Auto-watering triggered: valve " + String(i));
+      if (g_metricsLog) g_metricsLog("info", "Auto-watering triggered: " + trayLabel(i));
 
       requestWatering(i, "Auto", /*force=*/false);
     }
@@ -1115,7 +1114,7 @@ inline void WateringSystem::requestWatering(int valveIndex, const String& trigge
   ValveController *valve = valves[valveIndex];
 
   if (valve->phase != PHASE_IDLE) {
-    DebugHelper::debug("Valve " + String(valveIndex) + " is already active");
+    DebugHelper::debug(trayLabel(valveIndex) + " is already active");
     return;
   }
 
@@ -1127,8 +1126,7 @@ inline void WateringSystem::requestWatering(int valveIndex, const String& trigge
       valve->lastWateringCompleteTime > 0) {
     // Safety check for future timestamps (e.g. clock drift)
     if (valve->lastWateringCompleteTime > currentTime) {
-      DebugHelper::debugImportant("⚠️ FUTURE TIMESTAMP DETECTED: Valve " +
-                                  String(valveIndex));
+      DebugHelper::debugImportant("⚠️ FUTURE TIMESTAMP DETECTED: " + trayLabel(valveIndex));
       DebugHelper::debug("  Last watering: " +
                          String(valve->lastWateringCompleteTime));
       DebugHelper::debug("  Current time:  " + String(currentTime));
@@ -1149,7 +1147,7 @@ inline void WateringSystem::requestWatering(int valveIndex, const String& trigge
           valve->emptyToFullDuration - timeSinceLastWatering;
 
       DebugHelper::debug("═══════════════════════════════════════");
-      DebugHelper::debug("🧠 SMART SKIP: Valve " + String(valveIndex));
+      DebugHelper::debug("🧠 SMART SKIP: " + trayLabel(valveIndex));
       DebugHelper::debug("  Tray not empty yet (water level: ~" +
                          String((int)currentWaterLevel) + "%)");
       DebugHelper::debug(
@@ -1164,7 +1162,7 @@ inline void WateringSystem::requestWatering(int valveIndex, const String& trigge
       return;
     } else {
       DebugHelper::debug("═══════════════════════════════════════");
-      DebugHelper::debug("⏰ TIME TO WATER: Valve " + String(valveIndex));
+      DebugHelper::debug("⏰ TIME TO WATER: " + trayLabel(valveIndex));
       DebugHelper::debug(
           "  Tray should be empty now (time elapsed: " +
           LearningAlgorithm::formatDuration(timeSinceLastWatering) + ")");
@@ -1216,11 +1214,11 @@ inline void WateringSystem::beginValveCycle(
   }
 
   if (g_metricsLog) {
-    g_metricsLog("info", "queue: dequeued valve " + String(valveIndex) +
+    g_metricsLog("info", "queue: dequeued " + trayLabel(valveIndex) +
                              " (trigger=" + entry.triggerType + ")");
   }
 
-  DebugHelper::debug("▶ beginValveCycle: valve " + String(valveIndex) +
+  DebugHelper::debug("▶ beginValveCycle: " + trayLabel(valveIndex) +
                      " (trigger=" + entry.triggerType + ")");
 }
 
@@ -1228,7 +1226,7 @@ inline void WateringSystem::enqueueValve(int valveIndex,
                                           const String& triggerType,
                                           bool force) {
   if (valveIndex == currentlyActiveValve) {
-    DebugHelper::debug("queue: valve " + String(valveIndex) +
+    DebugHelper::debug("queue: " + trayLabel(valveIndex) +
                        " already active — skip enqueue");
     return;
   }
@@ -1237,16 +1235,16 @@ inline void WateringSystem::enqueueValve(int valveIndex,
   bool added = ValveQueueLogic::enqueue(valveQueue, valveQueueLength,
                                          NUM_VALVES, entry);
   if (!added) {
-    DebugHelper::debug("queue: valve " + String(valveIndex) +
+    DebugHelper::debug("queue: " + trayLabel(valveIndex) +
                        " already queued — skip enqueue");
     return;
   }
 
   if (g_metricsLog) {
-    g_metricsLog("info", "queue: enqueued valve " + String(valveIndex) +
+    g_metricsLog("info", "queue: enqueued " + trayLabel(valveIndex) +
                              " (trigger=" + triggerType + ")");
   }
-  DebugHelper::debug("⊕ enqueued valve " + String(valveIndex) +
+  DebugHelper::debug("⊕ enqueued " + trayLabel(valveIndex) +
                      " (trigger=" + triggerType + ", queue=" +
                      String(valveQueueLength) + ")");
 }
@@ -1321,7 +1319,7 @@ inline void WateringSystem::processQueue(unsigned long currentTime) {
       ValveQueueLogic::QueueEntry drop;
       ValveQueueLogic::dequeue(valveQueue, valveQueueLength, drop);
       if (g_metricsLog) {
-        g_metricsLog("info", "queue: dropped valve " + String(head.valveIndex) +
+        g_metricsLog("info", "queue: dropped " + trayLabel(head.valveIndex) +
                                  " at dequeue — no longer due (learning)");
       }
       return;
@@ -1342,10 +1340,10 @@ inline void WateringSystem::stopWatering(int valveIndex) {
   if (ValveQueueLogic::remove(valveQueue, valveQueueLength, valveIndex)) {
     if (g_metricsLog) {
       g_metricsLog("info",
-                   "queue: removed valve " + String(valveIndex) +
+                   "queue: removed " + trayLabel(valveIndex) +
                        " (stop requested)");
     }
-    DebugHelper::debug("⊖ removed queued valve " + String(valveIndex));
+    DebugHelper::debug("⊖ removed queued " + trayLabel(valveIndex));
     return;
   }
 
@@ -1522,7 +1520,7 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
   // ENHANCED LOGGING: Log actual GPIO values for debugging
   static unsigned long lastDetailedLog = 0;
   if (millis() - lastDetailedLog > 5000) {  // Detailed log every 5s
-    DebugHelper::debug("Sensor " + String(valveIndex) + " GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) +
+    DebugHelper::debug(trayLabel(valveIndex) + " sensor GPIO " + String(RAIN_SENSOR_PINS[valveIndex]) +
                       ": " + String(lowReadings) + "/" + String(RAIN_SENSOR_DEBOUNCE_SAMPLES) +
                       " LOW (" + String(wet ? "WET" : "DRY") +
                       "), GPIO18=" + String(anyWatering ? "CONTINUOUS" : "PULSED"));
@@ -1539,7 +1537,7 @@ inline void WateringSystem::openValve(int valveIndex) {
   // GPIO state. This is a hardware-level safety feature. GPIO read-back would show
   // LOW even when GPIO is set HIGH (expected behavior, not a failure).
 
-  DebugHelper::debug("🔧 OPENING VALVE " + String(valveIndex));
+  DebugHelper::debug("🔧 OPENING VALVE for " + trayLabel(valveIndex));
   DebugHelper::debug("  GPIO Pin: " + String(VALVE_PINS[valveIndex]));
 
   digitalWrite(VALVE_PINS[valveIndex], HIGH);
@@ -1547,7 +1545,7 @@ inline void WateringSystem::openValve(int valveIndex) {
   valves[valveIndex]->state = VALVE_OPEN;
   activeValveCount++;
 
-  DebugHelper::debug("✓ Valve " + String(valveIndex) + " marked as OPEN");
+  DebugHelper::debug("✓ " + trayLabel(valveIndex) + " marked as OPEN");
 }
 
 inline void WateringSystem::closeValve(int valveIndex) {
@@ -1562,7 +1560,7 @@ inline void WateringSystem::closeValve(int valveIndex) {
   if (activeValveCount > 0)
     activeValveCount--;
 
-  DebugHelper::debug("🔧 CLOSING VALVE " + String(valveIndex) +
+  DebugHelper::debug("🔧 CLOSING VALVE for " + trayLabel(valveIndex) +
                               " (GPIO " + String(VALVE_PINS[valveIndex]) + ")");
 }
 
@@ -1624,8 +1622,8 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   // Handle timeout scenarios
   if (valve->timeoutOccurred) {
     valve->consecutiveTimeouts++;
-    DebugHelper::debug("⏰ Consecutive timeouts for valve " +
-                       String(valve->valveIndex) + ": " +
+    DebugHelper::debug("⏰ Consecutive timeouts for " +
+                       trayLabel(valve->valveIndex) + ": " +
                        String(valve->consecutiveTimeouts));
 
     // SPECIAL CASE: First watering timeout on uncalibrated valve
@@ -1673,7 +1671,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         "); next cycle will skip fine-tune bump");
 
     if (g_metricsLog)
-      g_metricsLog("info", "Valve " + String(valve->valveIndex) +
+      g_metricsLog("info", trayLabel(valve->valveIndex) +
                               ": learning: timeout, interval " +
                               String(oldMultiplier, 2) + "x->" +
                               String(valve->intervalMultiplier, 2) + "x");
@@ -1775,7 +1773,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
         "  Next attempt in: " +
         LearningAlgorithm::formatDuration(valve->emptyToFullDuration));
 
-    if (g_metricsLog) g_metricsLog("info", "Valve " + String(valve->valveIndex) + ": learning: tray full, interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
+    if (g_metricsLog) g_metricsLog("info", trayLabel(valve->valveIndex) + ": learning: tray full, interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
     saveLearningData();
     sendScheduleUpdateIfNeeded();
     return;
@@ -1931,7 +1929,7 @@ inline void WateringSystem::processLearningData(ValveController *valve,
                      "% (" + String(getTrayState(waterLevelBefore)) + ")");
   DebugHelper::debug("  Total cycles: " + String(valve->totalWateringCycles));
 
-  if (g_metricsLog) g_metricsLog("info", "Valve " + String(valve->valveIndex) + ": learning: fill=" + String(fillDuration / 1000.0, 1) + "s interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
+  if (g_metricsLog) g_metricsLog("info", trayLabel(valve->valveIndex) + ": learning: fill=" + String(fillDuration / 1000.0, 1) + "s interval " + String(oldMultiplier, 2) + "x->" + String(valve->intervalMultiplier, 2) + "x");
   saveLearningData();
   sendScheduleUpdateIfNeeded();
 }
@@ -2001,7 +1999,7 @@ inline void WateringSystem::resetCalibration(int valveIndex) {
   valve->intervalMultiplier = 1.0; // CRITICAL: Reset interval multiplier
 
   DebugHelper::debug("═══════════════════════════════════════");
-  DebugHelper::debug("🔄 CALIBRATION RESET: Valve " + String(valveIndex));
+  DebugHelper::debug("🔄 CALIBRATION RESET: " + trayLabel(valveIndex));
   DebugHelper::debug("  All learning data cleared (interval: 1.0x)");
   DebugHelper::debug("  Next watering will establish new baseline");
   DebugHelper::debug("═══════════════════════════════════════");
@@ -2024,11 +2022,11 @@ inline bool WateringSystem::setIntervalMultiplier(int valveIndex,
   valve->intervalMultiplier = multiplier;
   valve->emptyToFullDuration =
       (unsigned long)(86400000UL * multiplier); // 24h * multiplier
-  DebugHelper::debug("🔧 Valve " + String(valveIndex) +
+  DebugHelper::debug("🔧 " + trayLabel(valveIndex) +
                      ": interval set manually " + String(oldMultiplier, 2) +
                      "x → " + String(multiplier, 2) + "x");
   if (g_metricsLog)
-    g_metricsLog("info", "Valve " + String(valveIndex) +
+    g_metricsLog("info", trayLabel(valveIndex) +
                             ": manual interval set " +
                             String(oldMultiplier, 2) + "x->" +
                             String(multiplier, 2) + "x");
@@ -2072,7 +2070,7 @@ inline void WateringSystem::printLearningStatus() {
 
   for (int i = 0; i < NUM_VALVES; i++) {
     ValveController *valve = valves[i];
-    DebugHelper::debug("\n📊 Valve " + String(i) + ":");
+    DebugHelper::debug("\n📊 " + trayLabel(i) + ":");
 
     if (valve->isCalibrated) {
       DebugHelper::debug("  Status: ✓ Calibrated");
@@ -2130,7 +2128,7 @@ inline void WateringSystem::setAutoWatering(int valveIndex, bool enabled) {
     return;
 
   valves[valveIndex]->autoWateringEnabled = enabled;
-  DebugHelper::debug("⏰ Valve " + String(valveIndex) + " auto-watering: " +
+  DebugHelper::debug("⏰ " + trayLabel(valveIndex) + " auto-watering: " +
                      String(enabled ? "ENABLED" : "DISABLED"));
   publishStateChange("valve" + String(valveIndex),
                      enabled ? "auto_enabled" : "auto_disabled");
@@ -2157,7 +2155,7 @@ inline void WateringSystem::setAllAutoWatering(bool enabled) {
 inline void WateringSystem::clearTimeoutFlag(int valveIndex) {
   if (valveIndex >= 0 && valveIndex < NUM_VALVES) {
     valves[valveIndex]->timeoutOccurred = false;
-    DebugHelper::debug("Timeout flag cleared for valve " + String(valveIndex));
+    DebugHelper::debug("Timeout flag cleared for " + trayLabel(valveIndex));
     publishStateChange("valve" + String(valveIndex), "timeout_cleared");
   }
 }
@@ -2438,7 +2436,7 @@ inline int WateringSystem::getOverdueValveIndices(int *valveIndices, int maxCoun
 
       if (isOverdue) {
         DebugHelper::debug(
-            "Valve " + String(i) + " is overdue (interval: " +
+            trayLabel(i) + " is overdue (interval: " +
             LearningAlgorithm::formatDuration(valve->emptyToFullDuration) + ")");
         if (valveIndices && overdueCount < maxCount) {
           valveIndices[overdueCount] = i;
@@ -2484,7 +2482,7 @@ inline void WateringSystem::testSensor(int valveIndex) {
     return;
   }
 
-  DebugHelper::debugImportant("🔍 TESTING SENSOR " + String(valveIndex) + ":");
+  DebugHelper::debugImportant("🔍 TESTING " + trayLabel(valveIndex) + " SENSOR:");
 
   // Test 1: Check power pin configuration
   DebugHelper::debug("  1️⃣ Checking power pin (GPIO " + String(RAIN_SENSOR_POWER_PIN) + ")");
@@ -2525,7 +2523,7 @@ inline void WateringSystem::testSensor(int valveIndex) {
     DebugHelper::debugImportant("  ⚠️ WARNING: Sensor reads LOW when power is OFF - check pullup resistor!");
   }
 
-  DebugHelper::debug("  ✓ Test complete for sensor " + String(valveIndex));
+  DebugHelper::debug("  ✓ Test complete for " + trayLabel(valveIndex) + " sensor");
 }
 
 inline void WateringSystem::testAllSensors() {

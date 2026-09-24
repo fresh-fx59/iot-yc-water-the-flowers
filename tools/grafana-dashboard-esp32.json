@@ -39,7 +39,7 @@
     {
       "id": 1,
       "type": "state-timeline",
-      "title": "Valve Activity",
+      "title": "Tray Activity",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 1 },
       "options": {
@@ -62,37 +62,37 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"0\"}",
-          "legendFormat": "Valve 0",
+          "legendFormat": "Tray 1",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"1\"}",
-          "legendFormat": "Valve 1",
+          "legendFormat": "Tray 2",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"2\"}",
-          "legendFormat": "Valve 2",
+          "legendFormat": "Tray 3",
           "refId": "C"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"3\"}",
-          "legendFormat": "Valve 3",
+          "legendFormat": "Tray 4",
           "refId": "D"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"4\"}",
-          "legendFormat": "Valve 4",
+          "legendFormat": "Tray 5",
           "refId": "E"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_state{job=\"esp32_watering\", valve=\"5\"}",
-          "legendFormat": "Valve 5",
+          "legendFormat": "Tray 6",
           "refId": "F"
         }
       ]
@@ -139,7 +139,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_interval_multiplier{job=\"esp32_watering\"}",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -188,7 +188,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_water_level_pct{job=\"esp32_watering\"}",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -233,7 +233,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "(esp32_valve_empty_duration_ms{job=\"esp32_watering\"} - esp32_valve_time_since_watering_ms{job=\"esp32_watering\"}) / 3600000",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -279,7 +279,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_time_until_next_ms{job=\"esp32_watering\"} / 3600000",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -319,7 +319,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_total_cycles{job=\"esp32_watering\"}",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -374,7 +374,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_watering_seconds{job=\"esp32_watering\"}",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]
@@ -411,7 +411,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "esp32_valve_rain_detected{job=\"esp32_watering\"}",
-          "legendFormat": "Valve {{valve}}",
+          "legendFormat": "Tray {{tray}}",
           "refId": "A"
         }
       ]

@@ -49,7 +49,7 @@ The live device ships logs (and metrics) to the monitoring box's Loki via the me
 Loki labels: `{job="esp32", device="watering-system"}`. (Prometheus metric selector was unverified as of 2026-06-30 — trust the logs.)
 
 **Two traps that will bite you:**
-1. **Indexing.** A log line `Valve N` = internal `valveIndex N` = the user's **`Tray N+1`**. Session-tracking lines (`Tray M`) and Telegram alerts use `M = valveIndex+1`. So the user's *Tray 1* is log *Valve 0*. `waterlog tray N` already maps this; the raw logs do not.
+1. **Tray numbering — one numbering only (v1.30.0, 2026-07-31).** Everything a human reads says **`Tray 1`..`Tray 6`**, matching the numbers written in marker on the physical rig. Internally valves are still indexed 0-5 (array subscripts + `learning_data_*.json` keys — do NOT renumber those), but no 0-based index may reach a log line, Telegram message, serial print or metric label. Firmware does this via `trayLabel(valveIndex)` in `DebugHelper.h` — **use it instead of concatenating `"Valve " + String(idx)`**; `tools/esp32_metrics_proxy.py` does the same for the Prometheus `tray` label. *Logs written before v1.30.0 still say `Valve N` (= Tray N+1); `waterlog` rewrites those on read, so both eras display as trays.*
 2. **Loki 429s on filtered queries.** A server-side `|=`/`|~` filter over a multi-day range splits into hundreds of subqueries → `429 "too many outstanding requests"` (surfaces as a python JSON-decode error in `lokiq logs`). **Pull label-only and filter client-side** — that's exactly what `waterlog` does (label-only query + python regex + retry-on-429). Don't add line filters to long-range server queries.
 
 **The underwatering signature (learning runaway), how to read it:**

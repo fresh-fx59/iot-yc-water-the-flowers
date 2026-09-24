@@ -11,6 +11,21 @@
 extern bool sendTelegramDebug(const String& msg);
 
 // ============================================
+// Tray numbering (added 2026-07-31)
+// ============================================
+// The operator reads tray numbers **1-6**, written in marker on the physical rig.
+// Internally valves are indexed 0-5 — that stays, because those are array
+// subscripts and learning/NVS state keys, and renumbering them would risk the
+// persisted per-valve state for no benefit.
+//
+// The rule is that no 0-based index may ever reach a human: every log line,
+// Telegram message and serial print goes through these helpers instead of
+// concatenating "Valve " + String(idx). Loki, `waterlog`, and the Prometheus
+// metrics proxy all speak trays 1-6 too, so one numbering holds end to end.
+inline String trayLabel(int valveIndex) { return "Tray " + String(valveIndex + 1); }
+inline String trayNum(int valveIndex) { return String(valveIndex + 1); }
+
+// ============================================
 // Telegram Message Queue Structure
 // ============================================
 struct TelegramQueueMessage {

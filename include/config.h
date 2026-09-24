@@ -7,7 +7,7 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.29.0";
+const char *VERSION = "watering_system_1.30.1";
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -82,24 +82,25 @@ const unsigned long MAX_WATERING_TIME = 25000; // Maximum watering time (25s) - 
 const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s) - EMERGENCY CUTOFF
 
 // Per-valve timeout configuration (v1.16.0)
-// Valve 0 (Tray 1) has longer timeout due to slower flow rate
+// Tray 1 has the longest timeout — it is the highest tray, so it fills slowest.
+// Array index is the 0-based internal valveIndex; the comments name the TRAY (index+1).
 constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
-    33000,  // Valve 0: 33s
-    31000,  // Valve 1: 31s
-    27000,  // Valve 2: 27s
-    25000,  // Valve 3: 25s (standard)
-    25000,  // Valve 4: 25s (standard)
-    25000   // Valve 5: 25s (standard)
+    33000,  // Tray 1: 33s
+    31000,  // Tray 2: 31s
+    27000,  // Tray 3: 27s
+    25000,  // Tray 4: 25s (standard)
+    25000,  // Tray 5: 25s (standard)
+    25000   // Tray 6: 25s (standard)
 };
 
 // Emergency timeouts: 5 seconds higher than normal (safety margin)
 constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
-    38000,  // Valve 0: 38s (5s margin)
-    36000,  // Valve 1: 36s (5s margin)
-    32000,  // Valve 2: 32s (5s margin)
-    30000,  // Valve 3: 30s (5s margin)
-    30000,  // Valve 4: 30s (5s margin)
-    30000   // Valve 5: 30s (5s margin)
+    38000,  // Tray 1: 38s (5s margin)
+    36000,  // Tray 2: 36s (5s margin)
+    32000,  // Tray 3: 32s (5s margin)
+    30000,  // Tray 4: 30s (5s margin)
+    30000,  // Tray 5: 30s (5s margin)
+    30000   // Tray 6: 30s (5s margin)
 };
 
 // Universal inter-valve gap — pause between finishing one valve and starting

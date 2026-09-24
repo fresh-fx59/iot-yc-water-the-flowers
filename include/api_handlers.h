@@ -27,7 +27,7 @@ inline void handleWaterApi() {
         return;
     }
 
-    Serial.printf("✓ API: Starting watering for valve %d\n", valve);
+    Serial.printf("✓ API: Starting watering for Tray %d\n", valve);
     g_wateringSystem_ptr->startWatering(valve - 1, true);
     httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Watering started\"}");
 }
@@ -52,7 +52,7 @@ inline void handleStopApi() {
             httpServer.send(400, "application/json", "{\"success\":false,\"message\":\"Invalid valve number\"}");
             return;
         }
-        Serial.printf("✓ API: Stopping valve %d\n", valve);
+        Serial.printf("✓ API: Stopping Tray %d\n", valve);
         g_wateringSystem_ptr->stopWatering(valve - 1);
         httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Watering stopped\"}");
     }
@@ -141,9 +141,9 @@ inline void handleResetCalibrationApi() {
         return;
     }
 
-    Serial.printf("✓ API: Resetting calibration for valve %d\n", valve);
+    Serial.printf("✓ API: Resetting calibration for Tray %d\n", valve);
     g_wateringSystem_ptr->resetCalibration(valve - 1); // Convert 1-indexed to 0-indexed
-    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Calibration reset for valve " + String(valve) + "\"}");
+    httpServer.send(200, "application/json", "{\"success\":true,\"message\":\"Calibration reset for Tray " + String(valve) + "\"}");
 }
 
 inline void handleSetMultiplierApi() {
@@ -170,7 +170,7 @@ inline void handleSetMultiplierApi() {
         return;
     }
 
-    Serial.printf("✓ API: Set multiplier for valve %d to %.2fx\n", valve, multiplier);
+    Serial.printf("✓ API: Set multiplier for Tray %d to %.2fx\n", valve, multiplier);
     httpServer.send(200, "application/json",
                     "{\"success\":true,\"valve\":" + String(valve) +
                         ",\"multiplier\":" + String(multiplier, 2) + "}");

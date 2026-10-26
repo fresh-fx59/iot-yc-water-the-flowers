@@ -160,6 +160,67 @@ void test_calculate_empty_duration(void) {
     TEST_ASSERT_EQUAL_UINT32(twentyFourHours, LearningAlgorithm::calculateEmptyDuration(5000, 10000, twelveHours));
 }
 
+void test_fill_duration_validation_rejects_persisted_day_values(void) {
+    TEST_ASSERT_TRUE(LearningAlgorithm::isValidFillDuration(30000, 45000));
+    TEST_ASSERT_FALSE(LearningAlgorithm::isValidFillDuration(98746700, 45000));
+    TEST_ASSERT_FALSE(LearningAlgorithm::isValidFillDuration(86400500, 45000));
+    TEST_ASSERT_FALSE(LearningAlgorithm::isValidFillDuration(0, 45000));
+}
+
+void test_invalid_baseline_repairs_from_recent_fill_history(void) {
+    TEST_ASSERT_EQUAL_UINT32(30000,
+        LearningAlgorithm::repairBaseline(98746700, 30000, 28000, 45000));
+    TEST_ASSERT_EQUAL_UINT32(28000,
+        LearningAlgorithm::repairBaseline(86400500, 0, 28000, 45000));
+    TEST_ASSERT_EQUAL_UINT32(0,
+        LearningAlgorithm::repairBaseline(86400500, 0, 0, 45000));
+    TEST_ASSERT_EQUAL_UINT32(31000,
+        LearningAlgorithm::repairBaseline(31000, 20000, 18000, 45000));
+}
+
+void test_cycle_helpers_clear_abort_marker_and_mark_full_without_learning(void) {
+    ValveController valve(0);
+    valve.wateringStartTime = 86400000;
+    valve.intervalMultiplier = 7.0;
+    valve.baselineFillDuration = 30000;
+    valve.totalWateringCycles = 12;
+    valve.rainDetected = true;
+    valve.timeoutOccurred = true;
+    prepareValveCycle(&valve);
+    TEST_ASSERT_EQUAL_UINT32(0, valve.wateringStartTime);
+    TEST_ASSERT_EQUAL(PHASE_OPENING_VALVE, valve.phase);
+    TEST_ASSERT_TRUE(valve.wateringRequested);
+    TEST_ASSERT_FALSE(valve.rainDetected);
+    TEST_ASSERT_FALSE(valve.timeoutOccurred);
+    // Initial-full must also clear an inherited marker independently.
+    valve.wateringStartTime = 86400000;
+    markFullAtCycleStart(&valve, 172800500);
+    TEST_ASSERT_EQUAL_UINT32(0, valve.wateringStartTime);
+    TEST_ASSERT_EQUAL_UINT32(172800500, valve.lastWateringCompleteTime);
+    TEST_ASSERT_EQUAL_UINT32(30000, valve.baselineFillDuration);
+    TEST_ASSERT_EQUAL_UINT32(12, valve.totalWateringCycles);
+    TEST_ASSERT_FLOAT_WITHIN(0.01, 7.0, valve.intervalMultiplier);
+}
+
+void test_reacquiring_baseline_preserves_calibrated_seven_day_schedule(void) {
+    ValveController valve(0);
+    valve.isCalibrated = true;
+    valve.baselineFillDuration = LearningAlgorithm::repairBaseline(86400500, 0, 0, 45000);
+    valve.intervalMultiplier = 7.0;
+    valve.emptyToFullDuration = 604800000;
+    valve.totalWateringCycles = 12;
+    TEST_ASSERT_TRUE(reacquireCalibratedBaseline(&valve, 22000, 100000));
+    TEST_ASSERT_EQUAL_UINT32(22000, valve.baselineFillDuration);
+    TEST_ASSERT_EQUAL_UINT32(22000, valve.previousFillDuration);
+    TEST_ASSERT_EQUAL_UINT32(100000, valve.lastWateringCompleteTime);
+    TEST_ASSERT_TRUE(valve.isCalibrated);
+    TEST_ASSERT_FLOAT_WITHIN(0.01, 7.0, valve.intervalMultiplier);
+    TEST_ASSERT_EQUAL_UINT32(604800000, valve.emptyToFullDuration);
+    TEST_ASSERT_EQUAL_UINT32(12, valve.totalWateringCycles);
+    TEST_ASSERT_FALSE(shouldWaterNow(&valve, 100000 + 86400000));
+    TEST_ASSERT_FALSE(reacquireCalibratedBaseline(&valve, 23000, 110000));
+}
+
 // Test formatDuration
 void test_format_duration(void) {
     // 1. Seconds
@@ -941,6 +1002,10 @@ int main(int argc, char **argv) {
     // Learning Algorithm Tests
     RUN_TEST(test_calculate_water_level);
     RUN_TEST(test_calculate_empty_duration);
+    RUN_TEST(test_fill_duration_validation_rejects_persisted_day_values);
+    RUN_TEST(test_invalid_baseline_repairs_from_recent_fill_history);
+    RUN_TEST(test_cycle_helpers_clear_abort_marker_and_mark_full_without_learning);
+    RUN_TEST(test_reacquiring_baseline_preserves_calibrated_seven_day_schedule);
     RUN_TEST(test_format_duration);
 
     // Plant Light Schedule Tests

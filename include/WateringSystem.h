@@ -497,6 +497,22 @@ inline bool WateringSystem::loadLearningData() {
     valve->lastCycleWasTimeoutRecovery =
         valveObj["lastCycleWasTimeoutRecovery"] | false;
 
+    // Baselines are measured while the pump is running and must fit inside
+    // the valve's emergency cutoff. Preserve the rest of the learned state,
+    // but discard an impossible duration so it cannot poison the schedule.
+    if (valve->baselineFillDuration > 0 &&
+        !LearningAlgorithm::isValidFillDuration(
+            valve->baselineFillDuration, getValveEmergencyTimeout(index))) {
+      DebugHelper::debugImportant(
+          "⚠️ " + trayLabel(index) +
+          ": discarding impossible persisted fill baseline (" +
+          String(valve->baselineFillDuration / 1000.0, 1) + "s)");
+      unsigned long fallbackBaseline = LearningAlgorithm::repairBaseline(
+          valve->baselineFillDuration, valve->lastFillDuration,
+          valve->previousFillDuration, getValveEmergencyTimeout(index));
+      valve->baselineFillDuration = fallbackBaseline;
+    }
+
     // Clamp persisted multiplier to current MAX. Trays that ran away on older
     // firmware (we observed 6.5x and 7.0x) get rescued on first boot of new
     // firmware without manual intervention.
@@ -827,6 +843,7 @@ inline void WateringSystem::emergencyStopAll(const String &reason) {
     digitalWrite(VALVE_PINS[i], LOW);
     valves[i]->state = VALVE_CLOSED;
     valves[i]->phase = PHASE_IDLE;
+    resetWateringStartMarker(valves[i]);
   }
 
   // Force pump off via direct GPIO control
@@ -1201,10 +1218,7 @@ inline void WateringSystem::beginValveCycle(
   }
 
   // Transition state machine — mirrors what the old startWatering tail does.
-  valve->wateringRequested = true;
-  valve->rainDetected = false;
-  valve->lastRainCheck = 0;
-  valve->phase = PHASE_OPENING_VALVE;
+  prepareValveCycle(valve);
   valve->lastWateringAttemptTime = millis();
   valve->realTimeSinceLastWateringAttempt = 0;
   publishStateChange("valve" + String(valveIndex), "cycle_started");
@@ -1349,6 +1363,7 @@ inline void WateringSystem::stopWatering(int valveIndex) {
 
   ValveController *valve = valves[valveIndex];
   valve->wateringRequested = false;
+  resetWateringStartMarker(valve);
 
   if (valve->phase == PHASE_WATERING) {
     updatePumpState();
@@ -1785,8 +1800,27 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   }
 
   unsigned long fillDuration = currentTime - valve->wateringStartTime;
+
+  // A successful fill cannot exceed the emergency cutoff. Treat impossible
+  // timer results as a failed cycle and keep the previous baseline intact.
+  if (!LearningAlgorithm::isValidFillDuration(
+          fillDuration, getValveEmergencyTimeout(valve->valveIndex))) {
+    DebugHelper::debugImportant(
+        "⚠️ " + trayLabel(valve->valveIndex) +
+        ": rejecting impossible fill duration (" +
+        String(fillDuration / 1000.0, 1) + "s)");
+    return;
+  }
   valve->lastFillDuration = fillDuration;
   valve->totalWateringCycles++;
+
+  // A calibrated valve whose baseline was quarantined can reacquire only the
+  // measurement. Keep its learned interval and schedule unchanged.
+  if (reacquireCalibratedBaseline(valve, fillDuration, currentTime)) {
+    saveLearningData();
+    sendScheduleUpdateIfNeeded();
+    return;
+  }
 
   DebugHelper::debug("🧠 ADAPTIVE LEARNING:");
   DebugHelper::debug("  Fill duration: " + String(fillDuration / 1000.0, 1) +

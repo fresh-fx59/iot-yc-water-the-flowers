@@ -101,6 +101,42 @@ struct ValveController {
         realTimeSinceLastWatering(0), realTimeSinceLastWateringAttempt(0) {}
 };
 
+inline void resetWateringStartMarker(ValveController *valve) {
+  valve->wateringStartTime = 0;
+}
+
+inline void prepareValveCycle(ValveController *valve) {
+  valve->wateringRequested = true;
+  valve->rainDetected = false;
+  valve->timeoutOccurred = false;
+  valve->rainWetStreak = 0;
+  valve->wateringStartTime = 0;
+  valve->lastRainCheck = 0;
+  valve->phase = PHASE_OPENING_VALVE;
+}
+
+inline void markFullAtCycleStart(ValveController *valve,
+                                 unsigned long currentTime) {
+  valve->lastWateringCompleteTime = currentTime;
+  valve->realTimeSinceLastWatering = 0;
+  resetWateringStartMarker(valve);
+}
+
+// Reacquire a missing measurement without restarting an established schedule.
+// The caller validates the successful fill against the valve safety timeout.
+inline bool reacquireCalibratedBaseline(ValveController *valve,
+                                        unsigned long fillDuration,
+                                        unsigned long currentTime) {
+  if (!valve->isCalibrated || valve->baselineFillDuration != 0) return false;
+  valve->baselineFillDuration = fillDuration;
+  valve->previousFillDuration = fillDuration;
+  valve->lastWateringCompleteTime = currentTime;
+  valve->realTimeSinceLastWatering = 0;
+  valve->realTimeSinceLastWateringAttempt = 0;
+  valve->consecutiveTimeouts = 0;
+  return true;
+}
+
 // ============================================
 // Helper Functions
 // ============================================

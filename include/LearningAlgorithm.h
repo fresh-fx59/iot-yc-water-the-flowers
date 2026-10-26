@@ -62,6 +62,24 @@ inline float clampMultiplier(float multiplier) {
   return multiplier;
 }
 
+// A recorded fill must fit inside the hardware safety window. Values larger
+// than that can only come from stale/corrupt persistence or an invalid timer
+// subtraction and must never become a new learning baseline.
+inline bool isValidFillDuration(unsigned long fillDuration,
+                                unsigned long emergencyTimeout) {
+  return fillDuration > 0 && fillDuration <= emergencyTimeout;
+}
+
+inline unsigned long repairBaseline(unsigned long baseline,
+                                    unsigned long lastFill,
+                                    unsigned long previousFill,
+                                    unsigned long emergencyTimeout) {
+  if (isValidFillDuration(baseline, emergencyTimeout)) return baseline;
+  if (isValidFillDuration(lastFill, emergencyTimeout)) return lastFill;
+  if (isValidFillDuration(previousFill, emergencyTimeout)) return previousFill;
+  return 0;
+}
+
 // Compute the new multiplier after a TIMEOUT on a calibrated valve.
 // A TIMEOUT means the pump ran the full per-valve window but the rain sensor
 // never wetted — strong evidence the interval was too long. The caller is

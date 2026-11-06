@@ -9,6 +9,7 @@
 #include "secret.h"
 #include "DebugHelper.h"
 #include "DS3231RTC.h"
+#include "FirmwareUpdateLogic.h"
 
 // ============================================ 
 // Telegram Notifier Class
@@ -119,6 +120,8 @@ private:
                "{\"command\":\"start_all\",\"description\":\"Water all trays sequentially\"}," +
                "{\"command\":\"halt\",\"description\":\"Block watering for firmware updates\"}," +
                "{\"command\":\"resume\",\"description\":\"Resume normal operation\"}," +
+               "{\"command\":\"check_update\",\"description\":\"Install newer firmware if published\"}," +
+               "{\"command\":\"rollback\",\"description\":\"Boot the other firmware partition\"}," +
                "{\"command\":\"time\",\"description\":\"Show RTC time and battery\"}," +
                "{\"command\":\"settime\",\"description\":\"Sync or set device time\"}," +
                "{\"command\":\"test_sensors\",\"description\":\"Test all rain sensors\"}," +
@@ -342,6 +345,10 @@ public:
         message += "/start_all - Water all trays sequentially\n";
         message += "/halt - Block watering (OTA/web stay active)\n";
         message += "/resume - Exit halt mode\n\n";
+        message += "<b>Firmware</b>\n";
+        message += "/check_update - Install newer firmware if published\n";
+        message += "/check_update force - Re-flash the published version\n";
+        message += "/rollback - Boot the other partition (may be an older version)\n\n";
         message += "<b>Diagnostics</b>\n";
         message += "/time - RTC time, battery, lamp status\n";
         message += "/settime - Sync from NTP\n";
@@ -574,6 +581,48 @@ public:
     // Returns the command string or an empty string if no new command is found.
     // Handles both text messages and inline keyboard callback queries.
     // timeoutSeconds: How long Telegram server should wait for a new message (0 = immediate return)
+    // Successful getUpdates calls since boot. Part of the post-update health check.
+    static int &successfulPolls() {
+        static int value = 0;
+        return value;
+    }
+
+    // Tells Telegram that every update before nextOffset is handled. Needed
+    // before a reboot: the offset is RAM only, so an unconfirmed command would
+    // run again after boot. Any update it returns stays unconfirmed and is
+    // read normally later.
+    static bool confirmUpdates(int nextOffset) {
+        if (!WiFi.isConnected()) {
+            return false;
+        }
+        HTTPClient http;
+        WiFiClientSecure client;
+        WiFiClient plainClient;
+        bool usingProxy = useMonitoringProxy();
+        String allowedUpdates = "[\"message\",\"callback_query\"]";
+        String url;
+        if (usingProxy) {
+            url = monitoringProxyBaseUrl() + "/v1/telegram/getUpdates" +
+                  String("?bot_token=") + urlEncode(String(TELEGRAM_BOT_TOKEN)) +
+                  "&offset=" + String(nextOffset) +
+                  "&timeout=0&allowed_updates=" + urlEncode(allowedUpdates);
+        } else {
+            url = String("https://api.telegram.org/bot") + TELEGRAM_BOT_TOKEN +
+                  "/getUpdates?offset=" + String(nextOffset) +
+                  "&timeout=0&allowed_updates=" + urlEncode(allowedUpdates);
+        }
+        if (!beginHttpClient(http, url, client, plainClient)) {
+            return false;
+        }
+        if (usingProxy) {
+            applyProxyAuthHeader(http);
+        }
+        http.setTimeout(httpTimeoutMs(usingProxy));
+        int httpCode = http.GET();
+        http.end();
+        return httpCode == 200;
+    }
+
     static String checkForCommands(int &lastUpdateId, int timeoutSeconds = 10) {
         if (!WiFi.isConnected()) {
             return "";
@@ -621,15 +670,28 @@ public:
 
         if (httpCode == 200) {
             onTelegramSuccess();
-            String payload = http.getString();
+            successfulPolls()++;
+            // Parse one update at a time: fields of the next update must not
+            // be read as if they belonged to this one.
+            String payload = FirmwareUpdateLogic::firstUpdateSlice(http.getString());
 
             int updateIdPos = payload.indexOf("\"update_id\":");
-            if (updateIdPos > 0) {
+            if (updateIdPos >= 0) {
                 int updateIdStart = updateIdPos + 12;
                 int updateIdEnd = payload.indexOf(",", updateIdStart);
                 if (updateIdEnd > updateIdStart) {
                     String updateIdStr = payload.substring(updateIdStart, updateIdEnd);
                     int newUpdateId = updateIdStr.toInt();
+
+                    // Anyone can message a bot. Only the operator may command
+                    // the rig. Drop silently and move past the update.
+                    if (!FirmwareUpdateLogic::isAuthorizedSender(payload, TELEGRAM_CHAT_ID)) {
+                        logTransportLocalOnly("Telegram: dropped update from sender " +
+                                              FirmwareUpdateLogic::parseFromId(payload));
+                        lastUpdateId = newUpdateId + 1;
+                        http.end();
+                        return "";
+                    }
 
                     // Check for callback_query (inline keyboard button press)
                     int cbPos = payload.indexOf("\"callback_query\"", updateIdPos);
@@ -669,6 +731,10 @@ public:
                             return command;
                         }
                     }
+
+                    // No command in this update (photo, sticker...): move past
+                    // it, or polling stays stuck on it forever.
+                    lastUpdateId = newUpdateId + 1;
                 }
             }
         } else {

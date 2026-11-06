@@ -32,6 +32,7 @@
 #include <api_handlers.h>
 #include <ota.h>
 #include <MetricsPusher.h>
+#include <FirmwareUpdater.h>
 
 // ============================================
 // Global Objects
@@ -63,6 +64,10 @@ void networkTask(void* parameter) {
         NetworkManager::loopWiFi();
 
         if (NetworkManager::isWiFiConnected()) {
+            // Runs here, not in command parsing, so the update starts on a
+            // shallow stack.
+            FirmwareUpdater::runPendingRequest();
+
             TelegramNotifier::ensureBotCommandsRegistered();
 
             // Keep Telegram command handling available in both normal and halt mode.
@@ -70,7 +75,11 @@ void networkTask(void* parameter) {
             wateringSystem.processPendingNotifications();
             DebugHelper::loop();
             MetricsPusher::loop();
+            FirmwareUpdater::sendBootNoticeIfAny();
         }
+
+        // Outside the WiFi check: an image that breaks WiFi must still roll back.
+        FirmwareUpdater::loopHealthCheck();
 
         // Poll quickly so local API/UI and OTA remain responsive.
         vTaskDelay(100 / portTICK_PERIOD_MS);
@@ -227,6 +236,12 @@ void checkTelegramCommands(int timeout) {
             DebugHelper::flushBuffer();
             sendTelegramDebug(resumeMessage);
         }
+    } else if (command == "/check_update" || command == "check_update") {
+        FirmwareUpdater::requestCheck(false);
+    } else if (command == "/check_update force" || command == "check_update force") {
+        FirmwareUpdater::requestCheck(true);
+    } else if (command == "/rollback" || command == "rollback") {
+        FirmwareUpdater::requestRollback();
     } else if (command == "/time" || command == "time") {
         // Display current time from RTC
         float temp = DS3231RTC::getTemperature();
@@ -471,6 +486,17 @@ void registerApiHandlers() {
     Serial.println("  ✓ Registered /api/reset_calibration");
     httpServer.on("/api/set_multiplier", HTTP_GET, handleSetMultiplierApi);
     Serial.println("  ✓ Registered /api/set_multiplier");
+    // Same actions as Telegram /check_update and /rollback, for LAN recovery.
+    httpServer.on("/api/check_update", HTTP_POST, []() {
+        if (!checkAuth()) return;
+        FirmwareUpdater::requestCheck(httpServer.arg("force") == "1");
+        httpServer.send(202, "application/json", "{\"status\":\"accepted\"}");
+    });
+    httpServer.on("/api/rollback", HTTP_POST, []() {
+        if (!checkAuth()) return;
+        FirmwareUpdater::requestRollback();
+        httpServer.send(202, "application/json", "{\"status\":\"accepted\"}");
+    });
 }
 
 // ============================================ 
@@ -523,6 +549,10 @@ void bootCountdown() {
 void setup() {
     // Initialize serial
     Serial.begin(DEBUG_SERIAL_BAUDRATE);
+
+    // First, so a crash anywhere below still counts against a new image.
+    FirmwareUpdater::handleBootTrial();
+
     delay(3000);  // Wait for serial monitor
     Serial.println("\n\n\n");
     delay(100);
@@ -613,7 +643,7 @@ void setup() {
     xTaskCreatePinnedToCore(
         networkTask,           // Task function
         "NetworkTask",         // Task name for debugging
-        8192,                  // Stack size (8KB) - sufficient for network operations
+        12288,                 // Stack size: firmware update verifies the TLS certificate chain
         NULL,                  // Task parameters
         1,                     // Priority (1 = low, watering on Core 1 is default priority)
         &networkTaskHandle,    // Task handle for management

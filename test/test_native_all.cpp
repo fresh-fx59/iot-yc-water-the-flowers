@@ -9,9 +9,134 @@
 #include "TestConfig.h"
 #include "ValveQueueLogic.h"
 #include "SensorDebounce.h"
+#include "FirmwareUpdateLogic.h"
 
 using namespace fakeit;
 using namespace StateMachineLogic;
+
+// ============================================
+// FIRMWARE UPDATE LOGIC TESTS
+// ============================================
+using namespace FirmwareUpdateLogic;
+
+static const char* TEST_BOARD = "esp32-s3-n8r2-6valve";
+static const char* TEST_PREFIX = "/v1/firmware/rig/firmware-";
+static const char* TEST_SHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+static String manifestJson(const String& version, const String& url, const String& board,
+                           const String& sha, const String& size) {
+    return "{\"version\":\"" + version + "\",\"url\":\"" + url + "\",\"board\":\"" + board +
+           "\",\"sha256\":\"" + sha + "\",\"size\":" + size + "}";
+}
+
+static String goodManifest() {
+    return manifestJson("1.32.1", "/v1/firmware/rig/firmware-1.32.1.bin", TEST_BOARD, TEST_SHA, "1200000");
+}
+
+void test_ota_version_compare_is_numeric(void) {
+    TEST_ASSERT_TRUE(compareVersion("1.31.1", "1.32.0") < 0);
+    TEST_ASSERT_TRUE(compareVersion("1.32.10", "1.32.9") > 0);
+    TEST_ASSERT_EQUAL_INT(0, compareVersion("1.32.0", "1.32.0"));
+    TEST_ASSERT_TRUE(compareVersion(nullptr, "0.0.1") < 0);
+}
+
+void test_ota_manifest_valid(void) {
+    ParsedManifest m = parseManifest(goodManifest(), TEST_BOARD, TEST_PREFIX);
+    TEST_ASSERT_TRUE(m.valid);
+    TEST_ASSERT_EQUAL_UINT32(1200000, m.size);
+    TEST_ASSERT_EQUAL_STRING("1.32.1", m.version.c_str());
+}
+
+void test_ota_manifest_uppercase_sha_is_normalized(void) {
+    String sha = String(TEST_SHA);
+    sha.toUpperCase();
+    ParsedManifest m = parseManifest(manifestJson("1.32.1", "/v1/firmware/rig/firmware-1.32.1.bin", TEST_BOARD, sha, "5"),
+                                     TEST_BOARD, TEST_PREFIX);
+    TEST_ASSERT_TRUE(m.valid);
+    TEST_ASSERT_EQUAL_STRING(TEST_SHA, m.sha256.c_str());
+}
+
+void test_ota_manifest_rejects_mini_image(void) {
+    // The mini manifest: other board, other folder.
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32.1", "/v1/firmware/rig/firmware-1.32.1.bin", "esp32-s3-n16r8-mini", TEST_SHA, "5"),
+                                    TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest("{\"version\":\"1.2.8\",\"url\":\"/v1/firmware/firmware-1.2.8.bin\",\"size\":5,\"sha256\":\"" + String(TEST_SHA) + "\"}",
+                                    TEST_BOARD, TEST_PREFIX).valid);
+}
+
+void test_ota_manifest_rejects_other_urls(void) {
+    const char* urls[] = {
+        "https://evil.example/firmware-1.32.1.bin",
+        "/v1/firmware/rig/../firmware-1.32.1.bin",
+        "/v1/firmware/rig/firmware-1.32.0.bin",  // version mismatch
+        "/v1/firmware/firmware-1.32.1.bin",
+    };
+    for (const char* url : urls) {
+        TEST_ASSERT_FALSE_MESSAGE(parseManifest(manifestJson("1.32.1", url, TEST_BOARD, TEST_SHA, "5"), TEST_BOARD, TEST_PREFIX).valid, url);
+    }
+}
+
+void test_ota_manifest_rejects_bad_fields(void) {
+    String url = "/v1/firmware/rig/firmware-1.32.1.bin";
+    TEST_ASSERT_FALSE(parseManifest("not json", TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32.1", url, TEST_BOARD, "abc", "5"), TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32.1", url, TEST_BOARD,
+        "z123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "5"), TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32.1", url, TEST_BOARD, TEST_SHA, "0"), TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32.1", url, TEST_BOARD, TEST_SHA, "\"5\""), TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("v1.32.1", "/v1/firmware/rig/firmware-v1.32.1.bin", TEST_BOARD, TEST_SHA, "5"), TEST_BOARD, TEST_PREFIX).valid);
+    TEST_ASSERT_FALSE(parseManifest(manifestJson("1.32", "/v1/firmware/rig/firmware-1.32.bin", TEST_BOARD, TEST_SHA, "5"), TEST_BOARD, TEST_PREFIX).valid);
+}
+
+void test_ota_decide_update(void) {
+    ParsedManifest m = parseManifest(goodManifest(), TEST_BOARD, TEST_PREFIX);
+    TEST_ASSERT_TRUE(decideUpdate("1.32.0", m, false, false) == UpdateDecision::Apply);
+    TEST_ASSERT_TRUE(decideUpdate("1.32.1", m, false, false) == UpdateDecision::AlreadyUpToDate);
+    TEST_ASSERT_TRUE(decideUpdate("1.33.0", m, false, false) == UpdateDecision::AlreadyUpToDate);
+    TEST_ASSERT_TRUE(decideUpdate("1.32.1", m, true, false) == UpdateDecision::Apply);
+    // Busy wins, even with force.
+    TEST_ASSERT_TRUE(decideUpdate("1.32.0", m, false, true) == UpdateDecision::Busy);
+    TEST_ASSERT_TRUE(decideUpdate("1.32.0", m, true, true) == UpdateDecision::Busy);
+}
+
+void test_ota_trial_actions(void) {
+    TEST_ASSERT_TRUE(decideTrialAction(false, "", 0, "app0") == TrialAction::NoTrial);
+    TEST_ASSERT_TRUE(decideTrialAction(true, "app1", 0, "app1") == TrialAction::NewBoot);
+    TEST_ASSERT_TRUE(decideTrialAction(true, "app1", 1, "app1") == TrialAction::PendingRollback);
+    TEST_ASSERT_TRUE(decideTrialAction(true, "app1", 0, "app0") == TrialAction::RolledBack);
+    TEST_ASSERT_TRUE(decideTrialAction(true, "app1", 1, "app0") == TrialAction::RolledBack);
+}
+
+void test_ota_sender_check(void) {
+    String own = "{\"update_id\":5,\"message\":{\"message_id\":1,\"from\":{\"id\":111,\"is_bot\":false},\"text\":\"/rollback\"}}";
+    String stranger = "{\"update_id\":5,\"message\":{\"message_id\":1,\"from\":{\"id\":222,\"is_bot\":false},\"text\":\"/rollback\"}}";
+    String button = "{\"update_id\":5,\"callback_query\":{\"id\":\"9\",\"from\":{\"id\":111,\"is_bot\":false},\"data\":\"halt\"}}";
+    String noSender = "{\"update_id\":5,\"message\":{\"message_id\":1,\"text\":\"/rollback\"}}";
+    TEST_ASSERT_TRUE(isAuthorizedSender(own, "111"));
+    TEST_ASSERT_TRUE(isAuthorizedSender(button, "111"));
+    TEST_ASSERT_FALSE(isAuthorizedSender(stranger, "111"));
+    TEST_ASSERT_FALSE(isAuthorizedSender(noSender, "111"));
+    TEST_ASSERT_FALSE(isAuthorizedSender(own, "11"));  // no prefix match
+}
+
+void test_ota_sender_check_ignores_forward_and_text(void) {
+    // A stranger forwards the operator's message: the sender is still the stranger.
+    String forwarded = "{\"update_id\":5,\"message\":{\"from\":{\"id\":222},\"forward_from\":{\"id\":111},\"text\":\"x\"}}";
+    TEST_ASSERT_FALSE(isAuthorizedSender(forwarded, "111"));
+    // Stranger with no from, and quotes in the text are escaped by Telegram.
+    String spoof = "{\"update_id\":5,\"message\":{\"text\":\"\\\"from\\\":{\\\"id\\\":111,\"}}";
+    TEST_ASSERT_FALSE(isAuthorizedSender(spoof, "111"));
+}
+
+void test_ota_first_update_slice_stops_at_next_update(void) {
+    String payload = "{\"ok\":true,\"result\":[{\"update_id\":5,\"message\":{\"from\":{\"id\":222},\"photo\":[]}},"
+                     "{\"update_id\":6,\"message\":{\"from\":{\"id\":111},\"text\":\"/rollback\"}}]}";
+    String first = firstUpdateSlice(payload);
+    // The stranger's update must not borrow the operator's sender or text.
+    TEST_ASSERT_FALSE(isAuthorizedSender(first, "111"));
+    TEST_ASSERT_EQUAL_INT(-1, first.indexOf("\"text\":"));
+    TEST_ASSERT_EQUAL_INT(0, firstUpdateSlice("{\"ok\":true,\"result\":[]}").length());
+}
 
 // ============================================
 // VALVE QUEUE LOGIC TESTS
@@ -1078,6 +1203,19 @@ int main(int argc, char **argv) {
     RUN_TEST(test_wet_confirm_single_read_not_enough);
     RUN_TEST(test_wet_confirm_consecutive_reads_confirm);
     RUN_TEST(test_wet_confirm_dry_read_resets_streak);
+
+    // Firmware update logic
+    RUN_TEST(test_ota_version_compare_is_numeric);
+    RUN_TEST(test_ota_manifest_valid);
+    RUN_TEST(test_ota_manifest_uppercase_sha_is_normalized);
+    RUN_TEST(test_ota_manifest_rejects_mini_image);
+    RUN_TEST(test_ota_manifest_rejects_other_urls);
+    RUN_TEST(test_ota_manifest_rejects_bad_fields);
+    RUN_TEST(test_ota_decide_update);
+    RUN_TEST(test_ota_trial_actions);
+    RUN_TEST(test_ota_sender_check);
+    RUN_TEST(test_ota_sender_check_ignores_forward_and_text);
+    RUN_TEST(test_ota_first_update_slice_stops_at_next_update);
 
     return UNITY_END();
 }

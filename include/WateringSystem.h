@@ -73,6 +73,7 @@ private:
 
   // Halt mode (for emergency firmware updates)
   bool haltMode; // If true, block all watering operations
+  bool haltBeforeUpdateHold = false;
 
   // Master overflow sensor tracking
   bool overflowDetected; // If true, water overflow detected - block all watering
@@ -181,6 +182,12 @@ public:
   // Halt mode control (for emergency firmware updates)
   void setHaltMode(bool enabled);
   bool isHaltMode() { return haltMode; }
+
+  // Firmware update: true while anything is running or queued.
+  bool isWateringBusy();
+  // Blocks new watering without the halt messages. False if watering is busy.
+  bool beginFirmwareUpdateHold();
+  void endFirmwareUpdateHold();
 
   // Master overflow sensor control
   bool isOverflowDetected() { return overflowDetected; }
@@ -2481,6 +2488,37 @@ inline int WateringSystem::getOverdueValveIndices(int *valveIndices, int maxCoun
   }
 
   return overdueCount;
+}
+
+// ========== Firmware Update Hold ==========
+inline bool WateringSystem::isWateringBusy() {
+  if (pumpState == PUMP_ON) return true;
+  for (int i = 0; i < NUM_VALVES; i++) {
+    if (valves[i]->phase != PHASE_IDLE) return true;
+  }
+  // Halted: nothing moves and a reboot drops the queue. So /halt is the
+  // operator's way past a queue that is stuck (empty tank, or a firmware bug
+  // the update is meant to fix).
+  if (haltMode) return false;
+  return valveQueueLength > 0 || currentlyActiveValve != -1 || batchSessionActive;
+}
+
+inline bool WateringSystem::beginFirmwareUpdateHold() {
+  if (isWateringBusy()) return false;
+  haltBeforeUpdateHold = haltMode;
+  haltMode = true;
+  // Core 1 may be inside one loop pass that read haltMode as false. Give it
+  // time to finish, then look again: a cycle it started keeps running normally.
+  delay(200);
+  if (isWateringBusy()) {
+    haltMode = haltBeforeUpdateHold;
+    return false;
+  }
+  return true;
+}
+
+inline void WateringSystem::endFirmwareUpdateHold() {
+  haltMode = haltBeforeUpdateHold;
 }
 
 // ========== Halt Mode Control ==========

@@ -7,7 +7,10 @@
 // ============================================
 // Device Configuration
 // ============================================
-const char *VERSION = "watering_system_1.31.1";
+#ifndef FIRMWARE_VERSION  // test builds override it
+#define FIRMWARE_VERSION "1.32.0"
+#endif
+const char *VERSION = "watering_system_" FIRMWARE_VERSION;
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
 
 // ============================================
@@ -237,6 +240,17 @@ const unsigned long MESSAGE_GROUP_MAX_AGE_MS =
 #endif
 
 // Metrics proxy uses same base URL and auth as Telegram proxy.
+// Telegram firmware update (FirmwareUpdater.h). The rig has its own manifest
+// folder and board id: mini watering images must never install here.
+#define OTA_BOARD_ID "esp32-s3-n8r2-6valve"
+#define OTA_MANIFEST_PATH "/v1/firmware/rig/manifest.json"
+#define OTA_URL_PREFIX "/v1/firmware/rig/firmware-"
+const unsigned long OTA_MANIFEST_HTTP_TIMEOUT_MS = 15000UL;
+const unsigned long OTA_DOWNLOAD_HTTP_TIMEOUT_MS = 30000UL;
+const unsigned long OTA_HEALTH_DEADLINE_MS = 5UL * 60UL * 1000UL;
+const unsigned long OTA_HEALTH_MANIFEST_RETRY_MS = 30000UL;
+const size_t OTA_DOWNLOAD_CHUNK_BYTES = 1024;
+
 #ifndef METRICS_PROXY_BASE_URL
 #define METRICS_PROXY_BASE_URL TELEGRAM_PROXY_BASE_URL
 #endif

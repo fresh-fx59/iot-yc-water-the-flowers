@@ -26,7 +26,7 @@ The repository uses Unity through PlatformIO native tests. Add or update tests i
 
 ## Version Bumping
 Every code change MUST bump the version. Update ALL of these locations:
-1. `include/config.h:10` — `VERSION` string (e.g. `"watering_system_1.20.5"`)
+1. `include/config.h:10` — `FIRMWARE_VERSION` string (e.g. `"1.20.5"`)
 2. `CLAUDE.md:8` — `**Version**: 1.20.5 (config.h:10)`
 
 Use the new version in the commit message prefix (e.g. `v1.20.5: ...`). Patch version increments for fixes and small changes; minor version increments for new features.

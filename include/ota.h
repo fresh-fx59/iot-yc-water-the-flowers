@@ -273,6 +273,7 @@ void setupOta() {
   // Status endpoint
   httpServer.on("/status", HTTP_GET, []() {
     String json = "{";
+    json += "\"version\":\"" FIRMWARE_VERSION "\",";
     json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
     json += "\"chip_model\":\"" + String(ESP.getChipModel()) + "\",";
     json += "\"cpu_freq\":" + String(ESP.getCpuFreqMHz());

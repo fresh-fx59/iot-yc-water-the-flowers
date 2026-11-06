@@ -39,6 +39,7 @@ private:
     static int lastLogPushHttpCode;
     static int logPushAttempts;
     static int logPushSuccesses;
+    static int metricsPushSuccesses;
 
     // HTTP helpers (same pattern as TelegramNotifier)
     static bool useProxy() {
@@ -115,6 +116,8 @@ public:
 
     static void loop();
 
+    static int successfulMetricsPushes() { return metricsPushSuccesses; }
+
     // Log convenience methods
     static void log(const String& level, const String& msg) {
         addLogEntry(level, msg);
@@ -138,6 +141,7 @@ unsigned long MetricsPusher::lastPushTime = 0;
 int MetricsPusher::lastLogPushHttpCode = 0;
 int MetricsPusher::logPushAttempts = 0;
 int MetricsPusher::logPushSuccesses = 0;
+int MetricsPusher::metricsPushSuccesses = 0;
 
 // ============================================
 // Include WateringSystem AFTER static member init to avoid circular deps
@@ -384,7 +388,9 @@ inline bool MetricsPusher::pushMetrics(const String& json) {
     int httpCode = http.POST(json);
     http.end();
 
-    return (httpCode >= 200 && httpCode < 300);
+    bool success = (httpCode >= 200 && httpCode < 300);
+    if (success) metricsPushSuccesses++;
+    return success;
 }
 
 inline bool MetricsPusher::pushLogs(const String& json) {

@@ -179,7 +179,7 @@ private:
         if (code == 200) {
             ok = FirmwareUpdateLogic::parseManifest(http.getString(), OTA_BOARD_ID, OTA_URL_PREFIX).valid;
         } else {
-            MetricsPusher::logWarn("OTA: health manifest check HTTP " + String(code) + tlsErrorSuffix(client));
+            MetricsPusher::logWarn("OTA: health manifest check HTTP " + String(code) + tlsErrorSuffix(code, client));
         }
         http.end();
         return ok;
@@ -211,7 +211,10 @@ private:
         return true;
     }
 
-    static String tlsErrorSuffix(WiFiClientSecure& client) {
+    // TLS detail, only when no HTTP answer arrived. After a good handshake
+    // lastError holds a stale code that means nothing.
+    static String tlsErrorSuffix(int httpCode, WiFiClientSecure& client) {
+        if (httpCode > 0) return "";
         char text[100] = {0};
         int code = client.lastError(text, sizeof(text));
         return code == 0 ? String("") : " (TLS " + String(code) + ": " + String(text) + ")";
@@ -227,7 +230,7 @@ private:
         http.setTimeout(OTA_DOWNLOAD_HTTP_TIMEOUT_MS);
         int code = http.GET();
         if (code != 200) {
-            error = "HTTP " + String(code) + tlsErrorSuffix(client);
+            error = "HTTP " + String(code) + tlsErrorSuffix(code, client);
             http.end();
             return false;
         }
@@ -309,7 +312,7 @@ private:
             http.setTimeout(OTA_MANIFEST_HTTP_TIMEOUT_MS);
             int code = http.GET();
             if (code != 200) {
-                notify("❌ Update failed: manifest HTTP " + String(code) + tlsErrorSuffix(client) + " (" + stackFree() + ")");
+                notify("❌ Update failed: manifest HTTP " + String(code) + tlsErrorSuffix(code, client) + " (" + stackFree() + ")");
                 http.end();
                 return;
             }

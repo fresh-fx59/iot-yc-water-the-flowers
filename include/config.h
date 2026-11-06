@@ -8,7 +8,7 @@
 // Device Configuration
 // ============================================
 #ifndef FIRMWARE_VERSION  // test builds override it
-#define FIRMWARE_VERSION "1.32.0"
+#define FIRMWARE_VERSION "1.32.1"
 #endif
 const char *VERSION = "watering_system_" FIRMWARE_VERSION;
 const char *DEVICE_TYPE = "smart_watering_system_time_based";

@@ -6,7 +6,7 @@ ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. 
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
 **Version**: 1.32.1 (config.h:10, `FIRMWARE_VERSION`)
-**Testing**: 60 native unit tests (desktop, no hardware)
+**Testing**: 75 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
 
@@ -44,7 +44,7 @@ Version-prefixed, imperative, short: `v1.19.3: increase tray 2 watering timeout 
 
 The ESP32-S3 runs two tasks on separate cores with strict isolation:
 
-- **Core 0** (networkTask, 8KB stack, 100ms loop): WiFi, Telegram, OTA, web server, MetricsPusher. Owns all network I/O.
+- **Core 0** (networkTask, 12 KB stack, 100ms loop): WiFi, Telegram, OTA, firmware update, web server, MetricsPusher. Owns all network I/O.
 - **Core 1** (loop, 10ms loop): Watering state machine, sensor polling, safety watchdogs, auto-watering. NEVER touches network.
 
 **Thread-safety rules**:
@@ -70,7 +70,10 @@ All logic lives in `include/*.h` as inline headers. Source files (`src/main.cpp`
 - `DS3231RTC.h` — RTC time source (no NTP), battery voltage, temperature
 - `MetricsPusher.h` — Prometheus metrics + Loki log push (Core 0)
 - `DebugHelper.h` — debug logging: `debug()` routes to Loki via `g_metricsLog` callback, `debugImportant()` routes to both Telegram and Loki
-- `ota.h` — OTA firmware updates
+- `ota.h` — LAN upload page `/firmware`, `/status`
+- `FirmwareUpdater.h` — Telegram `/check_update` and `/rollback`: download, SHA-256 check, boot trial, health check, automatic rollback (Core 0). Usage: `docs/telegram-firmware-update.md`
+- `FirmwareUpdateLogic.h` — pure update logic: manifest parsing, version compare, trial decisions, sender check (native tests)
+- `OtaTrustRoots.h` — Let's Encrypt roots for the firmware fetch. Other traffic still uses `setInsecure`
 - `secret.h` — credentials (never commit)
 - `TestConfig.h` — test environment stubs
 
@@ -111,11 +114,11 @@ Binary search/gradient ascent for optimal watering interval per tray. `emptyToFu
 
 ### Program Flow
 
-**setup()**: Serial → RTC → LittleFS → wateringSystem.init() → MetricsPusher::init() → NetworkManager init → connectWiFi → setWateringSystemRef (MUST be before setupOta) → bootCountdown (10s /halt poll) → create networkTask on Core 0
+**setup()**: Serial → FirmwareUpdater::handleBootTrial (first, so a crash below counts against a new image) → RTC → LittleFS → wateringSystem.init() → MetricsPusher::init() → NetworkManager init → connectWiFi → setWateringSystemRef (MUST be before setupOta) → bootCountdown (10s /halt poll) → create networkTask on Core 0
 
 **Core 1 loop()**: First loop: schedule + smart boot watering (first boot | overdue) | Every loop: processWateringLoop (SM + auto, blocked if halt) → 10ms delay
 
-**Core 0 networkTask()**: loopOta → NetworkManager::loopWiFi → if WiFi connected: ensureBotCommands → checkTelegramCommands → processPendingNotifications → DebugHelper::loop → MetricsPusher::loop → 100ms delay
+**Core 0 networkTask()**: loopOta → NetworkManager::loopWiFi → if WiFi connected: FirmwareUpdater::runPendingRequest → ensureBotCommands → checkTelegramCommands → processPendingNotifications → DebugHelper::loop → MetricsPusher::loop → FirmwareUpdater::sendBootNoticeIfAny → always: FirmwareUpdater::loopHealthCheck (outside the WiFi check, so an image that breaks WiFi still rolls back) → 100ms delay
 
 **processWateringLoop()**: Watchdog → overflow/water-level checks → auto-water check → process each valve SM → sequential transitions → publish state (2s)
 
@@ -149,7 +152,9 @@ All external services run on a single VPS. SSH: `ssh user1@203.0.113.12`
 
 ## Telegram
 
-**Commands**: `/menu` (inline button panel), `/help`, `/water N` (water tray 1-6), `/start_all`, `/halt`, `/resume`, `/time`, `/settime [YYYY-MM-DD HH:MM:SS]`, `/test_sensors`, `/test_sensor_N`, `/reset_overflow`, `/reinit_gpio`, `/overflow_status`, `/lamp_status`, `/lamp_on`, `/lamp_off`, `/lamp_auto`
+**Commands**: `/menu` (inline button panel), `/help`, `/water N` (water tray 1-6), `/start_all`, `/halt`, `/resume`, `/time`, `/settime [YYYY-MM-DD HH:MM:SS]`, `/test_sensors`, `/test_sensor_N`, `/reset_overflow`, `/reinit_gpio`, `/overflow_status`, `/lamp_status`, `/lamp_on`, `/lamp_off`, `/lamp_auto`, `/check_update`, `/check_update force`, `/rollback`
+
+**Sender check** (v1.32+): updates from any account other than `TELEGRAM_CHAT_ID` are dropped.
 
 **State JSON** (via `/api/status`): pump, sequential_mode, water_level{status,blocked}, overflow{detected,raw_value,trigger_streak}, plant_light{state,mode,schedule_on/off}, valves[]{id, state, phase, rain, timeout, learning{calibrated, auto_watering, baseline_fill_ms, last_fill_ms, empty_duration_ms, total_cycles, water_level_pct, tray_state, time_since_watering_ms, time_until_empty_ms, last_water_level_pct}}
 
@@ -193,7 +198,7 @@ All external services run on a single VPS. SSH: `ssh user1@203.0.113.12`
 ## Web Interface
 
 **Files**: `data/web/prod/` (index.html, css/style.css, js/app.js)
-**API**: `/api/water?valve=N` (1-6), `/api/stop?valve=N|all`, `/api/start_all`, `/api/status`, `/api/lamp?action=on|off|auto`, `/api/reset_calibration?valve=N|all`, `/firmware` (auth: admin/OTA_PASSWORD)
+**API**: `/api/water?valve=N` (1-6), `/api/stop?valve=N|all`, `/api/start_all`, `/api/status`, `/api/lamp?action=on|off|auto`, `/api/reset_calibration?valve=N|all`, `POST /api/check_update[?force=1]`, `POST /api/rollback`, `/firmware` (auth: admin/OTA_PASSWORD)
 **Note**: API is 1-indexed (1-6), internal code is 0-indexed (0-5)
 
 ## Hardware

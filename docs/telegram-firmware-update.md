@@ -38,6 +38,10 @@ The server folder is `/var/www/firmware/rig/`, served at `/v1/firmware/rig/` beh
 
 `http://<device-ip>/firmware` stays available as the path that needs no Telegram, no proxy and no working updater. `tools/lan_update.py --host <device-ip>` wraps it, with `--status`, `--image <file>`, `--check-update`, `--force-update`, `--rollback`.
 
+## Changing the proxy token
+
+`/check_update` cannot deliver a new proxy token. The device uses the same `TELEGRAM_PROXY_AUTH_TOKEN` for Telegram, metrics and the firmware download. Once the server has the new token, the old image gets 401 and cannot fetch anything. An image with the new token, installed before the server changes, fails its health check and rolls back. Change the server first, then load the new image with LAN upload or USB. This comes from reading the code; it has not been run on the device.
+
 ## Acceptance run
 
 Run after changing the updater, with the device on a version that has the updater:

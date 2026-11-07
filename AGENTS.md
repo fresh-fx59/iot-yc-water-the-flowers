@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Firmware lives in `src/`: `main.cpp` is the production ESP32 build and `test-main.cpp` is the hardware test firmware. Core logic and device modules are header-centric under `include/` (`StateMachineLogic.h`, `LearningAlgorithm.h`, `WateringSystem.h`, `NetworkManager.h`). Native unit tests live in `test/`, with `test_native_all.cpp` as the main desktop suite. Web assets for LittleFS are in `data/web/prod/`; experimental dashboard pages are in `data/web/test/`. Deployment helpers for the Telegram proxy sit in `deploy/systemd/` and `tools/`.
+Firmware lives in `src/`: `main.cpp` is the production ESP32 build and `test-main.cpp` is the hardware test firmware. Core logic and device modules are header-centric under `include/` (`StateMachineLogic.h`, `LearningAlgorithm.h`, `WateringSystem.h`, `NetworkManager.h`). Native unit tests live in `test/`, with `test_native_all.cpp` as the main desktop suite. Web assets for LittleFS are in `data/web/prod/`; experimental dashboard pages are in `data/web/test/`. Deployment helpers for the Telegram proxy sit in `deploy/systemd/` and `tools/`. Firmware releases: `docs/telegram-firmware-update.md` (`tools/publish_firmware.py`, then `/check_update` in Telegram; `tools/lan_update.py` is the recovery path).
 
 ## Build, Test, and Development Commands
 Use PlatformIO from the repo root:

@@ -6,9 +6,11 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 
 [Induction copper plates water level](https://manus.im/share/TcqOH6i7AVr03pMNNCUGFN)
 
-**Version 1.19.10** - fixes Telegram menu registration, startup notification retry, and lamp boot sync
+**Version 1.32.1** - firmware update through Telegram, with automatic rollback
 
 **Recent Updates:**
+- **v1.32.1**: Added `/check_update` and `/rollback`. The device downloads the published image itself, checks its SHA-256 and the server certificate, and returns to the previous version if the new one is not healthy within 5 minutes. Commands are now accepted only from the configured Telegram account. See [Firmware updates](#firmware-updates).
+- **v1.20 to v1.31**: see `git log`.
 - **v1.19.10**: Fixed Telegram bot menu registration when using the monitoring proxy by adding `setMyCommands` support to the proxy, retried startup `Device Online` notification through the queue when the first send fails, and initialized the plant light to the current auto-schedule state without emitting a duplicate boot-time `PLANT LIGHT ON` transition.
 - **v1.19.6**: Fixed critical boot catch-up safety bug where reboot recovery watered all trays when any tray was overdue. Boot catch-up now targets only overdue trays and Telegram shows `Boot Catch-up` / `Boot Calibration` instead of misleading `MQTT`.
 - **v1.19.5**: Fixed Telegram notification queue delivery so completion and updated schedule messages are retried instead of being dropped on transient Telegram/proxy send failures or cooldown windows.
@@ -33,6 +35,20 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 - **v1.15.4**: Fixed overflow recovery learning + long outage boot detection - prevents interval doubling after overflow events and ensures immediate watering after extended power outages
 - **v1.14.0**: Added water level sensor (GPIO 19, moved to GPIO 21 in v1.26.5) - automatically blocks watering when tank is empty, auto-resumes when refilled, sends Telegram notifications
 - **v1.13.4**: Fixed rain sensor reading bug - production code now correctly powers both valve pin + GPIO 18 (not just GPIO 18)
+
+## Firmware updates
+
+Send `/check_update` to the bot. The phone and computer need no access to the device network. Success is the message `confirmed healthy`, not the first `checking` message.
+
+| Command | Result |
+|---|---|
+| `/check_update` | Installs the published version if it is newer. |
+| `/check_update force` | Re-flashes the published version. |
+| `/rollback` | Boots the other partition. |
+
+Publishing, expected messages and the acceptance run: [docs/telegram-firmware-update.md](docs/telegram-firmware-update.md). An update ships the app image only; LittleFS data is not touched.
+
+The upload page `http://<device-ip>/firmware` stays as recovery. It is the only wireless path when the proxy token changes, because `/check_update` uses that token to download.
 
 ## 🏗️ Architectural Improvements (v1.13.0)
 
@@ -496,7 +512,8 @@ This project uses **two separate firmware builds** for clean separation between 
 
 | Environment | Source File | Purpose | Flash Usage |
 |------------|-------------|---------|-------------|
-| `esp32-s3-devkitc-1` | `src/main.cpp` | Production watering system | ~80% (1055 KB) |
+| `esp32-s3-devkitc-1` | `src/main.cpp` | Production watering system | ~92% (1173 KB, v1.32.1) |
+| `esp32-s3-ota-fail-health` | `src/main.cpp` | Image that fails its health check, for the rollback test only | same as production |
 | `esp32-s3-devkitc-1-test` | `src/test-main.cpp` | Hardware testing with OTA | ~63% (824 KB) |
 
 ## Production Firmware
@@ -1025,7 +1042,8 @@ Once fully deployed and connected:
    - Or: `http://[device_ip]/`
 
 2. **Firmware update:**
-   - URL: `http://esp32-watering.local/firmware`
+   - Telegram: `/check_update` (see [Firmware updates](#firmware-updates))
+   - Recovery URL: `http://esp32-watering.local/firmware`
    - Username: `admin`
    - Password: (from secret.h OTA_PASSWORD)
 
@@ -1353,9 +1371,9 @@ Each valve in the state includes a `learning` object:
 
 ---
 
-**Version:** 1.18.2
+**Version:** 1.32.1
 **Platform:** ESP32-S3-N8R2 (ESP32-S3-DevKitC-1 compatible)
 **Framework:** Arduino + PlatformIO
-**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection, Plant Lamp Auto Schedule, Telegram Lamp Control, Web Lamp Dashboard Control
-**Testing:** 30+ native tests (no hardware required)
-**New in v1.18.2:** Documentation refreshed to match current plant lamp controls, API endpoints, dashboard behavior, and deployment/update workflow
+**Features:** Extracted State Machine, Comprehensive Testing, DS3231 RTC, Water Level Sensor with Smart Delay, Master Overflow Sensor, Emergency Halt Mode, 7-Layer Safety System, Time-Based Learning, Overflow Recovery Protection, Long Outage Detection, Plant Lamp Auto Schedule, Telegram Lamp Control, Web Lamp Dashboard Control, Telegram Firmware Update with Automatic Rollback
+**Testing:** 75 native tests (no hardware required)
+**New in v1.32:** Firmware update through Telegram with automatic rollback

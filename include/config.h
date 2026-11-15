@@ -8,7 +8,7 @@
 // Device Configuration
 // ============================================
 #ifndef FIRMWARE_VERSION  // test builds override it
-#define FIRMWARE_VERSION "1.32.1"
+#define FIRMWARE_VERSION "1.32.2"
 #endif
 const char *VERSION = "watering_system_" FIRMWARE_VERSION;
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
@@ -90,7 +90,7 @@ const unsigned long ABSOLUTE_SAFETY_TIMEOUT = 30000; // Absolute hard limit (30s
 constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
     33000,  // Tray 1: 33s
     31000,  // Tray 2: 31s
-    27000,  // Tray 3: 27s
+    20000,  // Tray 3: 20s (v1.32.2: tray 3 spilled onto the master overflow sensor at 20-27s while its own sensor read DRY)
     25000,  // Tray 4: 25s (standard)
     25000,  // Tray 5: 25s (standard)
     25000   // Tray 6: 25s (standard)
@@ -100,7 +100,7 @@ constexpr unsigned long VALVE_NORMAL_TIMEOUTS[NUM_VALVES] = {
 constexpr unsigned long VALVE_EMERGENCY_TIMEOUTS[NUM_VALVES] = {
     38000,  // Tray 1: 38s (5s margin)
     36000,  // Tray 2: 36s (5s margin)
-    32000,  // Tray 3: 32s (5s margin)
+    25000,  // Tray 3: 25s (5s margin)
     30000,  // Tray 4: 30s (5s margin)
     30000,  // Tray 5: 30s (5s margin)
     30000   // Tray 6: 30s (5s margin)

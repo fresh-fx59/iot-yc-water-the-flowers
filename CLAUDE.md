@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ESP32-S3 smart watering system: 6 valves, 6 rain sensors, 1 pump, 1 plant lamp. Time-based learning, Telegram notifications, web interface.
 
 **Stack**: ESP32-S3-N8R2, LittleFS, ArduinoJson 6.21.0, DS3231 RTC (GPIO 14/3), Adafruit NeoPixel
-**Version**: 1.32.2 (config.h:10, `FIRMWARE_VERSION`)
+**Version**: 1.33.0 (config.h:10, `FIRMWARE_VERSION`)
 **Testing**: 75 native unit tests (desktop, no hardware)
 
 ## Build & Deploy
@@ -206,6 +206,8 @@ All external services run on a single VPS. SSH: `ssh user1@203.0.113.12`
 **Pins**: Pump=4, Valves=5/6/7/15/16/17, Rain Sensors=8/9/10/11/12/13 (INPUT_PULLUP, LOW=wet), Sensor Power=18, Overflow=42 (INPUT_PULLUP, LOW=overflow), Water Level=21 (INPUT_PULLUP, HIGH=water, LOW=empty), Plant Light=41 (active-low relay), LED=48, RTC I2C SDA=14/SCL=3, Battery ADC=1/Ctrl=2
 
 **Sensor Logic (CRITICAL)**: TWO power signals required: (1) Valve pin HIGH, (2) GPIO 18 HIGH. Sequence: valve HIGH → GPIO 18 HIGH → delay 100ms → read → power off. LOW=WET, HIGH=DRY.
+
+**v1.33.0 watering ends** (WateringSystemStateMachine.h, PHASE_WATERING): (a) strict wet = 5/7 LOW x3 polls; (b) early wet = >=2/7 LOW on 2 consecutive polls (stops relay chatter from the hardware interlock); (c) partial fill = calibrated tray, pump >= baselineFillDuration x `PARTIAL_FILL_FRACTION` (0.60) with sensor DRY -> normal stop, `partialFillDone`, handled first in `processLearningData` (no timeout, no multiplier/baseline/lastFillDuration change; only restarts the schedule). Multiplier cap `MAX_INTERVAL_MULTIPLIER` = 14. One-time migration `migratedMultiplierV133` runs in `loadLearningData` (flag `scheduleMigrationV133`).
 
 **Relay Module**: 6-channel relay with automatic sensor interlock — when rain sensor detects WET, relay opens regardless of GPIO state. No GPIO read-back verification (would show LOW when sensor wet, expected behavior).
 

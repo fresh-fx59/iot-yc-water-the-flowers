@@ -8,7 +8,7 @@
 // Device Configuration
 // ============================================
 #ifndef FIRMWARE_VERSION  // test builds override it
-#define FIRMWARE_VERSION "1.32.2"
+#define FIRMWARE_VERSION "1.33.0"
 #endif
 const char *VERSION = "watering_system_" FIRMWARE_VERSION;
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
@@ -161,6 +161,19 @@ const unsigned long RAIN_SENSOR_DEBOUNCE_DELAY_MS = 5; // Delay between readings
 // mid-cycle flicker can't end watering early and be recorded as a real fill.
 const int RAIN_SENSOR_CONFIRMATION_CHECKS = 3;         // ~300ms sustained wet to confirm
 
+// v1.33.0 early-wet stop (PHASE_WATERING only). The relay board cuts the relay in
+// hardware whenever a rain sensor reads WET, so while water only touches the
+// sensor edge the relay chatters ("chick-chick") while firmware still waits for
+// the strict 5/7 majority x 3 polls. End the fill as soon as >= EARLY_WET_MIN_LOW_SAMPLES
+// of the 7 samples read LOW on EARLY_WET_CONSECUTIVE_POLLS consecutive polls.
+const int EARLY_WET_MIN_LOW_SAMPLES = 2;
+const int EARLY_WET_CONSECUTIVE_POLLS = 2;
+
+// v1.33.0 partial fill: a CALIBRATED tray (baseline known) stops the pump after
+// baselineFillDuration * PARTIAL_FILL_FRACTION if the sensor is still dry, so the
+// tray is not flooded on every cycle. Not a timeout: no learning change.
+const float PARTIAL_FILL_FRACTION = 0.60f;
+
 // ============================================
 // Learning Algorithm Constants
 // ============================================
@@ -176,13 +189,11 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
 // Hard ceiling on the per-valve learning multiplier. Without this, the
 // "tray-still-full → 2x" and "fill > baseline → +1.0x" paths can compound
 // unboundedly when measurements are noisy (sensor placement, weather, etc.).
-// Empirically every TIMEOUT we saw happened with a multiplier in the 4.75x–7x
-// range; 5.0x is the safety belt — the algorithm fix (debounce + sustained-wet
-// confirmation) does the real work. Kept at 5.0 deliberately: trays 2-6 are
-// healthy watering every 2-4.5 days, so a lower cap would force them to water
-// more often than they need. (clampMultiplier still rescues any value loaded
-// from flash that exceeds this.)
-const float MAX_INTERVAL_MULTIPLIER = 7.0; // Never wait more than 7 days (v1.31.0: operator-approved, wet trays e.g. tray 2 need 6-7d)
+// History: 5.0 -> 7.0 (v1.31.0) -> 14.0 (v1.33.0, plants were overwatered, the
+// schedule was stretched). The algorithm fix (debounce + sustained-wet
+// confirmation) does the real work; this is only the safety belt.
+// clampMultiplier still rescues any value loaded from flash above this.
+const float MAX_INTERVAL_MULTIPLIER = 14.0; // Never wait more than 14 days (v1.33.0: cap raised 7 -> 14; plants were overwatered, schedule stretched x1.5)
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
 const unsigned long RECENT_WATERING_THRESHOLD_MS =

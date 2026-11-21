@@ -62,6 +62,13 @@ inline float clampMultiplier(float multiplier) {
   return multiplier;
 }
 
+// v1.33.0 one-time schedule migration (plants were overwatered): tray 6
+// (valveIndex 5) is set to exactly 2.5x; trays 1-5 stretch by x1.5 (clamped).
+inline float migratedMultiplierV133(int valveIndex, float current) {
+  if (valveIndex == 5) return 2.5f;
+  return clampMultiplier(current * 1.5f);
+}
+
 // A recorded fill must fit inside the hardware safety window. Values larger
 // than that can only come from stale/corrupt persistence or an invalid timer
 // subtraction and must never become a new learning baseline.

@@ -62,11 +62,24 @@ inline float clampMultiplier(float multiplier) {
   return multiplier;
 }
 
+// Tray 6 (valveIndex 5) is set to wait 5 days (operator, 2026-11-21); learning
+// may still move it later, like any tray.
+// Multiplier x BASE_INTERVAL (24 h) = days, so 5 days = 5.0x.
+const float TRAY6_FIXED_MULTIPLIER = 5.0f;
+
 // v1.33.0 one-time schedule migration (plants were overwatered): tray 6
-// (valveIndex 5) is set to exactly 2.5x; trays 1-5 stretch by x1.5 (clamped).
+// (valveIndex 5) is set to 5 days; trays 1-5 stretch by x1.5 (clamped).
+// v1.33.0 shipped tray 6 = 2.5x (2.5 days, wrong unit); v1.33.1 fixes the value.
 inline float migratedMultiplierV133(int valveIndex, float current) {
-  if (valveIndex == 5) return 2.5f;
+  if (valveIndex == 5) return TRAY6_FIXED_MULTIPLIER;
   return clampMultiplier(current * 1.5f);
+}
+
+// v1.33.1 one-time fix for devices that already ran the v1.33.0 migration:
+// tray 6 -> 5 days; every other tray unchanged.
+inline float migratedMultiplierV1331(int valveIndex, float current) {
+  if (valveIndex == 5) return TRAY6_FIXED_MULTIPLIER;
+  return current;
 }
 
 // A recorded fill must fit inside the hardware safety window. Values larger

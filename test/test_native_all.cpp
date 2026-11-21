@@ -1120,13 +1120,21 @@ void test_v133_clamp_multiplier_cap_is_14(void) {
 
 void test_v133_migration_math(void) {
     using LearningAlgorithm::migratedMultiplierV133;
-    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 1.0f));
-    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 7.0f));
-    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 14.0f));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV133(5, 1.0f));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV133(5, 7.0f));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV133(5, 14.0f));
     TEST_ASSERT_EQUAL_FLOAT(9.0f, migratedMultiplierV133(0, 6.0f));
     TEST_ASSERT_EQUAL_FLOAT(9.75f, migratedMultiplierV133(1, 6.5f));
     TEST_ASSERT_EQUAL_FLOAT(10.5f, migratedMultiplierV133(4, 7.0f));
     TEST_ASSERT_EQUAL_FLOAT(14.0f, migratedMultiplierV133(2, 10.0f));
+}
+
+void test_v1331_tray6_five_days(void) {
+    using LearningAlgorithm::migratedMultiplierV1331;
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV1331(5, 2.5f));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV1331(5, 9.0f));
+    TEST_ASSERT_EQUAL_FLOAT(9.75f, migratedMultiplierV1331(0, 9.75f));
+    TEST_ASSERT_EQUAL_FLOAT(7.87f, migratedMultiplierV1331(2, 7.87f));
 }
 
 void test_v133_partial_fill_decision(void) {
@@ -1172,6 +1180,7 @@ int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_v133_clamp_multiplier_cap_is_14);
     RUN_TEST(test_v133_migration_math);
+    RUN_TEST(test_v1331_tray6_five_days);
     RUN_TEST(test_v133_partial_fill_decision);
     RUN_TEST(test_v133_early_wet_decision);
     RUN_TEST(test_v133_new_valve_fields_reset_by_prepare);

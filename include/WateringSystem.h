@@ -243,6 +243,8 @@ private:
   // v1.33.0: persisted root-level flag; true once the one-time schedule
   // migration has run (or there was nothing to migrate).
   bool scheduleMigrationV133 = false;
+  // v1.33.1: persisted flag; true once tray 6 was moved to 5 days.
+  bool scheduleMigrationV1331 = false;
   void openValve(int valveIndex);
   void closeValve(int valveIndex);
   void updatePumpState();
@@ -398,6 +400,7 @@ inline bool WateringSystem::saveLearningData() {
   // Save current millis() and DS3231 RTC time as reference points
   doc["savedAtMillis"] = currentMillis;
   doc["scheduleMigrationV133"] = scheduleMigrationV133;
+  doc["scheduleMigrationV1331"] = scheduleMigrationV1331;
   time_t now;
   time(&now);
   doc["savedAtRealTime"] = (unsigned long)now;
@@ -428,6 +431,7 @@ inline bool WateringSystem::loadLearningData() {
   if (!LittleFS.exists(LEARNING_DATA_FILE)) {
     DebugHelper::debug("  No learning data file found");
     scheduleMigrationV133 = true;  // nothing calibrated yet: never migrate later
+    scheduleMigrationV1331 = true;
     return false;
   }
 
@@ -447,6 +451,7 @@ inline bool WateringSystem::loadLearningData() {
     DebugHelper::debugImportant("❌ Failed to parse JSON: " +
                                 String(error.c_str()));
     scheduleMigrationV133 = true;  // data lost anyway: never migrate trays learned later
+    scheduleMigrationV1331 = true;
     return false;
   }
 
@@ -604,6 +609,7 @@ inline bool WateringSystem::loadLearningData() {
 
   // v1.33.0 one-time schedule migration: runs once, flag persisted in the same JSON.
   scheduleMigrationV133 = doc["scheduleMigrationV133"] | false;
+  scheduleMigrationV1331 = doc["scheduleMigrationV1331"] | false;
   if (!scheduleMigrationV133) {
     const unsigned long BASE_INTERVAL_MS = 86400000UL;
     for (int i = 0; i < NUM_VALVES; i++) {
@@ -619,6 +625,27 @@ inline bool WateringSystem::loadLearningData() {
       if (g_metricsLog) g_metricsLog("info", msg);
     }
     scheduleMigrationV133 = true;
+    scheduleMigrationV1331 = true;  // V133 now sets tray 6 to 5 days itself
+    saveLearningData();
+  }
+
+  // v1.33.1 one-time fix: v1.33.0 set tray 6 to 2.5x (2.5 days); operator asked 5 days.
+  if (!scheduleMigrationV1331) {
+    const unsigned long BASE_INTERVAL_MS = 86400000UL;
+    for (int i = 0; i < NUM_VALVES; i++) {
+      ValveController *v = valves[i];
+      if (!v->isCalibrated) continue;
+      float oldMult = v->intervalMultiplier;
+      float newMult = LearningAlgorithm::migratedMultiplierV1331(i, oldMult);
+      if (newMult == oldMult) continue;
+      v->intervalMultiplier = newMult;
+      v->emptyToFullDuration = (unsigned long)(BASE_INTERVAL_MS * newMult);
+      String msg = trayLabel(i) + ": schedule migration " + String(oldMult, 2) +
+                   "x->" + String(newMult, 2) + "x";
+      DebugHelper::debugImportant("🔧 " + msg);
+      if (g_metricsLog) g_metricsLog("info", msg);
+    }
+    scheduleMigrationV1331 = true;
     saveLearningData();
   }
 

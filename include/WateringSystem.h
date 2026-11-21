@@ -10,6 +10,7 @@
 #include "DS3231RTC.h"
 #include "LearningAlgorithm.h"
 #include "SensorDebounce.h"
+#include "LearningRestoreV1332.h"
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -245,6 +246,12 @@ private:
   bool scheduleMigrationV133 = false;
   // v1.33.1: persisted flag; true once tray 6 was moved to 5 days.
   bool scheduleMigrationV1331 = false;
+  // v1.33.2: persisted flag; true once the one-time learning-data restore ran.
+  bool restoreV1332 = false;
+  // v1.33.2: the learning file existed but could not be parsed. Never treat
+  // that as a fresh device (no boot calibration of all trays).
+  bool learningLoadFailed = false;
+  void applyRestoreV1332();
   void openValve(int valveIndex);
   void closeValve(int valveIndex);
   void updatePumpState();
@@ -361,7 +368,7 @@ inline bool WateringSystem::saveLearningData() {
   DebugHelper::debug("💾 Saving learning data to flash...");
 
   // Create JSON document
-  StaticJsonDocument<2048> doc;
+  DynamicJsonDocument doc(LEARNING_JSON_CAPACITY);
   JsonArray valvesArray = doc.createNestedArray("valves");
   unsigned long currentMillis = millis();
 
@@ -401,9 +408,18 @@ inline bool WateringSystem::saveLearningData() {
   doc["savedAtMillis"] = currentMillis;
   doc["scheduleMigrationV133"] = scheduleMigrationV133;
   doc["scheduleMigrationV1331"] = scheduleMigrationV1331;
+  doc["restoreV1332"] = restoreV1332;
   time_t now;
   time(&now);
   doc["savedAtRealTime"] = (unsigned long)now;
+
+  // v1.33.2: never write a truncated document (a full JsonDocument drops
+  // members silently). Keep the previous file instead.
+  if (doc.overflowed()) {
+    DebugHelper::debugImportant("❌ Learning JSON overflowed capacity - NOT saving");
+    if (g_metricsLog) g_metricsLog("error", "learning data: JSON overflowed capacity, save skipped");
+    return false;
+  }
 
   // Open file for writing
   File file = LittleFS.open(LEARNING_DATA_FILE, "w");
@@ -443,7 +459,7 @@ inline bool WateringSystem::loadLearningData() {
   }
 
   // Parse JSON
-  StaticJsonDocument<2048> doc;
+  DynamicJsonDocument doc(LEARNING_JSON_CAPACITY);
   DeserializationError error = deserializeJson(doc, file);
   file.close();
 
@@ -452,6 +468,17 @@ inline bool WateringSystem::loadLearningData() {
                                 String(error.c_str()));
     scheduleMigrationV133 = true;  // data lost anyway: never migrate trays learned later
     scheduleMigrationV1331 = true;
+    restoreV1332 = true;
+    // v1.33.2: an unreadable file is NOT a fresh device. Keep a copy, halt
+    // watering and tell the operator instead of boot-calibrating every tray
+    // (that is how all trays were flooded on 2026-11-21).
+    learningLoadFailed = true;
+    LittleFS.remove("/learning_data_corrupt.json");
+    LittleFS.rename(LEARNING_DATA_FILE, "/learning_data_corrupt.json");
+    haltMode = true;
+    if (g_metricsLog) g_metricsLog("error", String("learning data unreadable (") + error.c_str() + "), watering halted, copy at /learning_data_corrupt.json");
+    queueTelegramNotification(String("⚠️ Learning data could not be read (") + error.c_str() +
+                              "). Watering is HALTED so no tray is flooded. Send /resume only if you accept fresh calibration.");
     return false;
   }
 
@@ -647,6 +674,12 @@ inline bool WateringSystem::loadLearningData() {
     }
     scheduleMigrationV1331 = true;
     saveLearningData();
+  }
+
+  // v1.33.2 one-time restore of the rig's pre-loss learning data.
+  restoreV1332 = doc["restoreV1332"] | false;
+  if (!restoreV1332) {
+    applyRestoreV1332();
   }
 
   DebugHelper::debug("✓ Loaded data for " + String(loadedCount) + " valves");
@@ -2507,7 +2540,64 @@ inline void WateringSystem::sendWateringSchedule(const String &title) {
 }
 
 // ========== Boot Watering Decision Helpers ==========
+inline void WateringSystem::applyRestoreV1332() {
+  using namespace LearningRestoreV1332;
+  const unsigned long BASE_INTERVAL_MS = 86400000UL;
+  unsigned long nowMs = millis();
+  time_t nowEpoch;
+  time(&nowEpoch);
+  for (int i = 0; i < NUM_VALVES; i++) {
+    ValveController *v = valves[i];
+    // Post-loss waterings count too, including timed-out or skipped attempts
+    // (tray 3 timed out at 20 s on 2026-11-21 22:24 but still got the water).
+    bool hasComplete = hasLastWateringReference(v);
+    bool hasAttempt = hasLastWateringAttemptReference(v);
+    unsigned long completeAge = hasComplete ? getTimeSinceLastWatering(v, nowMs) : 0;
+    unsigned long attemptAge = hasAttempt ? getTimeSinceLastWateringAttempt(v, nowMs) : 0;
+    bool hasCurrent = hasComplete || hasAttempt;
+    unsigned long currentAge = hasComplete ? completeAge : attemptAge;
+    if (hasComplete && hasAttempt && attemptAge < completeAge) currentAge = attemptAge;
+    unsigned long age = pickAgeMs(hasCurrent, currentAge,
+                                  restoredAgeMs(i, (unsigned long)nowEpoch));
+
+    v->isCalibrated = true;
+    v->baselineFillDuration = BASELINE_MS[i];
+    v->lastFillDuration = LAST_FILL_MS[i];
+    v->previousFillDuration = LAST_FILL_MS[i];
+    v->intervalMultiplier = LearningAlgorithm::clampMultiplier(MULTIPLIER[i]);
+    v->emptyToFullDuration = (unsigned long)(BASE_INTERVAL_MS * v->intervalMultiplier);
+    v->totalWateringCycles = TOTAL_CYCLES[i];
+    v->consecutiveTimeouts = 0;
+    v->autoWateringEnabled = true;
+    v->lastCycleWasTimeoutRecovery = false;
+
+    // age 0 = "watered now"; keep millis() references > 0 (0 means "none").
+    if (nowMs > age) {
+      v->lastWateringCompleteTime = nowMs - age;
+      v->realTimeSinceLastWatering = 0;
+    } else {
+      v->lastWateringCompleteTime = 0;
+      v->realTimeSinceLastWatering = age - nowMs;
+    }
+    v->lastWateringAttemptTime = v->lastWateringCompleteTime;
+    v->realTimeSinceLastWateringAttempt = v->realTimeSinceLastWatering;
+
+    String msg = trayLabel(i) + ": restored learning data baseline=" +
+                 String(BASELINE_MS[i] / 1000.0, 1) + "s interval " +
+                 String(v->intervalMultiplier, 2) + "x last watered " +
+                 String(age / 3600000.0, 1) + "h ago";
+    DebugHelper::debugImportant("🔧 " + msg);
+    if (g_metricsLog) g_metricsLog("info", msg);
+  }
+  restoreV1332 = true;
+  scheduleMigrationV133 = true;
+  scheduleMigrationV1331 = true;
+  saveLearningData();
+}
+
 inline bool WateringSystem::isFirstBoot() {
+  // v1.33.2: a learning file that exists but cannot be read is not a fresh device.
+  if (learningLoadFailed) return false;
   // Check if all valves are uncalibrated (fresh device, no learning data)
   for (int i = 0; i < NUM_VALVES; i++) {
     if (valves[i]->isCalibrated) {

@@ -8,7 +8,7 @@
 // Device Configuration
 // ============================================
 #ifndef FIRMWARE_VERSION  // test builds override it
-#define FIRMWARE_VERSION "1.33.1"
+#define FIRMWARE_VERSION "1.33.2"
 #endif
 const char *VERSION = "watering_system_" FIRMWARE_VERSION;
 const char *DEVICE_TYPE = "smart_watering_system_time_based";
@@ -194,6 +194,10 @@ const unsigned long AUTO_WATERING_MIN_INTERVAL_MS =
 // confirmation) does the real work; this is only the safety belt.
 // clampMultiplier still rescues any value loaded from flash above this.
 const float MAX_INTERVAL_MULTIPLIER = 14.0; // Never wait more than 14 days (v1.33.0: cap raised 7 -> 14; plants were overwatered, schedule stretched x1.5)
+// v1.33.2: learning JSON buffer. 2048 was too small once v1.33.0 added root
+// keys (parse failed with NoMemory). Worst-case file parses into 3.9 KB on the
+// 64-bit test host (less on ESP32); test_v1332_learning_json_roundtrip keeps 2x headroom.
+const size_t LEARNING_JSON_CAPACITY = 8192;
 const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS =
     86400000; // 24 hours retry for uncalibrated trays found full
 const unsigned long RECENT_WATERING_THRESHOLD_MS =

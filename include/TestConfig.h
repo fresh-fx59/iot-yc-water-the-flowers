@@ -65,6 +65,10 @@ static const int LEARNING_FULL_SKIP_CYCLES = 10;
 static const unsigned long AUTO_WATERING_MIN_INTERVAL_MS = 86400000;
 static const unsigned long UNCALIBRATED_RETRY_INTERVAL_MS = 86400000;
 static const float MAX_INTERVAL_MULTIPLIER = 14.0;
+// v1.33.2: learning JSON buffer. 2048 was too small once v1.33.0 added root
+// keys (parse failed with NoMemory). Worst-case file parses into 3.9 KB on the
+// 64-bit test host (less on ESP32); test_v1332_learning_json_roundtrip keeps 2x headroom.
+static const size_t LEARNING_JSON_CAPACITY = 8192;
 
 // ============================================
 // Plant Light Constants for Testing

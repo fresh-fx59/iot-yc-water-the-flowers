@@ -10,6 +10,8 @@
 #include "ValveQueueLogic.h"
 #include "SensorDebounce.h"
 #include "FirmwareUpdateLogic.h"
+#include "LearningRestoreV1332.h"
+#include <ArduinoJson.h>
 
 using namespace fakeit;
 using namespace StateMachineLogic;
@@ -1129,6 +1131,76 @@ void test_v133_migration_math(void) {
     TEST_ASSERT_EQUAL_FLOAT(14.0f, migratedMultiplierV133(2, 10.0f));
 }
 
+// v1.33.2: the learning file the firmware writes must parse back.
+// Same shape as WateringSystem::saveLearningData(), worst-case values.
+static String buildLearningJson(size_t cap) {
+    DynamicJsonDocument doc(cap);
+    JsonArray arr = doc.createNestedArray("valves");
+    for (int i = 0; i < 6; i++) {
+        JsonObject o = arr.createNestedObject();
+        o["index"] = i;
+        o["lastWateringCompleteTime"] = 4294967295UL;
+        o["lastWateringAttemptTime"] = 4294967295UL;
+        o["lastWateringCompleteAgeMs"] = 4294967295UL;
+        o["lastWateringAttemptAgeMs"] = 4294967295UL;
+        o["emptyToFullDuration"] = 4294967295UL;
+        o["baselineFillDuration"] = 4294967295UL;
+        o["lastFillDuration"] = 4294967295UL;
+        o["previousFillDuration"] = 4294967295UL;
+        o["lastWaterLevelPercent"] = 99.99f;
+        o["isCalibrated"] = true;
+        o["totalWateringCycles"] = 99999;
+        o["consecutiveTimeouts"] = 99;
+        o["autoWateringEnabled"] = true;
+        o["intervalMultiplier"] = 13.875f;
+        o["lastCycleWasTimeoutRecovery"] = true;
+    }
+    doc["savedAtMillis"] = 4294967295UL;
+    doc["scheduleMigrationV133"] = true;
+    doc["scheduleMigrationV1331"] = true;
+    doc["restoreV1332"] = true;
+    doc["savedAtRealTime"] = 4294967295UL;
+    TEST_ASSERT_FALSE(doc.overflowed());
+    String out;
+    serializeJson(doc, out);
+    return out;
+}
+
+void test_v1332_learning_json_roundtrip(void) {
+    String json = buildLearningJson(LEARNING_JSON_CAPACITY);
+    // Parsing from a stream copies every key: needs more than building did.
+    DynamicJsonDocument big(LEARNING_JSON_CAPACITY);
+    DeserializationError ok = deserializeJson(big, json.c_str());
+    TEST_ASSERT_TRUE_MESSAGE(ok == DeserializationError::Ok, ok.c_str());
+    TEST_ASSERT_EQUAL(6, big["valves"].size());
+    TEST_ASSERT_TRUE(big["restoreV1332"].as<bool>());
+    // Headroom: real use must stay well under capacity.
+    TEST_ASSERT_TRUE(big.memoryUsage() * 2 < LEARNING_JSON_CAPACITY);
+    // Regression proof: the old 2048 buffer cannot read this file.
+    DynamicJsonDocument small(2048);
+    TEST_ASSERT_TRUE(deserializeJson(small, json.c_str()) == DeserializationError::NoMemory);
+    printf("learning json: %u bytes text, %u bytes parsed\n", (unsigned)json.length(), (unsigned)big.memoryUsage());
+}
+
+void test_v1332_restore_math(void) {
+    using namespace LearningRestoreV1332;
+    // Clock not set -> 0 (caller falls back)
+    TEST_ASSERT_EQUAL_UINT32(0, restoredAgeMs(0, 1000));
+    // 1 hour after tray 1's last watering
+    TEST_ASSERT_EQUAL_UINT32(3600000UL, restoredAgeMs(0, LAST_WATER_EPOCH[0] + 3600));
+    TEST_ASSERT_EQUAL_UINT32(0, restoredAgeMs(6, LAST_WATER_EPOCH[0] + 3600));
+    // pick the more recent watering
+    TEST_ASSERT_EQUAL_UINT32(100, pickAgeMs(true, 100, 5000));
+    TEST_ASSERT_EQUAL_UINT32(5000, pickAgeMs(false, 0, 5000));
+    TEST_ASSERT_EQUAL_UINT32(5000, pickAgeMs(true, 9000, 5000));
+    TEST_ASSERT_EQUAL_UINT32(0, pickAgeMs(false, 0, 0));
+    TEST_ASSERT_EQUAL_FLOAT(5.0f, MULTIPLIER[5]);
+    for (int i = 0; i < 6; i++) {
+        TEST_ASSERT_TRUE(BASELINE_MS[i] > 10000 && BASELINE_MS[i] < 31000);
+        TEST_ASSERT_TRUE(MULTIPLIER[i] >= 1.0f && MULTIPLIER[i] <= MAX_INTERVAL_MULTIPLIER);
+    }
+}
+
 void test_v1331_tray6_five_days(void) {
     using LearningAlgorithm::migratedMultiplierV1331;
     TEST_ASSERT_EQUAL_FLOAT(5.0f, migratedMultiplierV1331(5, 2.5f));
@@ -1181,6 +1253,8 @@ int main(int argc, char **argv) {
     RUN_TEST(test_v133_clamp_multiplier_cap_is_14);
     RUN_TEST(test_v133_migration_math);
     RUN_TEST(test_v1331_tray6_five_days);
+    RUN_TEST(test_v1332_learning_json_roundtrip);
+    RUN_TEST(test_v1332_restore_math);
     RUN_TEST(test_v133_partial_fill_decision);
     RUN_TEST(test_v133_early_wet_decision);
     RUN_TEST(test_v133_new_valve_fields_reset_by_prepare);

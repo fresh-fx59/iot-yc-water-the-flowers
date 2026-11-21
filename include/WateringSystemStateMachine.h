@@ -8,6 +8,9 @@
 
 // ========== State Machine Implementation ==========
 inline void WateringSystem::processValve(int valveIndex, unsigned long currentTime) {
+    // v1.33.2 diagnostics: last logged LOW count per tray (relay-click hunt).
+    static int prevLoggedLow[NUM_VALVES] = {0};
+
     ValveController* valve = valves[valveIndex];
 
     switch (valve->phase) {
@@ -84,6 +87,7 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->timeoutOccurred = false;
                     valve->rainWetStreak = 0;  // start sustained-wet confirmation fresh
                     valve->earlyWetStreak = 0;
+                    prevLoggedLow[valveIndex] = 0;
                     valve->partialFillDone = false;
                     valve->partialPumpMs = 0;
                     valve->phase = PHASE_WATERING;
@@ -136,6 +140,13 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->earlyWetStreak, lastRainLowReadings, EARLY_WET_MIN_LOW_SAMPLES);
                 bool earlyWet = SensorDebounce::earlyWetConfirmed(
                     valve->earlyWetStreak, EARLY_WET_CONSECUTIVE_POLLS);
+                // v1.33.2 diagnostics: log every change of the raw LOW count during
+                // a fill, so a "chick-chick" relay episode shows up in Loki with
+                // its timing (the 1 s progress line only shows the 5/7 majority).
+                if (lastRainLowReadings != prevLoggedLow[valveIndex]) {
+                    prevLoggedLow[valveIndex] = lastRainLowReadings;
+                    if (g_metricsLog) g_metricsLog("info", trayLabel(valveIndex) + ": sensor low=" + String(lastRainLowReadings) + "/" + String(RAIN_SENSOR_DEBOUNCE_SAMPLES) + " at " + String((currentTime - valve->wateringStartTime) / 1000.0, 1) + "s");
+                }
                 valve->rainDetected = isRaining || earlyWet;
 
                 // Show progress every 1 second

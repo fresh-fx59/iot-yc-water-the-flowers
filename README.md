@@ -9,6 +9,7 @@ This code manages an ESP32 device for plant care. The system includes 6 watering
 **Version 1.32.1** - firmware update through Telegram, with automatic rollback
 
 **Recent Updates:**
+- **v1.33.1**: Tray 6 interval set to 5 days (5.0x). v1.33.0 set 2.5x, which is 2.5 days, not the 5 days asked for. One-time fix, flag `scheduleMigrationV1331`.
 - **v1.33.0**: Less water. Interval cap 7 -> 14 days; one-time schedule migration on first boot (trays 1-5 interval x1.5, tray 6 set to 2.5x; flag `scheduleMigrationV133` in the learning JSON); calibrated trays stop at 60% of the baseline fill time if the sensor is still dry ("partial fill", not a timeout, no learning change, next watering multiplier x 24 h later); early-wet stop (2 of 7 samples LOW on 2 consecutive polls, watering phase only) ends the relay "chick-chick" chatter.
 - **v1.32.1**: Added `/check_update` and `/rollback`. The device downloads the published image itself, checks its SHA-256 and the server certificate, and returns to the previous version if the new one is not healthy within 5 minutes. Commands are now accepted only from the configured Telegram account. See [Firmware updates](#firmware-updates).
 - **v1.20 to v1.31**: see `git log`.

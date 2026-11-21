@@ -445,13 +445,13 @@ void test_clamp_multiplier_below_min_clamps_to_one(void) {
 
 void test_clamp_multiplier_above_max_clamps_to_cap(void) {
     // Trays we actually observed in the wild (6.5x, 7.0x) and the
-    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (7.0).
+    // post-doubling worst case must all clamp to MAX_INTERVAL_MULTIPLIER (14.0 since v1.33.0).
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::clampMultiplier(7.5f));
+        LearningAlgorithm::clampMultiplier(14.5f));
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::clampMultiplier(8.0f));
+        LearningAlgorithm::clampMultiplier(16.0f));
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::clampMultiplier(10.0f));
+        LearningAlgorithm::clampMultiplier(20.0f));
 }
 
 void test_decrement_on_timeout_subtracts_quarter(void) {
@@ -475,18 +475,17 @@ void test_decrement_on_timeout_caps_input_too(void) {
     // If somehow a multiplier > MAX is passed in, the result is also clamped.
     // (Edge case for migration paths / external callers.)
     TEST_ASSERT_EQUAL_FLOAT(MAX_INTERVAL_MULTIPLIER,
-        LearningAlgorithm::decrementMultiplierOnTimeout(10.0f));
+        LearningAlgorithm::decrementMultiplierOnTimeout(20.0f));
 }
 
 // ========== Interval-Multiplier Cap (runaway safety belt) ==========
 
-void test_max_interval_multiplier_is_seven_days(void) {
-    // Worst-case wait bounded at 7.0x (~7 days). v1.31.0: raised from 5.0 by the
-    // operator — tray 2 was observed still wet with standing water at the 5-day cap.
-    // Dry trays fill slowly and keep short intervals; only wet trays stretch.
-    TEST_ASSERT_EQUAL_FLOAT(7.0f, MAX_INTERVAL_MULTIPLIER);
+void test_max_interval_multiplier_is_fourteen_days(void) {
+    // Worst-case wait bounded at 14.0x (~14 days). v1.33.0: raised from 7.0
+    // (v1.31.0: 5.0 -> 7.0) because the plants were overwatered.
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, MAX_INTERVAL_MULTIPLIER);
     TEST_ASSERT_EQUAL_FLOAT(6.0f, LearningAlgorithm::clampMultiplier(6.0f));
-    TEST_ASSERT_EQUAL_FLOAT(7.0f, LearningAlgorithm::clampMultiplier(9.0f));
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, LearningAlgorithm::clampMultiplier(18.0f));
 }
 
 // ========== Rain/Soil Sensor Debounce (false-wet guard) ==========
@@ -1109,8 +1108,73 @@ void test_per_valve_emergency_timeout(void) {
 
 // ========== Main Test Runner ==========
 
+// ============================================
+// v1.33.0 TESTS: cap 14, migration, partial fill, early wet
+// ============================================
+void test_v133_clamp_multiplier_cap_is_14(void) {
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, MAX_INTERVAL_MULTIPLIER);
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, LearningAlgorithm::clampMultiplier(20.0f));
+    TEST_ASSERT_EQUAL_FLOAT(13.5f, LearningAlgorithm::clampMultiplier(13.5f));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, LearningAlgorithm::clampMultiplier(0.2f));
+}
+
+void test_v133_migration_math(void) {
+    using LearningAlgorithm::migratedMultiplierV133;
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 1.0f));
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 7.0f));
+    TEST_ASSERT_EQUAL_FLOAT(2.5f, migratedMultiplierV133(5, 14.0f));
+    TEST_ASSERT_EQUAL_FLOAT(9.0f, migratedMultiplierV133(0, 6.0f));
+    TEST_ASSERT_EQUAL_FLOAT(9.75f, migratedMultiplierV133(1, 6.5f));
+    TEST_ASSERT_EQUAL_FLOAT(10.5f, migratedMultiplierV133(4, 7.0f));
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, migratedMultiplierV133(2, 10.0f));
+}
+
+void test_v133_partial_fill_decision(void) {
+    using namespace SensorDebounce;
+    const float f = PARTIAL_FILL_FRACTION;
+    TEST_ASSERT_EQUAL_UINT32(8820, partialFillTargetMs(14700, f));
+    TEST_ASSERT_FALSE(shouldStopPartialFill(true, 14700, 8819, false, f));
+    TEST_ASSERT_TRUE(shouldStopPartialFill(true, 14700, 8820, false, f));
+    TEST_ASSERT_TRUE(shouldStopPartialFill(true, 14700, 12000, false, f));
+    TEST_ASSERT_FALSE(shouldStopPartialFill(true, 14700, 9000, true, f));
+    TEST_ASSERT_FALSE(shouldStopPartialFill(false, 14700, 20000, false, f));
+    TEST_ASSERT_FALSE(shouldStopPartialFill(true, 0, 20000, false, f));
+}
+
+void test_v133_early_wet_decision(void) {
+    using namespace SensorDebounce;
+    const int minLow = EARLY_WET_MIN_LOW_SAMPLES, need = EARLY_WET_CONSECUTIVE_POLLS;
+    int st = 0;
+    st = nextEarlyWetStreak(st, 1, minLow); TEST_ASSERT_FALSE(earlyWetConfirmed(st, need));
+    st = nextEarlyWetStreak(st, 1, minLow); TEST_ASSERT_FALSE(earlyWetConfirmed(st, need));
+    st = nextEarlyWetStreak(0, 2, minLow); TEST_ASSERT_FALSE(earlyWetConfirmed(st, need));
+    st = nextEarlyWetStreak(st, 2, minLow); TEST_ASSERT_TRUE(earlyWetConfirmed(st, need));
+    st = nextEarlyWetStreak(nextEarlyWetStreak(0, 3, minLow), 7, minLow);
+    TEST_ASSERT_TRUE(earlyWetConfirmed(st, need));
+    st = nextEarlyWetStreak(nextEarlyWetStreak(0, 2, minLow), 0, minLow);
+    TEST_ASSERT_EQUAL_INT(0, st);
+    st = nextEarlyWetStreak(st, 2, minLow);
+    TEST_ASSERT_FALSE(earlyWetConfirmed(st, need));
+    TEST_ASSERT_FALSE(isWet(4, RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+    TEST_ASSERT_TRUE(isWet(5, RAIN_SENSOR_DEBOUNCE_THRESHOLD));
+}
+
+void test_v133_new_valve_fields_reset_by_prepare(void) {
+    ValveController v(0);
+    v.earlyWetStreak = 3; v.partialFillDone = true; v.partialPumpMs = 5000;
+    prepareValveCycle(&v);
+    TEST_ASSERT_EQUAL_INT(0, v.earlyWetStreak);
+    TEST_ASSERT_FALSE(v.partialFillDone);
+    TEST_ASSERT_EQUAL_UINT32(0, v.partialPumpMs);
+}
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
+    RUN_TEST(test_v133_clamp_multiplier_cap_is_14);
+    RUN_TEST(test_v133_migration_math);
+    RUN_TEST(test_v133_partial_fill_decision);
+    RUN_TEST(test_v133_early_wet_decision);
+    RUN_TEST(test_v133_new_valve_fields_reset_by_prepare);
 
     // ValveQueueLogic tests
     RUN_TEST(test_queue_empty_by_default);
@@ -1196,7 +1260,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_decrement_on_timeout_subtracts_quarter);
     RUN_TEST(test_decrement_on_timeout_floors_at_one);
     RUN_TEST(test_decrement_on_timeout_caps_input_too);
-    RUN_TEST(test_max_interval_multiplier_is_seven_days);
+    RUN_TEST(test_max_interval_multiplier_is_fourteen_days);
     RUN_TEST(test_rain_debounce_single_stray_low_reads_dry);
     RUN_TEST(test_rain_debounce_just_below_threshold_reads_dry);
     RUN_TEST(test_rain_debounce_threshold_and_above_reads_wet);

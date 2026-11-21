@@ -237,6 +237,12 @@ private:
 
   // ========== Hardware Control ==========
   bool readRainSensor(int valveIndex);
+  // v1.33.0: raw LOW-sample count (0..RAIN_SENSOR_DEBOUNCE_SAMPLES) of the most
+  // recent readRainSensor() call. Read by the PHASE_WATERING early-wet check.
+  int lastRainLowReadings = 0;
+  // v1.33.0: persisted root-level flag; true once the one-time schedule
+  // migration has run (or there was nothing to migrate).
+  bool scheduleMigrationV133 = false;
   void openValve(int valveIndex);
   void closeValve(int valveIndex);
   void updatePumpState();
@@ -391,6 +397,7 @@ inline bool WateringSystem::saveLearningData() {
 
   // Save current millis() and DS3231 RTC time as reference points
   doc["savedAtMillis"] = currentMillis;
+  doc["scheduleMigrationV133"] = scheduleMigrationV133;
   time_t now;
   time(&now);
   doc["savedAtRealTime"] = (unsigned long)now;
@@ -420,6 +427,7 @@ inline bool WateringSystem::loadLearningData() {
   // Check if file exists
   if (!LittleFS.exists(LEARNING_DATA_FILE)) {
     DebugHelper::debug("  No learning data file found");
+    scheduleMigrationV133 = true;  // nothing calibrated yet: never migrate later
     return false;
   }
 
@@ -438,6 +446,7 @@ inline bool WateringSystem::loadLearningData() {
   if (error) {
     DebugHelper::debugImportant("❌ Failed to parse JSON: " +
                                 String(error.c_str()));
+    scheduleMigrationV133 = true;  // data lost anyway: never migrate trays learned later
     return false;
   }
 
@@ -591,6 +600,26 @@ inline bool WateringSystem::loadLearningData() {
     }
 
     loadedCount++;
+  }
+
+  // v1.33.0 one-time schedule migration: runs once, flag persisted in the same JSON.
+  scheduleMigrationV133 = doc["scheduleMigrationV133"] | false;
+  if (!scheduleMigrationV133) {
+    const unsigned long BASE_INTERVAL_MS = 86400000UL;
+    for (int i = 0; i < NUM_VALVES; i++) {
+      ValveController *v = valves[i];
+      if (!v->isCalibrated) continue;
+      float oldMult = v->intervalMultiplier;
+      float newMult = LearningAlgorithm::migratedMultiplierV133(i, oldMult);
+      v->intervalMultiplier = newMult;
+      v->emptyToFullDuration = (unsigned long)(BASE_INTERVAL_MS * newMult);
+      String msg = trayLabel(i) + ": schedule migration " + String(oldMult, 2) +
+                   "x->" + String(newMult, 2) + "x";
+      DebugHelper::debugImportant("🔧 " + msg);
+      if (g_metricsLog) g_metricsLog("info", msg);
+    }
+    scheduleMigrationV133 = true;
+    saveLearningData();
   }
 
   DebugHelper::debug("✓ Loaded data for " + String(loadedCount) + " valves");
@@ -1531,6 +1560,7 @@ inline bool WateringSystem::readRainSensor(int valveIndex) {
       delay(RAIN_SENSOR_DEBOUNCE_DELAY_MS);
     }
   }
+  lastRainLowReadings = lowReadings;
   bool wet = SensorDebounce::isWet(lowReadings, RAIN_SENSOR_DEBOUNCE_THRESHOLD);
 
   // Power management: Only turn off GPIO 18 if NOT in watering phase
@@ -1640,6 +1670,37 @@ inline void WateringSystem::processLearningData(ValveController *valve,
   const float INTERVAL_DECREMENT_BINARY =
       0.5; // Binary search refinement (decrease)
   const float INTERVAL_INCREMENT_FINE = 0.25; // Fine-tuning adjustment
+
+  // v1.33.0 partial fill: the pump ran baseline * PARTIAL_FILL_FRACTION and the
+  // sensor was still dry. Not a timeout and not a measurement: leave multiplier,
+  // baseline, lastFillDuration and previousFillDuration alone, only restart the
+  // schedule so the next watering is multiplier x 24h away.
+  if (valve->partialFillDone && !valve->timeoutOccurred) {
+    valve->partialFillDone = false;
+    valve->lastWateringCompleteTime = currentTime;
+    valve->realTimeSinceLastWatering = 0;
+    valve->realTimeSinceLastWateringAttempt = 0;
+    valve->lastWateringAttemptTime = currentTime;
+    valve->consecutiveTimeouts = 0;
+    valve->lastCycleWasTimeoutRecovery = false;
+
+    if (g_metricsLog)
+      g_metricsLog("info",
+                   trayLabel(valve->valveIndex) + ": partial fill done pump=" +
+                       String(valve->partialPumpMs / 1000.0, 1) + "s target=" +
+                       String(SensorDebounce::partialFillTargetMs(
+                                  valve->baselineFillDuration,
+                                  PARTIAL_FILL_FRACTION) / 1000.0, 1) +
+                       "s baseline=" +
+                       String(valve->baselineFillDuration / 1000.0, 1) +
+                       "s sensor=DRY interval " +
+                       String(valve->intervalMultiplier, 2) + "x");
+    DebugHelper::debug("🧠 " + trayLabel(valve->valveIndex) +
+                       ": partial fill, schedule restarted (no learning change)");
+    saveLearningData();
+    sendScheduleUpdateIfNeeded();
+    return;
+  }
 
   // Handle timeout scenarios
   if (valve->timeoutOccurred) {

@@ -83,6 +83,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     valve->wateringStartTime = currentTime;
                     valve->timeoutOccurred = false;
                     valve->rainWetStreak = 0;  // start sustained-wet confirmation fresh
+                    valve->earlyWetStreak = 0;
+                    valve->partialFillDone = false;
+                    valve->partialPumpMs = 0;
                     valve->phase = PHASE_WATERING;
                     updatePumpState();
                     publishStateChange("valve" + String(valveIndex), "watering_started");
@@ -126,7 +129,14 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
             if (currentTime - valve->lastRainCheck >= RAIN_CHECK_INTERVAL) {
                 valve->lastRainCheck = currentTime;
                 bool isRaining = readRainSensor(valveIndex);
-                valve->rainDetected = isRaining;
+                // v1.33.0 early-wet: >= EARLY_WET_MIN_LOW_SAMPLES LOW samples on
+                // EARLY_WET_CONSECUTIVE_POLLS consecutive polls. PHASE_WATERING only;
+                // the strict majority read stays for every other caller.
+                valve->earlyWetStreak = SensorDebounce::nextEarlyWetStreak(
+                    valve->earlyWetStreak, lastRainLowReadings, EARLY_WET_MIN_LOW_SAMPLES);
+                bool earlyWet = SensorDebounce::earlyWetConfirmed(
+                    valve->earlyWetStreak, EARLY_WET_CONSECUTIVE_POLLS);
+                valve->rainDetected = isRaining || earlyWet;
 
                 // Show progress every 1 second
                 if ((currentTime - valve->wateringStartTime) % 1000 < RAIN_CHECK_INTERVAL) {
@@ -135,17 +145,35 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                     DebugHelper::debug(trayLabel(valveIndex) + ": " + String(elapsed) + "s/" + String(remaining) + "s, Sensor: " + String(isRaining ? "WET" : "DRY"));
                 }
 
-                if (isRaining) {
-                    // Require SUSTAINED wet before declaring the fill complete:
-                    // RAIN_SENSOR_CONFIRMATION_CHECKS consecutive wet reads. Debounce
-                    // rejects a noisy sample; this rejects a single noisy read — so a
-                    // brief mid-cycle flicker can't end watering early and be logged as
-                    // a real fill (the field cause of the tray-interval runaway). A dry
-                    // read in the else-branch resets the streak.
-                    valve->rainWetStreak = SensorDebounce::nextWetStreak(valve->rainWetStreak, true);
-                    if (!SensorDebounce::fillConfirmed(valve->rainWetStreak, RAIN_SENSOR_CONFIRMATION_CHECKS)) {
-                        break;  // not yet confirmed — keep watering, re-check next poll
+                bool partialStop = false;
+                if (isRaining || earlyWet) {
+                    // Strict path: RAIN_SENSOR_CONFIRMATION_CHECKS consecutive majority-wet
+                    // reads (rejects a single noisy read). Early-wet path (v1.33.0) skips
+                    // the strict confirmation because it has its own 2-poll streak.
+                    if (isRaining) {
+                        valve->rainWetStreak = SensorDebounce::nextWetStreak(valve->rainWetStreak, true);
                     }
+                    if (!earlyWet && !SensorDebounce::fillConfirmed(valve->rainWetStreak, RAIN_SENSOR_CONFIRMATION_CHECKS)) {
+                        break;  // not yet confirmed - keep watering, re-check next poll
+                    }
+                    if (earlyWet && g_metricsLog) {
+                        g_metricsLog("info", trayLabel(valveIndex) + ": early wet stop low=" + String(lastRainLowReadings) + "/" + String(RAIN_SENSOR_DEBOUNCE_SAMPLES));
+                    }
+                }
+                else if (valve->wateringRequested &&
+                         SensorDebounce::shouldStopPartialFill(
+                             valve->isCalibrated, valve->baselineFillDuration,
+                             currentTime - valve->wateringStartTime, false,
+                             PARTIAL_FILL_FRACTION)) {
+                    // v1.33.0 partial fill: dry at baseline * PARTIAL_FILL_FRACTION.
+                    valve->partialFillDone = true;
+                    valve->partialPumpMs = currentTime - valve->wateringStartTime;
+                    valve->rainWetStreak = 0;
+                    partialStop = true;
+                    DebugHelper::debug("✓ " + trayLabel(valveIndex) + " PARTIAL FILL - pump " + String(valve->partialPumpMs / 1000.0, 1) + "s, sensor still DRY");
+                }
+
+                if (isRaining || earlyWet || partialStop) {
 
                     // SAFETY: Sensor detected water - immediately close valve and stop pump
                     // Calculate FULL cycle time: from valve open to valve close
@@ -221,6 +249,9 @@ inline void WateringSystem::processValve(int valveIndex, unsigned long currentTi
                 String status;
                 if (valve->timeoutOccurred) {
                     status = "⚠️ TIMEOUT";
+                } else if (valve->partialFillDone) {
+                    // v1.33.0 partial fill: planned stop at baseline x PARTIAL_FILL_FRACTION, not a failure
+                    status = "✓ OK (partial, pump " + String(valve->partialPumpMs / 1000.0, 1) + "s)";
                 } else if (valve->rainDetected && valve->wateringStartTime > 0) {
                     // Sensor became wet AFTER pump started = successful watering
                     status = "✓ OK";

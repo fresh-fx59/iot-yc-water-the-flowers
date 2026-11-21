@@ -28,6 +28,29 @@ inline bool isWet(int lowReadings, int threshold) {
 inline int nextWetStreak(int streak, bool wet) { return wet ? streak + 1 : 0; }
 inline bool fillConfirmed(int streak, int required) { return streak >= required; }
 
+// v1.33.0 early-wet stop. Weaker than isWet(): counts polls on which at least
+// `minLow` of the debounce samples were LOW, consecutively. Used ONLY during
+// PHASE_WATERING (a stray LOW elsewhere would feed the learning runaway).
+inline int nextEarlyWetStreak(int streak, int lowReadings, int minLow) {
+  return (lowReadings >= minLow) ? streak + 1 : 0;
+}
+inline bool earlyWetConfirmed(int streak, int required) { return streak >= required; }
+
+// v1.33.0 partial fill. Pump time (ms) after which a CALIBRATED tray (baseline
+// known) ends the fill even though the sensor is still dry.
+inline unsigned long partialFillTargetMs(unsigned long baselineMs, float fraction) {
+  return (unsigned long)((float)baselineMs * fraction);
+}
+// True when the fill must stop NOW as a partial fill: calibrated with a baseline,
+// pump has run >= target, and the sensor is still dry. Wet sensor -> false (the
+// normal success path owns it). Uncalibrated trays never stop partial.
+inline bool shouldStopPartialFill(bool calibrated, unsigned long baselineMs,
+                                  unsigned long pumpElapsedMs, bool sensorWet,
+                                  float fraction) {
+  if (!calibrated || baselineMs == 0 || sensorWet) return false;
+  return pumpElapsedMs >= partialFillTargetMs(baselineMs, fraction);
+}
+
 }  // namespace SensorDebounce
 
 #endif  // SENSOR_DEBOUNCE_H
